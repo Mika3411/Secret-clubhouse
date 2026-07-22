@@ -20,6 +20,7 @@ When implementing from a selected generated mock, treat that image as the source
 - The parent account includes a separate adult-only inbox for messaging the parents of approved or pending child contacts; it never exposes or mixes in the children’s conversations.
 - Every family member, including the parent and each child, owns a distinct opaque contact ID. No public contact link is shown; usernames are never used to route discussions, and adding an exact ID only creates a parent-approved request.
 - The parent messaging inbox includes an "Ajouter un contact" action. Entering an exact private contact ID creates a pending approval request; it never opens a conversation immediately.
+- Each child contact modal displays a real scannable QR code containing the app URL and exact private contact ID. Scanning it opens the parent contact-request form prefilled; the parent still confirms sending the request.
 - Audio and video calls use WebRTC, are limited to approved contacts, and obey each child’s parent-managed permissions and allowed hours. Camera, microphone, speaker, and hang-up controls must remain obvious.
 - Parents can configure one neutral automatic reply for messages and audio/video call attempts received outside allowed hours. It must not reveal schedules or personal details, and automatic messages must never trigger another automatic reply.
 - Sent messages and media show delivery state consistently in child and parent chats: one check means received and a colored double check means seen.

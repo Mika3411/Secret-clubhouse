@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   ArrowLeft,
   Basketball,
@@ -1525,13 +1526,13 @@ function ParentDashboard({ parentName, children, child, requestStatus, onSelectC
   );
 }
 
-function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend, isDemo }) {
+function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend, isDemo, initialContactId = "" }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
   const [callMode, setCallMode] = useState(null);
-  const [isAddingContact, setIsAddingContact] = useState(false);
-  const [contactId, setContactId] = useState("");
+  const [isAddingContact, setIsAddingContact] = useState(Boolean(initialContactId));
+  const [contactId, setContactId] = useState(initialContactId);
   const [contactFeedback, setContactFeedback] = useState(null);
   const [isSubmittingContact, setIsSubmittingContact] = useState(false);
   const parentMediaInputRef = useRef(null);
@@ -1551,6 +1552,7 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
       if (!isDemo) await api.addContact(normalizedId);
       setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
       setContactId("");
+      if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
     } catch (error) {
       setContactFeedback({ type: "error", text: error.message });
     } finally {
@@ -1927,6 +1929,7 @@ function BottomNavigation({ active, onChange }) {
 
 function QrModal({ child, onClose }) {
   const [idCopied, setIdCopied] = useState(false);
+  const contactUrl = `${window.location.origin}/?contact=${encodeURIComponent(child.contactId)}`;
 
   const copyId = async () => {
     await copyContactId(child.contactId);
@@ -1937,7 +1940,9 @@ function QrModal({ child, onClose }) {
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer"><X size={21} weight="bold" /></button>
-        <span className="modal-icon"><QrCode size={62} weight="bold" /></span>
+        <div className="real-contact-qr" aria-label={`QR code de contact de ${child.name}`}>
+          <QRCodeSVG value={contactUrl} size={132} level="H" marginSize={2} bgColor="#ffffff" fgColor="#120966" title={`Ajouter ${child.name} avec l’identifiant ${child.contactId}`} />
+        </div>
         <h2 id="qr-title">Identifiant de {child.name}</h2>
         <p>Présente ce QR code ou cet identifiant avec l’aide de ton parent.</p>
         <button type="button" className={`qr-contact-id ${idCopied ? "is-copied" : ""}`} onClick={copyId}><IdentificationCard size={18} weight="fill" /><span>{idCopied ? "Identifiant copié !" : child.contactId}</span>{idCopied ? <CheckCircle size={18} weight="fill" /> : <Copy size={17} weight="bold" />}</button>
@@ -1970,6 +1975,10 @@ export function App() {
   const [parentThreads, setParentThreads] = useState(() => cloneParentThreads());
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
   const [presenceByContactId, setPresenceByContactId] = useState({});
+  const scannedContactId = useMemo(() => {
+    const value = new URLSearchParams(window.location.search).get("contact")?.trim().toUpperCase() ?? "";
+    return /^SC-\d{3}-\d{3}-\d{3}$/.test(value) ? value : "";
+  }, []);
   const activeChild = children.find((child) => child.id === activeChildId) ?? children[0] ?? null;
   const activeRequestStatus = activeChild ? requestStatuses[activeChild.id] ?? "none" : "none";
   const activeSettings = activeChild ? settingsByChild[activeChild.id] ?? defaultSafetySettings : defaultSafetySettings;
@@ -1980,6 +1989,13 @@ export function App() {
     if (!getToken()) return;
     api.me().then(({ account }) => openAuthenticatedSession(account)).catch(() => clearToken());
   }, []);
+
+  useEffect(() => {
+    if (session?.role === "parent" && scannedContactId) {
+      setSelectedParentThreadId(null);
+      setParentView("messages");
+    }
+  }, [scannedContactId, session]);
 
   useEffect(() => {
     if (!session || !getToken()) return undefined;
@@ -2127,7 +2143,7 @@ export function App() {
       return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} isDemo={Boolean(session.demo)} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} isDemo={Boolean(session.demo)} initialContactId={scannedContactId} />;
     }
     if (parentView === "dashboard") {
       return (

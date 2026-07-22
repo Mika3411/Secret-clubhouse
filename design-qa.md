@@ -41,3 +41,21 @@
 - P3: add a dedicated list of incoming and outgoing pending requests when the approval-management screen is expanded.
 
 final result: passed
+
+---
+
+**QR Contact Comparison Target**
+
+- Source visual truth: `C:/Users/admin/AppData/Local/Temp/codex-clipboard-3d630151-9042-4acb-b6f6-eb10e744c4db.png` (470 × 535 px).
+- Implementation: browser-rendered `http://127.0.0.1:4175/`, child home with the contact QR dialog open.
+- State: demo child profile → Ajouter un ami avec un QR code.
+
+**QR Contact Findings**
+
+- No actionable P0/P1/P2 mismatch. The modal retains the source hierarchy, rounded white card, indigo typography, violet ID field, mint safety checks and large confirmation control.
+- The decorative QR glyph is intentionally replaced by a real high-error-correction QR code while preserving the same centered visual role.
+- The encoded URL carries only the opaque contact ID, opens the parent flow with that ID prefilled, and still requires explicit parental confirmation.
+- Browser inspection verified the accessible QR label and exact child contact ID.
+- Production build passes.
+
+final result: passed
