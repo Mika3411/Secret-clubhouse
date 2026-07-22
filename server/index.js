@@ -12,8 +12,19 @@ const app = express();
 const port = Number(process.env.PORT || 10000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret) throw new Error("JWT_SECRET est requis");
-const pushEnabled = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
-if (pushEnabled) webpush.setVapidDetails(process.env.VAPID_SUBJECT || "mailto:contact@secret-clubhouse.fr", process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+let pushEnabled = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+if (pushEnabled) {
+  try {
+    webpush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:contact@secret-clubhouse.fr",
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY,
+    );
+  } catch (error) {
+    pushEnabled = false;
+    console.warn(`Notifications push désactivées : configuration VAPID invalide (${error.message}).`);
+  }
+}
 
 app.disable("x-powered-by");
 app.use((_req, res, next) => {
