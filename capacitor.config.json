@@ -1,0 +1,11 @@
+{
+  "appId": "fr.secretclubhouse.app",
+  "appName": "Secret Clubhouse",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
+}

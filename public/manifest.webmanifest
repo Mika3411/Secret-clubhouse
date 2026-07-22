@@ -1,0 +1,10 @@
+{
+  "name": "Secret Clubhouse",
+  "short_name": "Clubhouse",
+  "description": "Messagerie familiale sécurisée pour les 6–13 ans.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080640",
+  "theme_color": "#0b0756",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

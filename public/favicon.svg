@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Secret Clubhouse">
+  <rect width="64" height="64" rx="16" fill="#0b0b4f"/>
+  <path d="M16 49 11 13" fill="none" stroke="#79f5cf" stroke-linecap="round" stroke-width="5"/>
+  <circle cx="10.5" cy="12" r="5" fill="#79f5cf"/>
+  <path d="M14 17c12-7 25-5 39 1-9 3-17 7-24 13l-13-3Z" fill="#79f5cf"/>
+  <path d="m26 22 6-5 7 5v8H26Z" fill="#0b0b4f"/>
+  <path d="M31 30v-5h4v5" fill="#79f5cf"/>
+</svg>
