@@ -22,6 +22,7 @@ When implementing from a selected generated mock, treat that image as the source
 - The "Mode calme" safety row opens a per-child schedule editor with separate allowed time windows for messages, audio calls, and video calls.
 - Every child profile has a parent-managed private username and password so the child can sign in independently without a phone number; children can never self-register.
 - The protected parent inbox clearly separates direct family conversations with the parent’s own children from adult conversations with parents of approved or pending child contacts. It never exposes the children’s conversations with friends.
+- Parents who belong to the same family can message, call, and video-call each other directly from the protected parent inbox; this private adult thread appears automatically for both accounts and remains separate from every child conversation.
 - A parent can directly open and persist a conversation with any child in their own family without a friend request or approval. Entering the child’s exact contact ID opens that family conversation instead of showing an error.
 - Every parent/coparent-to-child conversation is provisioned automatically by the Render service and appears for both participants without requiring the parent to open it first.
 - Every family member, including the parent and each child, owns a distinct opaque contact ID. No public contact link is shown; usernames are never used to route discussions, and adding an exact ID only creates a parent-approved request.

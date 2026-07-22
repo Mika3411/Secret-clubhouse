@@ -1023,10 +1023,62 @@ async function ensureFamilyConversations(accountId) {
   }
 }
 
+async function ensureHouseholdParentConversations(accountId) {
+  const pairs = await pool.query(
+    `select mine.parent_id as current_parent_id, other.parent_id as other_parent_id
+     from family_memberships mine
+     join family_memberships other on other.family_id=mine.family_id and other.parent_id<>mine.parent_id
+     where mine.parent_id=$1`,
+    [accountId],
+  );
+  if (!pairs.rowCount) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    for (const pair of pairs.rows) {
+      const orderedIds = [pair.current_parent_id, pair.other_parent_id].sort();
+      await client.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", orderedIds);
+      const existing = await client.query(
+        `select c.id
+         from conversations c
+         join conversation_members first_member on first_member.conversation_id=c.id and first_member.account_id=$1
+         join conversation_members second_member on second_member.conversation_id=c.id and second_member.account_id=$2
+         where c.kind='parent'
+           and (select count(*) from conversation_members members where members.conversation_id=c.id)=2
+         limit 1`,
+        orderedIds,
+      );
+      let conversationId = existing.rows[0]?.id;
+      if (!conversationId) {
+        const conversation = await client.query("insert into conversations(kind) values('parent') returning id");
+        conversationId = conversation.rows[0].id;
+      }
+      await client.query(
+        `insert into conversation_members(conversation_id,account_id) values($1,$2),($1,$3)
+         on conflict(conversation_id,account_id) do nothing`,
+        [conversationId, ...orderedIds],
+      );
+    }
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 app.get("/api/conversations", requireAuth, async (req, res) => {
   await ensureFamilyConversations(req.auth.sub);
+  if (req.auth.role === "parent") await ensureHouseholdParentConversations(req.auth.sub);
   const result = await pool.query(`
     select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
+      exists(
+        select 1 from family_memberships mine_family
+        join family_memberships other_family on other_family.family_id=mine_family.family_id
+        where mine_family.parent_id=$1 and other_family.parent_id=a.id
+      ) as is_family_member,
       coalesce(json_agg(json_build_object('id',m.id,'senderId',m.sender_id,'text',m.body,'mediaName',m.media_name,'mediaType',m.media_type,'createdAt',m.created_at) order by m.created_at) filter (where m.id is not null),'[]') as messages
     from conversation_members mine
     join conversations c on c.id=mine.conversation_id
@@ -1272,6 +1324,9 @@ app.use((error, _req, res, _next) => {
 });
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+app.get("/downloads/Secret-Clubhouse.apk", (_req, res) => {
+  res.download(path.join(root, "Secret-Clubhouse-debug.apk"), "Secret-Clubhouse.apk");
+});
 app.use(express.static(path.join(root, "dist")));
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(root, "dist", "index.html")));
 

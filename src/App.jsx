@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   DotsThree,
+  DownloadSimple,
   Eye,
   EyeSlash,
   FlagPennant,
@@ -450,6 +451,21 @@ function useMouseDragScroll() {
 
 const initialParentThreads = [
   {
+    id: "demo-coparent-thread",
+    name: "Alex",
+    contactId: "SC-193-406-852",
+    contactRole: "parent",
+    isHouseholdParent: true,
+    relation: "Co-parent de la famille",
+    initials: "A",
+    preview: "On se retrouve ici pour organiser la famille.",
+    time: "Maintenant",
+    unread: 0,
+    messages: [
+      { id: "alex-1", direction: "received", text: "Bonjour Marie, on peut échanger ici pour la famille.", time: "Maintenant" },
+    ],
+  },
+  {
     id: "thomas",
     name: "Thomas R.",
     relation: "Parent de Chloé",
@@ -505,16 +521,18 @@ const mapServerConversation = (conversation, account) => {
     (account.role === "parent" && conversation.contact_role === "child")
     || (account.role === "child" && conversation.contact_role === "parent")
   );
+  const isHouseholdParent = conversation.kind === "parent" && conversation.contact_role === "parent" && Boolean(conversation.is_family_member);
   return {
     id: conversation.id,
     name: conversation.name,
     contactId: conversation.contact_id,
     contactRole: conversation.contact_role,
     isFamily,
+    isHouseholdParent,
     serverBacked: true,
-    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : "Parent d’un contact",
+    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : isHouseholdParent ? "Parent de ma famille" : "Parent d’un contact",
     initials,
-    preview: latest?.text ?? (isFamily ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
+    preview: latest?.text ?? (isFamily || isHouseholdParent ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
     time: latest?.time ?? "Maintenant",
     unread: 0,
     messages,
@@ -2505,7 +2523,7 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
 
         <button type="button" className="parent-messages-entry" onClick={onOpenMessages}>
           <span className="parent-messages-entry__icon"><ChatCircleDots size={24} weight="fill" /></span>
-          <span><strong>Famille et parents</strong><small>Échangez avec vos enfants et les parents de leurs contacts.</small></span>
+          <span><strong>Famille et parents</strong><small>Échangez avec l’autre parent, vos enfants et les parents de leurs contacts.</small></span>
           {unreadMessages > 0 ? <span className="parent-message-count">{unreadMessages}</span> : <CheckCircle size={20} weight="fill" />}
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
@@ -2535,6 +2553,13 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
           <span><strong>Mot de passe parent</strong><small>Modifier vos informations de connexion.</small></span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
+
+        <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
+          <span><DownloadSimple size={23} weight="bold" /></span>
+          <span><strong>Installer sur Android</strong><small>Télécharger l’application Secret Clubhouse · APK · 12,7 Mo</small></span>
+          <span className="parent-apk-badge">APK</span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </a>
 
         {!child && (
           <section className="empty-family-card" aria-labelledby="empty-family-title">
@@ -2732,11 +2757,11 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         <header className="parent-messages-header parent-thread-header">
           <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
-          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : `${selectedThread.relation} · Contact adulte`}</small></div>
+          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
           <button type="button" className="parent-thread-call" onClick={() => setCallMode("audio")} aria-label={`Appeler ${selectedThread.name}`}><Phone size={19} weight="fill" /></button>
           <button type="button" className="parent-thread-call" onClick={() => setCallMode("video")} aria-label={`Lancer une visio avec ${selectedThread.name}`}><VideoCamera size={20} weight="fill" /></button>
         </header>
-        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
+        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
           <span className="parent-thread-day">Aujourd’hui</span>
           {selectedThread.messages.map((message) => (
@@ -2776,7 +2801,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
       </header>
 
       <div className="parent-messages-content">
-        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez directement à vos enfants ou aux parents de leurs contacts, sans voir leurs discussions entre amis.</p></div></div>
+        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à l’autre parent de la famille, à vos enfants ou aux parents de leurs contacts, sans voir les discussions entre enfants.</p></div></div>
         <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
@@ -2786,7 +2811,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
               {thread.unread > 0 ? <span className="parent-thread-unread">{thread.unread}</span> : <CaretRight size={18} weight="bold" aria-hidden="true" />}
             </button>
           ))}
-          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
+          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Invitez un co-parent, écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
         </div>
       </div>
       {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
