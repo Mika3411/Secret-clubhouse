@@ -962,7 +962,51 @@ app.post("/api/family-conversations", requireAuth, async (req, res) => {
   }
 });
 
+async function ensureFamilyConversations(accountId) {
+  const pairs = await pool.query(
+    `select membership.parent_id,child.child_id
+     from family_memberships membership
+     join family_children child on child.family_id=membership.family_id
+     where membership.parent_id=$1 or child.child_id=$1`,
+    [accountId],
+  );
+  if (!pairs.rowCount) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    for (const pair of pairs.rows) {
+      await client.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", [pair.parent_id, pair.child_id]);
+      const existing = await client.query(
+        "select conversation_id from family_conversations where parent_id=$1 and child_id=$2",
+        [pair.parent_id, pair.child_id],
+      );
+      let conversationId = existing.rows[0]?.conversation_id;
+      if (!conversationId) {
+        const conversation = await client.query("insert into conversations(kind) values('child') returning id");
+        conversationId = conversation.rows[0].id;
+        await client.query(
+          "insert into family_conversations(parent_id,child_id,conversation_id) values($1,$2,$3)",
+          [pair.parent_id, pair.child_id, conversationId],
+        );
+      }
+      await client.query(
+        `insert into conversation_members(conversation_id,account_id) values($1,$2),($1,$3)
+         on conflict(conversation_id,account_id) do nothing`,
+        [conversationId, pair.parent_id, pair.child_id],
+      );
+    }
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 app.get("/api/conversations", requireAuth, async (req, res) => {
+  await ensureFamilyConversations(req.auth.sub);
   const result = await pool.query(`
     select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
       coalesce(json_agg(json_build_object('id',m.id,'senderId',m.sender_id,'text',m.body,'mediaName',m.media_name,'mediaType',m.media_type,'createdAt',m.created_at) order by m.created_at) filter (where m.id is not null),'[]') as messages
