@@ -44,6 +44,18 @@ final result: passed
 
 ---
 
+**Embedded Phaser Memory QA**
+
+- Implementation tested at `http://127.0.0.1:4174/`, child demo → Clubhouse → Memory des symboles.
+- Phaser canvas renders inside the existing activity modal without navigation or an external browser.
+- Verified two card taps reveal distinct symbols and that no browser console errors occur.
+- The 4 × 3 card grid, indigo/mint palette, large touch areas and completion reward fit the existing Clubhouse visual language.
+- Production build passes; Phaser is emitted as a lazy-loaded separate bundle.
+
+final result: passed
+
+---
+
 **Mini-game Variety QA**
 
 - Implementation tested at `http://127.0.0.1:4174/` in two consecutive “Quiz des animaux” sessions.

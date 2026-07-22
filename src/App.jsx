@@ -56,6 +56,7 @@ import { createDemoAudioStream, createDemoVideoStream, createLocalWebRtcSession,
 import { api, clearToken, getToken } from "./api";
 import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
+import PhaserMemoryGame from "./PhaserMemoryGame";
 
 const friends = [
   { id: "leo", name: "Léo", contactId: "SC-214-680-531", image: "/avatars/leo.png" },
@@ -137,6 +138,17 @@ const clubhouseActivities = [
     Icon: UsersThree,
     tone: "coral",
     steps: ["Choisis une activité secrète", "Mime-la pendant trente secondes", "Laisse les autres proposer une réponse"],
+  },
+  {
+    id: "memory-pairs",
+    type: "game",
+    variant: "memory",
+    title: "Memory des symboles",
+    description: "Retourne les cartes et retrouve les six paires.",
+    duration: 4,
+    reward: 30,
+    Icon: GameController,
+    tone: "violet",
   },
   {
     id: "nature-quiz",
@@ -1427,7 +1439,7 @@ function ClubhouseScreen({ child }) {
   }, [phase, selectedActivity]);
 
   const openActivity = (activity) => {
-    if (activity.type === "game") {
+    if (activity.type === "game" && activity.questions) {
       let deck = questionDecksRef.current[activity.id] ?? [];
       if (deck.length < 3) {
         const previousLastPrompt = deck.at(-1)?.prompt;
@@ -1585,6 +1597,10 @@ function ClubhouseScreen({ child }) {
                     {selectedAnswer !== null && <p className={selectedAnswer === currentQuestion.correct ? "is-correct" : "is-wrong"}>{selectedAnswer === currentQuestion.correct ? "Bien joué !" : "Presque ! Essaie encore."}</p>}
                     {selectedAnswer !== null && <button type="button" className="clubhouse-modal__primary" onClick={continueQuiz}>{selectedAnswer === currentQuestion.correct ? (questionIndex === sessionQuestions.length - 1 ? "Voir mon résultat" : "Question suivante") : "Réessayer"}<CaretRight size={18} weight="bold" /></button>}
                   </div>
+                )}
+
+                {phase === "active" && selectedActivity.variant === "memory" && (
+                  <div className="clubhouse-memory"><PhaserMemoryGame onComplete={completeActivity} /><p><ShieldCheck size={15} weight="fill" /> Le jeu reste entièrement dans Secret Clubhouse.</p></div>
                 )}
               </>
             )}

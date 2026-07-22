@@ -2964,6 +2964,40 @@ input:focus-visible {
   color: #b14467;
 }
 
+.clubhouse-memory {
+  display: grid;
+  justify-items: center;
+  padding: 8px 12px 14px;
+  background: #f7f4ff;
+}
+
+.phaser-memory-game {
+  width: min(100%, 300px);
+  aspect-ratio: 6 / 7;
+  overflow: hidden;
+  border-radius: 18px;
+}
+
+.phaser-memory-game canvas {
+  display: block;
+  max-width: 100%;
+  touch-action: manipulation;
+}
+
+.clubhouse-memory > p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  color: #716b80;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.clubhouse-memory > p svg {
+  color: #24ad88;
+}
+
 .clubhouse-complete {
   justify-items: center;
   padding-top: 28px;

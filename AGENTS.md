@@ -29,6 +29,7 @@ When implementing from a selected generated mock, treat that image as the source
 - Child and parent conversations support recorded voice messages with microphone permission requested on demand, a two-minute limit, preview, cancel, send, playback, and received/seen status.
 - The child Clubhouse is an interactive activity hub with filterable creative challenges and mini-games, private progress, earned stars, daily streaks, and replayable activities.
 - Mini-games use larger shuffled question banks and serve a fresh three-question set on replay without repeating questions until the current bank has been exhausted.
+- Phaser mini-games are bundled inside the React/Capacitor clients, contain no ads or third-party tracking, never open an external browser, and award their activity reward only once per child.
 - The child profile uses one centered 300 px card column: contact ID, protection, notifications, and parent access share consistent widths, radii, icon proportions, and spacing on phones and tablets.
 - Children can send images, photos, and videos only when the parent has enabled media sharing for that child; media remains limited to approved contacts and allowed messaging hours.
 - The protected parent inbox supports parent-to-child and parent-to-parent conversations; adult parent-to-parent threads also support audio/video calls and photo, image, and video attachments.
