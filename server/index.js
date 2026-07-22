@@ -281,6 +281,39 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
   }
 });
 
+app.delete("/api/children/:id", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut supprimer un compte enfant." });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.id)) {
+    return res.status(400).json({ error: "Identifiant enfant invalide." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const childResult = await client.query(
+      "select id from accounts where id=$1 and role='child' and parent_id=$2 and contact_id<>$3 for update",
+      [req.params.id, req.auth.sub, demoChildContactId],
+    );
+    if (!childResult.rows[0]) {
+      await client.query("rollback");
+      return res.status(404).json({ error: "Profil enfant introuvable dans votre famille." });
+    }
+
+    await client.query(
+      "delete from conversations where id in (select conversation_id from conversation_members where account_id=$1)",
+      [req.params.id],
+    );
+    await client.query("delete from accounts where id=$1", [req.params.id]);
+    await client.query("commit");
+    return res.status(204).end();
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 app.post("/api/presence/heartbeat", requireAuth, async (req, res) => {
   await pool.query("insert into presence(account_id,last_seen) values($1,now()) on conflict(account_id) do update set last_seen=excluded.last_seen", [req.auth.sub]);
   res.status(204).end();

@@ -42,6 +42,7 @@ import {
   SpeakerSlash,
   Star,
   Timer,
+  Trash,
   Trophy,
   UserCircle,
   UserPlus,
@@ -2082,7 +2083,7 @@ function toUsername(value) {
     .slice(0, 18);
 }
 
-function ChildAccountModal({ child, onClose, onSave }) {
+function ChildAccountModal({ child, onClose, onSave, onDelete }) {
   const isEditing = Boolean(child);
   const [name, setName] = useState(child?.name ?? "");
   const [age, setAge] = useState(child?.age ?? 8);
@@ -2093,6 +2094,9 @@ function ChildAccountModal({ child, onClose, onSave }) {
   const [color, setColor] = useState(child?.color ?? "mint");
   const [isActive, setIsActive] = useState(child?.status !== "paused");
   const [error, setError] = useState("");
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
   const avatarColors = ["mint", "violet", "sun", "coral"];
 
   const updateName = (value) => {
@@ -2130,6 +2134,21 @@ function ChildAccountModal({ child, onClose, onSave }) {
     }
   };
 
+  const deleteChildAccount = async () => {
+    if (deleteConfirmation !== "SUPPRIMER") {
+      setError("Tapez SUPPRIMER pour confirmer la suppression définitive.");
+      return;
+    }
+    setIsDeleting(true);
+    setError("");
+    try {
+      await onDelete(child.id);
+    } catch (deleteError) {
+      setError(deleteError.message);
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <form className="child-account-modal" onSubmit={submitChild} onMouseDown={(event) => event.stopPropagation()} aria-labelledby="child-modal-title">
@@ -2157,10 +2176,22 @@ function ChildAccountModal({ child, onClose, onSave }) {
           </button>
         )}
 
+        {isEditing && !isConfirmingDelete && (
+          <button className="delete-child-trigger" type="button" onClick={() => { setIsConfirmingDelete(true); setError(""); }}><Trash size={17} weight="bold" /> Supprimer ce compte enfant</button>
+        )}
+
+        {isEditing && isConfirmingDelete && (
+          <section className="delete-child-confirmation" aria-labelledby="delete-child-title">
+            <div><Trash size={20} weight="fill" /><span><strong id="delete-child-title">Supprimer définitivement {child.name} ?</strong><small>Son compte, ses contacts et toutes ses conversations seront supprimés. Cette action est irréversible.</small></span></div>
+            <label htmlFor="delete-child-confirmation"><span>Tapez <strong>SUPPRIMER</strong> pour confirmer</span><input id="delete-child-confirmation" value={deleteConfirmation} onChange={(event) => { setDeleteConfirmation(event.target.value.toUpperCase()); setError(""); }} autoComplete="off" disabled={isDeleting} /></label>
+            <div><button type="button" onClick={() => { setIsConfirmingDelete(false); setDeleteConfirmation(""); setError(""); }} disabled={isDeleting}>Garder le compte</button><button type="button" onClick={deleteChildAccount} disabled={deleteConfirmation !== "SUPPRIMER" || isDeleting}>{isDeleting ? "Suppression…" : "Supprimer définitivement"}</button></div>
+          </section>
+        )}
+
         {error && <p className="child-form-error" role="alert">{error}</p>}
         <div className="child-modal-actions">
           <button type="button" className="decline-button" onClick={onClose}>Annuler</button>
-          <button type="submit" className="primary-button"><CheckCircle size={18} weight="fill" /> {isEditing ? "Enregistrer" : "Créer le compte"}</button>
+          <button type="submit" className="primary-button" disabled={isDeleting}><CheckCircle size={18} weight="fill" /> {isEditing ? "Enregistrer" : "Créer le compte"}</button>
         </div>
       </form>
     </div>
@@ -2618,6 +2649,26 @@ export function App() {
     setChildModal(null);
   };
 
+  const deleteChild = async (childId) => {
+    const childToDelete = children.find((child) => child.id === childId);
+    if (!childToDelete) throw new Error("Ce profil enfant est introuvable.");
+    if (!session?.demo) await api.deleteChild(childId);
+
+    const remainingChildren = children.filter((child) => child.id !== childId);
+    const removedThreadIds = parentThreads.filter((thread) => thread.contactId === childToDelete.contactId).map((thread) => thread.id);
+    setChildren(remainingChildren);
+    setActiveChildId((current) => current === childId ? remainingChildren[0]?.id ?? null : current);
+    setRequestStatuses((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== childId)));
+    setSettingsByChild((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== childId)));
+    setSchedulesByChild((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== childId)));
+    setParentThreads((current) => current.filter((thread) => thread.contactId !== childToDelete.contactId));
+    setServerConversations((current) => current.filter((conversation) => conversation.contactId !== childToDelete.contactId));
+    setSelectedParentThreadId((current) => removedThreadIds.includes(current) ? null : current);
+    setSelectedConversation((current) => current?.contactId === childToDelete.contactId ? null : current);
+    setScheduleModalChildId((current) => current === childId ? null : current);
+    setChildModal(null);
+  };
+
   const toggleChildSetting = async (childId, key) => {
     const previousSettings = cloneSafetySettings(settingsByChild[childId]);
     const nextSettings = { ...previousSettings, [key]: !previousSettings[key] };
@@ -2808,6 +2859,7 @@ export function App() {
             child={childModal.mode === "edit" ? children.find((child) => child.id === childModal.childId) : null}
             onClose={() => setChildModal(null)}
             onSave={saveChild}
+            onDelete={deleteChild}
           />
         )}
         {session && scheduleModalChildId && (

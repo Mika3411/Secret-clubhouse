@@ -23,6 +23,7 @@ export const api = {
   children: () => request("/children"),
   createChild: (data) => request("/children", { method: "POST", body: JSON.stringify(data) }),
   updateChild: (childId, data) => request(`/children/${encodeURIComponent(childId)}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteChild: (childId) => request(`/children/${encodeURIComponent(childId)}`, { method: "DELETE" }),
   heartbeat: () => request("/presence/heartbeat", { method: "POST" }),
   presence: (contactIds) => request(`/presence?contactIds=${encodeURIComponent(contactIds.join(","))}`),
   pushPublicKey: () => request("/push/public-key"),

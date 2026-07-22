@@ -14,6 +14,7 @@ When implementing from a selected generated mock, treat that image as the source
 - Accounts use parent-managed usernames and QR friend codes, never child phone numbers or public search.
 - The parent area is separated from the child experience by a four-digit parent code and focuses on contact approval, safety settings, and high-level activity rather than exposing message contents.
 - A parent can create and manage multiple child profiles (ages 6–13) under one family account. Each child keeps separate contacts and safety settings, and the selected profile becomes the child space shown on the device.
+- A parent can permanently delete one of their own child profiles only after an explicit destructive confirmation. Deletion removes the child account and its conversations, messages, media, contact requests, presence, and notification subscriptions; another family can never delete it.
 - The public entry point is parent-first authentication with separate sign-in and registration forms plus a clearly labeled fake demo account. Registration opens an empty family and immediately offers first-child creation.
 - Demo family data is isolated to explicit demo sessions and must never seed, overwrite, or appear in an authenticated production family.
 - The "Mode calme" safety row opens a per-child schedule editor with separate allowed time windows for messages, audio calls, and video calls.
