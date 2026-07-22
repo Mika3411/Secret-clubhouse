@@ -44,6 +44,19 @@ final result: passed
 
 ---
 
+**Child Add-Friend Flow QA**
+
+- Source visual language: existing Secret Clubhouse child home and contact QR modal.
+- Implementation: browser-rendered `http://127.0.0.1:4174/`, child home → Ajouter un ami.
+- The primary state now contains a usable contact-ID form; “Mon QR” remains available as a distinct tab.
+- Verified valid ID entry, child-to-parent handoff, parent authentication boundary, and prefilled parent request dialog.
+- No actionable P0/P1/P2 visual mismatch: indigo, mint, rounded geometry, typography and touch sizing remain consistent.
+- Production build passes.
+
+final result: passed
+
+---
+
 **QR Contact Comparison Target**
 
 - Source visual truth: `C:/Users/admin/AppData/Local/Temp/codex-clipboard-3d630151-9042-4acb-b6f6-eb10e744c4db.png` (470 × 535 px).

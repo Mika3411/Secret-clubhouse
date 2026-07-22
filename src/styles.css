@@ -4775,6 +4775,93 @@ input:focus-visible {
   background: #fff;
 }
 
+.qr-modal-tabs {
+  display: grid;
+  width: calc(100% - 38px);
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 0 38px 18px 0;
+  padding: 4px;
+  border-radius: 14px;
+  background: #f1eefb;
+}
+
+.qr-modal-tabs button {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 11px;
+  color: #6f697d;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.qr-modal-tabs button.is-active {
+  color: #120966;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(18, 9, 102, .1);
+}
+
+.add-friend-modal-icon {
+  display: grid;
+  width: 66px;
+  height: 66px;
+  place-items: center;
+  border-radius: 22px;
+  color: #120966;
+  background: var(--mint);
+}
+
+.child-add-friend-form {
+  display: grid;
+  width: 100%;
+  gap: 9px;
+  margin-top: 16px;
+  text-align: left;
+}
+
+.child-add-friend-form label {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.child-add-friend-form input {
+  width: 100%;
+  height: 50px;
+  padding: 0 14px;
+  border: 1px solid #dcd4ef;
+  border-radius: 14px;
+  outline: none;
+  color: var(--ink);
+  background: #faf9fe;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+
+.child-add-friend-form input:focus {
+  border-color: #7358d4;
+  box-shadow: 0 0 0 3px rgba(115, 88, 212, .14);
+}
+
+.child-add-friend-form .approval-steps {
+  margin: 2px 0 5px;
+}
+
+.child-add-friend-form .primary-button {
+  width: 100%;
+}
+
+.child-add-friend-error {
+  margin: 0;
+  color: #b42352;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .real-contact-qr {
   display: grid;
   width: 156px;

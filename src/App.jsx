@@ -1553,6 +1553,7 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
       setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
       setContactId("");
       if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
+      onContactHandled?.();
     } catch (error) {
       setContactFeedback({ type: "error", text: error.message });
     } finally {
@@ -1927,8 +1928,11 @@ function BottomNavigation({ active, onChange }) {
   );
 }
 
-function QrModal({ child, onClose }) {
+function QrModal({ child, onClose, onRequestAdd }) {
   const [idCopied, setIdCopied] = useState(false);
+  const [mode, setMode] = useState("add");
+  const [contactId, setContactId] = useState("");
+  const [error, setError] = useState("");
   const contactUrl = `${window.location.origin}/?contact=${encodeURIComponent(child.contactId)}`;
 
   const copyId = async () => {
@@ -1936,21 +1940,52 @@ function QrModal({ child, onClose }) {
     setIdCopied(true);
   };
 
+  const continueWithParent = (event) => {
+    event.preventDefault();
+    const normalizedId = contactId.trim().toUpperCase();
+    if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(normalizedId)) {
+      setError("Saisis un identifiant au format SC-123-456-789.");
+      return;
+    }
+    if (normalizedId === child.contactId) {
+      setError("Choisis l’identifiant d’un autre enfant.");
+      return;
+    }
+    onRequestAdd(normalizedId);
+  };
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer"><X size={21} weight="bold" /></button>
-        <div className="real-contact-qr" aria-label={`QR code de contact de ${child.name}`}>
-          <QRCodeSVG value={contactUrl} size={132} level="H" marginSize={2} bgColor="#ffffff" fgColor="#120966" title={`Ajouter ${child.name} avec l’identifiant ${child.contactId}`} />
+        <div className="qr-modal-tabs" role="tablist" aria-label="Ajouter un ami">
+          <button type="button" role="tab" aria-selected={mode === "add"} className={mode === "add" ? "is-active" : ""} onClick={() => setMode("add")}><UserPlus size={17} weight="bold" /> Ajouter</button>
+          <button type="button" role="tab" aria-selected={mode === "share"} className={mode === "share" ? "is-active" : ""} onClick={() => setMode("share")}><QrCode size={17} weight="bold" /> Mon QR</button>
         </div>
-        <h2 id="qr-title">Identifiant de {child.name}</h2>
-        <p>Présente ce QR code ou cet identifiant avec l’aide de ton parent.</p>
-        <button type="button" className={`qr-contact-id ${idCopied ? "is-copied" : ""}`} onClick={copyId}><IdentificationCard size={18} weight="fill" /><span>{idCopied ? "Identifiant copié !" : child.contactId}</span>{idCopied ? <CheckCircle size={18} weight="fill" /> : <Copy size={17} weight="bold" />}</button>
-        <div className="approval-steps">
-          <span><CheckCircle size={17} weight="fill" /> L’identifiant cible un seul compte</span>
-          <span><ShieldCheck size={17} weight="fill" /> Le parent approuve la demande</span>
-        </div>
-        <button className="primary-button" type="button" onClick={onClose}>J’ai compris</button>
+        {mode === "add" ? <>
+          <span className="add-friend-modal-icon"><UserPlus size={31} weight="fill" /></span>
+          <h2 id="qr-title">Ajouter un ami</h2>
+          <p>Saisis l’identifiant affiché sur son QR code. Ton parent terminera la demande.</p>
+          <form className="child-add-friend-form" onSubmit={continueWithParent}>
+            <label htmlFor="friend-contact-id">Identifiant de ton ami</label>
+            <input id="friend-contact-id" value={contactId} onChange={(event) => { setContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} placeholder="SC-123-456-789" autoComplete="off" autoFocus />
+            {error && <p className="child-add-friend-error" role="alert">{error}</p>}
+            <div className="approval-steps"><span><ShieldCheck size={17} weight="fill" /> Aucun ami n’est ajouté sans l’accord du parent</span></div>
+            <button className="primary-button" type="submit"><LockKey size={18} weight="fill" /> Continuer avec mon parent</button>
+          </form>
+        </> : <>
+          <div className="real-contact-qr" aria-label={`QR code de contact de ${child.name}`}>
+            <QRCodeSVG value={contactUrl} size={132} level="H" marginSize={2} bgColor="#ffffff" fgColor="#120966" title={`Ajouter ${child.name} avec l’identifiant ${child.contactId}`} />
+          </div>
+          <h2 id="qr-title">Identifiant de {child.name}</h2>
+          <p>Présente ce QR code ou cet identifiant avec l’aide de ton parent.</p>
+          <button type="button" className={`qr-contact-id ${idCopied ? "is-copied" : ""}`} onClick={copyId}><IdentificationCard size={18} weight="fill" /><span>{idCopied ? "Identifiant copié !" : child.contactId}</span>{idCopied ? <CheckCircle size={18} weight="fill" /> : <Copy size={17} weight="bold" />}</button>
+          <div className="approval-steps">
+            <span><CheckCircle size={17} weight="fill" /> L’identifiant cible un seul compte</span>
+            <span><ShieldCheck size={17} weight="fill" /> Le parent approuve la demande</span>
+          </div>
+          <button className="primary-button" type="button" onClick={onClose}>J’ai compris</button>
+        </>}
       </section>
     </div>
   );
@@ -1975,10 +2010,10 @@ export function App() {
   const [parentThreads, setParentThreads] = useState(() => cloneParentThreads());
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
   const [presenceByContactId, setPresenceByContactId] = useState({});
-  const scannedContactId = useMemo(() => {
+  const [pendingContactId, setPendingContactId] = useState(() => {
     const value = new URLSearchParams(window.location.search).get("contact")?.trim().toUpperCase() ?? "";
     return /^SC-\d{3}-\d{3}-\d{3}$/.test(value) ? value : "";
-  }, []);
+  });
   const activeChild = children.find((child) => child.id === activeChildId) ?? children[0] ?? null;
   const activeRequestStatus = activeChild ? requestStatuses[activeChild.id] ?? "none" : "none";
   const activeSettings = activeChild ? settingsByChild[activeChild.id] ?? defaultSafetySettings : defaultSafetySettings;
@@ -1991,11 +2026,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (session?.role === "parent" && scannedContactId) {
+    if (session?.role === "parent" && pendingContactId) {
       setSelectedParentThreadId(null);
       setParentView("messages");
     }
-  }, [scannedContactId, session]);
+  }, [pendingContactId, session]);
+
+  const requestFriendWithParent = (contactId) => {
+    setPendingContactId(contactId);
+    window.history.replaceState({}, "", `${window.location.pathname}?contact=${encodeURIComponent(contactId)}`);
+    setIsQrOpen(false);
+    setSelectedConversation(null);
+    if (session?.role === "parent") {
+      setParentView("access");
+      return;
+    }
+    clearToken();
+    setSession(null);
+    setParentView(null);
+  };
 
   useEffect(() => {
     if (!session || !getToken()) return undefined;
@@ -2143,7 +2192,7 @@ export function App() {
       return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} isDemo={Boolean(session.demo)} initialContactId={scannedContactId} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
     if (parentView === "dashboard") {
       return (
@@ -2178,7 +2227,7 @@ export function App() {
     if (selectedConversation) {
       return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} />;
     }
-    if (activeTab === "clubhouse") return <ClubhouseScreen />;
+    if (activeTab === "clubhouse") return <ClubhouseScreen child={activeChild} />;
     if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onLogout={logoutParent} />;
     const baseFriends = activeChild.id === "emma" ? friends : [];
     const approvedFriends = (activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
@@ -2194,6 +2243,8 @@ export function App() {
   }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, familyOwner, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, session]);
 
   const changeTab = (tab) => {
+    const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
+    if (scrollContainer) scrollContainer.scrollTop = 0;
     setSelectedConversation(null);
     setActiveTab(tab);
   };
@@ -2203,7 +2254,7 @@ export function App() {
       <div className="mobile-prototype" ref={dragScrollRef}>
         <div className={`screen-scroll ${!session || selectedConversation || parentView || activeChild?.status === "paused" || !activeChild ? "screen-scroll--full" : ""}`}>{screen}</div>
         {session && !selectedConversation && !parentView && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
-        {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} />}
+        {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
         {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} children={children} onClose={() => setIsContactIdsOpen(false)} />}
         {session && childModal && (
           <ChildAccountModal
