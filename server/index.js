@@ -329,9 +329,55 @@ async function notifyConversation(conversationId, senderId, payload) {
   }));
 }
 
+app.post("/api/family-conversations", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut ouvrir une conversation familiale." });
+  const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
+  if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId) || contactId === demoChildContactId) {
+    return res.status(400).json({ error: "Identifiant enfant invalide." });
+  }
+  const childResult = await pool.query(
+    "select id,display_name,contact_id from accounts where role='child' and parent_id=$1 and contact_id=$2",
+    [req.auth.sub, contactId],
+  );
+  const child = childResult.rows[0];
+  if (!child) return res.status(404).json({ error: "Cet enfant n’appartient pas à votre famille." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [child.id]);
+    const existing = await client.query(
+      "select conversation_id from family_conversations where parent_id=$1 and child_id=$2",
+      [req.auth.sub, child.id],
+    );
+    let conversationId = existing.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const conversation = await client.query("insert into conversations(kind) values('child') returning id");
+      conversationId = conversation.rows[0].id;
+      await client.query(
+        "insert into conversation_members(conversation_id,account_id) values($1,$2),($1,$3)",
+        [conversationId, req.auth.sub, child.id],
+      );
+      await client.query(
+        "insert into family_conversations(parent_id,child_id,conversation_id) values($1,$2,$3)",
+        [req.auth.sub, child.id, conversationId],
+      );
+    }
+    await client.query("commit");
+    res.status(existing.rowCount ? 200 : 201).json({
+      conversation: { id: conversationId, kind: "child", name: child.display_name, contactId: child.contact_id, contactRole: "child", messages: [] },
+    });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/api/conversations", requireAuth, async (req, res) => {
   const result = await pool.query(`
-    select c.id, c.kind, a.display_name as name, a.contact_id,
+    select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
       coalesce(json_agg(json_build_object('id',m.id,'senderId',m.sender_id,'text',m.body,'mediaName',m.media_name,'mediaType',m.media_type,'createdAt',m.created_at) order by m.created_at) filter (where m.id is not null),'[]') as messages
     from conversation_members mine
     join conversations c on c.id=mine.conversation_id

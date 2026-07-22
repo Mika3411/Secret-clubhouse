@@ -30,6 +30,7 @@ export const api = {
   unsubscribePush: (endpoint) => request("/push/subscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) }),
   saveNativePushToken: (token, platform) => request("/push/native-token", { method: "POST", body: JSON.stringify({ token, platform }) }),
   conversations: () => request("/conversations"),
+  openFamilyConversation: (contactId) => request("/family-conversations", { method: "POST", body: JSON.stringify({ contactId }) }),
   addContact: (contactId) => request("/contact-requests", { method: "POST", body: JSON.stringify({ contactId }) }),
   sendMessage: (conversationId, text) => request(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   sendMedia: (conversationId, files) => { const body = new FormData(); files.forEach((file) => body.append("media", file)); return request(`/conversations/${conversationId}/media`, { method: "POST", body }); },

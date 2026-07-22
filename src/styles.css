@@ -4378,6 +4378,11 @@ input:focus-visible {
   display: grid;
 }
 
+.child-overview .child-overview__actions {
+  display: flex;
+  gap: 7px;
+}
+
 .child-overview span,
 .child-overview small {
   color: #e6e0ff;
@@ -4390,7 +4395,8 @@ input:focus-visible {
   line-height: 1;
 }
 
-.child-edit-button {
+.child-edit-button,
+.child-message-action {
   display: grid;
   width: 40px;
   height: 40px;
@@ -4398,6 +4404,11 @@ input:focus-visible {
   border-radius: 13px;
   color: var(--navy);
   background: var(--mint);
+}
+
+.child-message-action {
+  color: #fff;
+  background: rgba(16, 9, 78, 0.3);
 }
 
 .parent-stats {

@@ -52,6 +52,14 @@ export async function initializeDatabase() {
       primary key (conversation_id, account_id)
     );
 
+    create table if not exists family_conversations (
+      parent_id uuid not null references accounts(id) on delete cascade,
+      child_id uuid not null unique references accounts(id) on delete cascade,
+      conversation_id uuid not null unique references conversations(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (parent_id, child_id)
+    );
+
     create table if not exists contact_requests (
       id uuid primary key default gen_random_uuid(),
       requester_id uuid not null references accounts(id) on delete cascade,

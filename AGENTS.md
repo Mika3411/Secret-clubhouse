@@ -18,9 +18,10 @@ When implementing from a selected generated mock, treat that image as the source
 - Demo family data is isolated to explicit demo sessions and must never seed, overwrite, or appear in an authenticated production family.
 - The "Mode calme" safety row opens a per-child schedule editor with separate allowed time windows for messages, audio calls, and video calls.
 - Every child profile has a parent-managed private username and password so the child can sign in independently without a phone number; children can never self-register.
-- The parent account includes a separate adult-only inbox for messaging the parents of approved or pending child contacts; it never exposes or mixes in the children’s conversations.
+- The protected parent inbox clearly separates direct family conversations with the parent’s own children from adult conversations with parents of approved or pending child contacts. It never exposes the children’s conversations with friends.
+- A parent can directly open and persist a conversation with any child in their own family without a friend request or approval. Entering the child’s exact contact ID opens that family conversation instead of showing an error.
 - Every family member, including the parent and each child, owns a distinct opaque contact ID. No public contact link is shown; usernames are never used to route discussions, and adding an exact ID only creates a parent-approved request.
-- The parent messaging inbox includes an "Ajouter un contact" action. Entering an exact private contact ID creates a pending approval request; it never opens a conversation immediately.
+- The parent messaging inbox includes an "Ajouter un contact" action. Entering an exact private ID for an external contact creates a pending approval request; entering the ID of one of the parent’s own children opens the family conversation immediately.
 - Each child contact modal displays a real scannable QR code containing the app URL and exact private contact ID. Scanning it opens the parent contact-request form prefilled; the parent still confirms sending the request.
 - Audio and video calls use WebRTC, are limited to approved contacts, and obey each child’s parent-managed permissions and allowed hours. Camera, microphone, speaker, and hang-up controls must remain obvious.
 - Parents can configure one neutral automatic reply for messages and audio/video call attempts received outside allowed hours. It must not reveal schedules or personal details, and automatic messages must never trigger another automatic reply.
@@ -29,7 +30,7 @@ When implementing from a selected generated mock, treat that image as the source
 - The child Clubhouse is an interactive activity hub with filterable creative challenges and mini-games, private progress, earned stars, daily streaks, and replayable activities.
 - The child profile uses one centered 300 px card column: contact ID, protection, notifications, and parent access share consistent widths, radii, icon proportions, and spacing on phones and tablets.
 - Children can send images, photos, and videos only when the parent has enabled media sharing for that child; media remains limited to approved contacts and allowed messaging hours.
-- The separate adult-only parent inbox supports parent-to-parent audio/video calls and photo, image, and video attachments.
+- The protected parent inbox supports parent-to-child and parent-to-parent conversations; adult parent-to-parent threads also support audio/video calls and photo, image, and video attachments.
 - Production persistence uses only a Render Node.js web service and Render PostgreSQL; do not introduce Supabase or another external backend/storage provider. Accounts, messages, and media must use the server API and PostgreSQL as their source of truth.
 - Online/offline presence is server-backed: authenticated clients heartbeat periodically, PostgreSQL stores last activity, and contacts become offline after the presence timeout.
 - New messages and media use standards-based Web Push through the Render service, with subscriptions stored in PostgreSQL. On locked devices the operating system controls notification sound; never promise a custom continuous ringtone from the web app.

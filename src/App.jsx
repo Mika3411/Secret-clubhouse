@@ -151,6 +151,15 @@ const clubhouseActivities = [
       { prompt: "Quel animal dort debout ?", answers: ["Le cheval", "Le dauphin", "Le lapin"], correct: 0 },
       { prompt: "Quel animal peut changer de couleur ?", answers: ["Le panda", "Le caméléon", "La loutre"], correct: 1 },
       { prompt: "Quel animal est le plus grand ?", answers: ["L’éléphant", "La baleine bleue", "La girafe"], correct: 1 },
+      { prompt: "Quel animal construit des barrages ?", answers: ["Le castor", "Le renard", "Le koala"], correct: 0 },
+      { prompt: "Quel animal porte son bébé dans une poche ?", answers: ["Le kangourou", "Le zèbre", "Le phoque"], correct: 0 },
+      { prompt: "Quel animal a huit bras ?", answers: ["Le crabe", "La pieuvre", "L’étoile de mer"], correct: 1 },
+      { prompt: "Quel oiseau ne peut pas voler ?", answers: ["Le moineau", "Le manchot", "L’hirondelle"], correct: 1 },
+      { prompt: "Quel animal possède une trompe ?", answers: ["L’éléphant", "L’hippopotame", "Le rhinocéros"], correct: 0 },
+      { prompt: "Quel animal fabrique du miel ?", answers: ["La fourmi", "L’abeille", "La coccinelle"], correct: 1 },
+      { prompt: "Quel animal est couvert de piquants ?", answers: ["Le hérisson", "La taupe", "Le hamster"], correct: 0 },
+      { prompt: "Quel animal vit dans une ruche ?", answers: ["Le papillon", "L’abeille", "La libellule"], correct: 1 },
+      { prompt: "Quel animal a un très long cou ?", answers: ["La girafe", "Le lion", "Le gorille"], correct: 0 },
     ],
   },
   {
@@ -166,6 +175,15 @@ const clubhouseActivities = [
       { prompt: "Quel mot n’est pas une couleur ?", answers: ["Violet", "Banane", "Menthe"], correct: 1 },
       { prompt: "Lequel ne vole pas ?", answers: ["Papillon", "Aigle", "Dauphin"], correct: 2 },
       { prompt: "Lequel n’est pas un sport ?", answers: ["Basket", "Piano", "Natation"], correct: 1 },
+      { prompt: "Lequel n’est pas un fruit ?", answers: ["Pomme", "Carotte", "Poire"], correct: 1 },
+      { prompt: "Lequel ne vit pas dans l’eau ?", answers: ["Dauphin", "Requin", "Écureuil"], correct: 2 },
+      { prompt: "Lequel n’est pas un instrument ?", answers: ["Guitare", "Trompette", "Trottinette"], correct: 2 },
+      { prompt: "Lequel n’est pas un vêtement ?", answers: ["Bonnet", "Nuage", "Manteau"], correct: 1 },
+      { prompt: "Lequel n’est pas un moyen de transport ?", answers: ["Train", "Vélo", "Canapé"], correct: 2 },
+      { prompt: "Lequel n’est pas une saison ?", answers: ["Printemps", "Mercredi", "Automne"], correct: 1 },
+      { prompt: "Lequel n’est pas une forme ?", answers: ["Triangle", "Cercle", "Chocolat"], correct: 2 },
+      { prompt: "Lequel ne pousse pas dans un jardin ?", answers: ["Tomate", "Tulipe", "Téléphone"], correct: 2 },
+      { prompt: "Lequel n’est pas dans l’espace ?", answers: ["Planète", "Étoile", "Bicyclette"], correct: 2 },
     ],
   },
 ];
@@ -291,6 +309,47 @@ const cloneParentThreads = () => initialParentThreads.map((thread) => ({
   ...thread,
   messages: thread.messages.map((message) => ({ ...message })),
 }));
+
+const formatServerMessageTime = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Maintenant";
+  return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(date);
+};
+
+const mapServerConversation = (conversation, account) => {
+  const messages = (Array.isArray(conversation.messages) ? conversation.messages : [])
+    .filter((message) => message.text)
+    .map((message) => ({
+      id: message.id,
+      direction: message.senderId === account.id ? "sent" : "received",
+      text: message.text,
+      time: formatServerMessageTime(message.createdAt),
+      status: "received",
+    }));
+  const latest = messages[messages.length - 1];
+  const initials = String(conversation.name ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const isFamily = conversation.kind === "child" && (
+    (account.role === "parent" && conversation.contact_role === "child")
+    || (account.role === "child" && conversation.contact_role === "parent")
+  );
+  return {
+    id: conversation.id,
+    name: conversation.name,
+    contactId: conversation.contact_id,
+    contactRole: conversation.contact_role,
+    isFamily,
+    serverBacked: true,
+    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : "Parent d’un contact",
+    initials,
+    preview: latest?.text ?? (isFamily ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
+    time: latest?.time ?? "Maintenant",
+    unread: 0,
+    messages,
+    ActivityIcon: ChatCircleDots,
+    received: messages.filter((message) => message.direction === "received").map((message) => message.text),
+    sent: messages.filter((message) => message.direction === "sent").at(-1)?.text ?? "",
+  };
+};
 
 function createUniqueContactId(existingIds = []) {
   let contactId;
@@ -1182,10 +1241,11 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
   );
 }
 
-function ChatScreen({ child, conversation, settings, schedule, onBack }) {
+function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage }) {
   const [draft, setDraft] = useState("");
   const [sentMessages, setSentMessages] = useState([]);
   const [mediaError, setMediaError] = useState("");
+  const [messageError, setMessageError] = useState("");
   const mediaInputRef = useRef(null);
   const mediaUrlsRef = useRef([]);
   const [isAudioCallOpen, setIsAudioCallOpen] = useState(false);
@@ -1209,12 +1269,20 @@ function ChatScreen({ child, conversation, settings, schedule, onBack }) {
     return () => window.clearTimeout(seenTimer);
   }, [sentMessages]);
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!messagePolicy.allowed) return;
     const message = draft.trim();
     if (!message) return;
-    setSentMessages((current) => [...current, { id: `message-${Date.now()}`, type: "text", text: message, status: "received" }]);
-    setDraft("");
+    setMessageError("");
+    try {
+      const sent = await onSendMessage?.(conversation.id, message);
+      if (!conversation.serverBacked) {
+        setSentMessages((current) => [...current, { id: sent?.id ?? `message-${Date.now()}`, type: "text", text: message, status: "received" }]);
+      }
+      setDraft("");
+    } catch (error) {
+      setMessageError(error.message);
+    }
   };
 
   const sendMedia = (event) => {
@@ -1264,7 +1332,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack }) {
         <Avatar person={conversation} size="chat" online />
         <div className="chat-header__copy">
           <strong>{conversation.name}</strong>
-          <span><ShieldCheck size={13} weight="fill" /> Contact approuvé</span>
+          <span><ShieldCheck size={13} weight="fill" /> {conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
         </div>
         <button className={`icon-button audio-call-button ${audioPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => setIsAudioCallOpen(true)} aria-label={`Appeler ${conversation.name}`} title={audioPolicy.allowed ? "Appel audio" : audioPolicy.reason}>
           <Phone size={21} weight="bold" />
@@ -1282,8 +1350,12 @@ function ChatScreen({ child, conversation, settings, schedule, onBack }) {
         {!messagePolicy.allowed && (
           <div className="chat-quiet-banner" role="status"><Clock size={18} weight="fill" /><span><strong>Mode calme actif</strong><small>{autoReplyIsActive ? `${conversation.name} reçoit automatiquement un message.` : `Les messages seront disponibles à ${nextMessageTime}.`}</small></span></div>
         )}
-        {conversation.received.map((message) => <p className="bubble bubble--received" key={message}>{message}</p>)}
-        <p className="bubble bubble--sent">{conversation.sent}<MessageStatus status="seen" /></p>
+        {conversation.serverBacked ? conversation.messages.map((message) => (
+          <p className={`bubble bubble--${message.direction}`} key={message.id}>{message.text}{message.direction === "sent" && <MessageStatus status={message.status ?? "received"} />}</p>
+        )) : <>
+          {conversation.received.map((message) => <p className="bubble bubble--received" key={message}>{message}</p>)}
+          {conversation.sent && <p className="bubble bubble--sent">{conversation.sent}<MessageStatus status="seen" /></p>}
+        </>}
         {sentMessages.map((message) => {
           if (message.type === "text") return <p className="bubble bubble--sent" key={message.id}>{message.text}<MessageStatus status={message.status} /></p>;
           if (message.type === "audio") return <VoiceMessage key={message.id} url={message.url} duration={message.duration} status={message.status} />;
@@ -1302,9 +1374,10 @@ function ChatScreen({ child, conversation, settings, schedule, onBack }) {
             <p className="bubble bubble--sent bubble--automatic"><span>{autoReply.message}</span><small>Automatique</small><MessageStatus status="received" /></p>
           </div>
         )}
-        <div className="safety-reminder"><LockKey size={16} weight="fill" /> Cette discussion reste entre amis approuvés.</div>
+        <div className="safety-reminder"><LockKey size={16} weight="fill" /> {conversation.isFamily ? "Cette discussion familiale reste entre toi et ton parent." : "Cette discussion reste entre amis approuvés."}</div>
       </div>
 
+      {messageError && <div className="media-error" role="alert">{messageError}</div>}
       {mediaError && <div className="media-error" role="alert">{mediaError}</div>}
 
       <form className={`composer ${messagePolicy.allowed ? "" : "is-quiet"}`} onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
@@ -1332,9 +1405,11 @@ function ClubhouseScreen({ child }) {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [rewardEarned, setRewardEarned] = useState(false);
+  const [sessionQuestions, setSessionQuestions] = useState([]);
+  const questionDecksRef = useRef({});
   const featuredActivity = clubhouseActivities.find((activity) => activity.featured);
   const visibleActivities = clubhouseActivities.filter((activity) => !activity.featured && (filter === "all" || activity.type === filter));
-  const currentQuestion = selectedActivity?.questions?.[questionIndex] ?? null;
+  const currentQuestion = sessionQuestions[questionIndex] ?? null;
   const progress = Math.round((completedActivities.size / clubhouseActivities.length) * 100);
 
   useEffect(() => {
@@ -1352,6 +1427,20 @@ function ClubhouseScreen({ child }) {
   }, [phase, selectedActivity]);
 
   const openActivity = (activity) => {
+    if (activity.type === "game") {
+      let deck = questionDecksRef.current[activity.id] ?? [];
+      if (deck.length < 3) {
+        const previousLastPrompt = deck.at(-1)?.prompt;
+        deck = [...activity.questions]
+          .sort(() => Math.random() - 0.5)
+          .sort((first) => first.prompt === previousLastPrompt ? 1 : 0);
+      }
+      const nextQuestions = deck.slice(0, 3);
+      questionDecksRef.current[activity.id] = deck.slice(3);
+      setSessionQuestions(nextQuestions);
+    } else {
+      setSessionQuestions([]);
+    }
     setSelectedActivity(activity);
     setPhase("intro");
     setQuestionIndex(0);
@@ -1392,7 +1481,7 @@ function ClubhouseScreen({ child }) {
       setSelectedAnswer(null);
       return;
     }
-    if (questionIndex >= selectedActivity.questions.length - 1) {
+    if (questionIndex >= sessionQuestions.length - 1) {
       completeActivity();
       return;
     }
@@ -1486,7 +1575,7 @@ function ClubhouseScreen({ child }) {
 
                 {phase === "active" && selectedActivity.type === "game" && currentQuestion && (
                   <div className="clubhouse-quiz">
-                    <span className="clubhouse-quiz__progress">Question {questionIndex + 1} sur {selectedActivity.questions.length}</span>
+                    <span className="clubhouse-quiz__progress">Question {questionIndex + 1} sur {sessionQuestions.length}</span>
                     <h3>{currentQuestion.prompt}</h3>
                     <div>{currentQuestion.answers.map((answer, index) => {
                       const isSelected = selectedAnswer === index;
@@ -1494,7 +1583,7 @@ function ClubhouseScreen({ child }) {
                       return <button key={answer} type="button" className={`${isSelected ? "is-selected" : ""} ${isCorrect ? "is-correct" : ""}`} onClick={() => selectQuizAnswer(index)} disabled={selectedAnswer !== null}>{answer}{isCorrect && <CheckCircle size={18} weight="fill" />}</button>;
                     })}</div>
                     {selectedAnswer !== null && <p className={selectedAnswer === currentQuestion.correct ? "is-correct" : "is-wrong"}>{selectedAnswer === currentQuestion.correct ? "Bien joué !" : "Presque ! Essaie encore."}</p>}
-                    {selectedAnswer !== null && <button type="button" className="clubhouse-modal__primary" onClick={continueQuiz}>{selectedAnswer === currentQuestion.correct ? (questionIndex === selectedActivity.questions.length - 1 ? "Voir mon résultat" : "Question suivante") : "Réessayer"}<CaretRight size={18} weight="bold" /></button>}
+                    {selectedAnswer !== null && <button type="button" className="clubhouse-modal__primary" onClick={continueQuiz}>{selectedAnswer === currentQuestion.correct ? (questionIndex === sessionQuestions.length - 1 ? "Voir mon résultat" : "Question suivante") : "Réessayer"}<CaretRight size={18} weight="bold" /></button>}
                   </div>
                 )}
               </>
@@ -1664,7 +1753,7 @@ function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
-function ParentDashboard({ parentName, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onEditSchedule, onExit, onLogout }) {
+function ParentDashboard({ parentName, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onMessageChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onEditSchedule, onExit, onLogout }) {
   const baseFriendsCount = isDemo ? friends.length : 0;
   const approvedCount = requestStatus === "approved" ? baseFriendsCount + 1 : baseFriendsCount;
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
@@ -1688,7 +1777,7 @@ function ParentDashboard({ parentName, children, child, isDemo, requestStatus, o
 
         <button type="button" className="parent-messages-entry" onClick={onOpenMessages}>
           <span className="parent-messages-entry__icon"><ChatCircleDots size={24} weight="fill" /></span>
-          <span><strong>Messagerie parentale</strong><small>Échangez uniquement avec les parents des contacts.</small></span>
+          <span><strong>Famille et parents</strong><small>Échangez avec vos enfants et les parents de leurs contacts.</small></span>
           {unreadMessages > 0 ? <span className="parent-message-count">{unreadMessages}</span> : <CheckCircle size={20} weight="fill" />}
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
@@ -1713,7 +1802,10 @@ function ParentDashboard({ parentName, children, child, isDemo, requestStatus, o
         <section className={`child-overview ${child.status === "paused" ? "is-paused" : ""}`} aria-label={`Compte enfant de ${child.name}`}>
           <Avatar person={child} size="parent-child" />
           <div><span>Profil sélectionné</span><strong>{child.name}</strong><small>@{child.username} · ID {child.contactId} · {child.age} ans · {child.status === "active" ? "Compte actif" : "Compte en pause"}</small></div>
-          <button type="button" className="child-edit-button" onClick={onEditChild} aria-label={`Modifier le profil de ${child.name}`}><PencilSimple size={19} weight="bold" /></button>
+          <div className="child-overview__actions">
+            <button type="button" className="child-message-action" onClick={onMessageChild} aria-label={`Écrire à ${child.name}`} title={`Écrire à ${child.name}`}><ChatCircleDots size={20} weight="fill" /></button>
+            <button type="button" className="child-edit-button" onClick={onEditChild} aria-label={`Modifier le profil de ${child.name}`} title="Modifier le profil"><PencilSimple size={19} weight="bold" /></button>
+          </div>
         </section>
 
         <div className="parent-stats" aria-label="Résumé du compte">
@@ -1781,7 +1873,7 @@ function ParentDashboard({ parentName, children, child, isDemo, requestStatus, o
   );
 }
 
-function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend, isDemo, initialContactId = "", onContactHandled }) {
+function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onOpenFamilyConversation, isDemo, initialContactId = "", onContactHandled }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
@@ -1790,6 +1882,7 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
   const [contactId, setContactId] = useState(initialContactId);
   const [contactFeedback, setContactFeedback] = useState(null);
   const [isSubmittingContact, setIsSubmittingContact] = useState(false);
+  const [messageError, setMessageError] = useState("");
   const parentMediaInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
@@ -1804,6 +1897,15 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
     setIsSubmittingContact(true);
     setContactFeedback(null);
     try {
+      const familyChild = familyChildren.find((child) => child.contactId === normalizedId);
+      if (familyChild) {
+        await onOpenFamilyConversation(normalizedId);
+        setContactId("");
+        setIsAddingContact(false);
+        if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
+        onContactHandled?.();
+        return;
+      }
       if (!isDemo) await api.addContact(normalizedId);
       setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
       setContactId("");
@@ -1818,12 +1920,17 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
 
   useEffect(() => () => parentMediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
-  const submitMessage = (event) => {
+  const submitMessage = async (event) => {
     event.preventDefault();
     const message = draft.trim();
     if (!message || !selectedThread) return;
-    onSend(selectedThread.id, message);
-    setDraft("");
+    setMessageError("");
+    try {
+      await onSend(selectedThread.id, message);
+      setDraft("");
+    } catch (error) {
+      setMessageError(error.message);
+    }
   };
 
   const sendParentMedia = (event) => {
@@ -1863,11 +1970,11 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
   };
 
   if (selectedThread && callMode === "audio") {
-    return <AudioCallScreen child={{ name: parentName }} conversation={selectedThread} policy={{ allowed: true, reason: "", detail: "Contact adulte vérifié." }} autoReply={{ enabled: false, message: "" }} onClose={() => setCallMode(null)} />;
+    return <AudioCallScreen child={{ name: parentName }} conversation={selectedThread} policy={{ allowed: true, reason: "", detail: selectedThread.isFamily ? "Conversation familiale sécurisée." : "Contact adulte vérifié." }} autoReply={{ enabled: false, message: "" }} onClose={() => setCallMode(null)} />;
   }
 
   if (selectedThread && callMode === "video") {
-    return <VideoCallScreen child={{ name: parentName }} conversation={selectedThread} policy={{ allowed: true, reason: "", detail: "Contact adulte vérifié." }} autoReply={{ enabled: false, message: "" }} onClose={() => setCallMode(null)} />;
+    return <VideoCallScreen child={{ name: parentName }} conversation={selectedThread} policy={{ allowed: true, reason: "", detail: selectedThread.isFamily ? "Conversation familiale sécurisée." : "Contact adulte vérifié." }} autoReply={{ enabled: false, message: "" }} onClose={() => setCallMode(null)} />;
   }
 
   if (selectedThread) {
@@ -1876,11 +1983,11 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
         <header className="parent-messages-header parent-thread-header">
           <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
-          <div><strong>{selectedThread.name}</strong><small>{selectedThread.relation} · Contact adulte</small></div>
+          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : `${selectedThread.relation} · Contact adulte`}</small></div>
           <button type="button" className="parent-thread-call" onClick={() => setCallMode("audio")} aria-label={`Appeler ${selectedThread.name}`}><Phone size={19} weight="fill" /></button>
           <button type="button" className="parent-thread-call" onClick={() => setCallMode("video")} aria-label={`Lancer une visio avec ${selectedThread.name}`}><VideoCamera size={20} weight="fill" /></button>
         </header>
-        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>Discussion entre adultes, séparée de la messagerie des enfants.</span></div>
+        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
           <span className="parent-thread-day">Aujourd’hui</span>
           {selectedThread.messages.map((message) => (
@@ -1897,6 +2004,7 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
               </figure>
             ))}
         </div>
+        {messageError && <div className="parent-media-error" role="alert">{messageError}</div>}
         {mediaError && <div className="parent-media-error" role="alert">{mediaError}</div>}
         <form className="parent-message-composer" onSubmit={submitMessage}>
           <input ref={parentMediaInputRef} className="sr-only" type="file" accept="image/*,video/*" multiple onChange={sendParentMedia} />
@@ -1918,7 +2026,7 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
       </header>
 
       <div className="parent-messages-content">
-        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Un espace réservé aux adultes</strong><p>Ces messages ne sont jamais mélangés aux conversations de vos enfants.</p></div></div>
+        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez directement à vos enfants ou aux parents de leurs contacts, sans voir leurs discussions entre amis.</p></div></div>
         <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
@@ -1928,19 +2036,19 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
               {thread.unread > 0 ? <span className="parent-thread-unread">{thread.unread}</span> : <CaretRight size={18} weight="bold" aria-hidden="true" />}
             </button>
           ))}
-          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Les parents des contacts approuvés apparaîtront ici.</span></div>}
+          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
         </div>
       </div>
       {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
         <section className="add-contact-modal" role="dialog" aria-modal="true" aria-labelledby="add-contact-title" onMouseDown={(event) => event.stopPropagation()}>
           <span className="add-contact-icon"><UserPlus size={27} weight="fill" /></span>
           <h2 id="add-contact-title">Ajouter un contact</h2>
-          <p>Saisissez son identifiant privé. Son parent devra approuver la demande avant toute discussion.</p>
+          <p>Un enfant de votre famille s’ouvre directement. Pour un contact extérieur, son parent devra approuver la demande.</p>
           <form onSubmit={submitContact}>
             <label htmlFor="new-contact-id">Identifiant du contact</label>
             <input id="new-contact-id" value={contactId} onChange={(event) => { setContactId(event.target.value.toUpperCase().slice(0, 14)); setContactFeedback(null); }} placeholder="SC-123-456-789" autoComplete="off" autoFocus />
             {contactFeedback && <div className={`contact-feedback contact-feedback--${contactFeedback.type}`} role="status">{contactFeedback.type === "success" ? <CheckCircle size={17} weight="fill" /> : <Shield size={17} weight="fill" />}<span>{contactFeedback.text}</span></div>}
-            <div className="add-contact-actions"><button type="button" onClick={() => setIsAddingContact(false)}>Annuler</button><button type="submit" disabled={isSubmittingContact}>{isSubmittingContact ? "Envoi…" : "Envoyer la demande"}</button></div>
+            <div className="add-contact-actions"><button type="button" onClick={() => setIsAddingContact(false)}>Annuler</button><button type="submit" disabled={isSubmittingContact}>{isSubmittingContact ? "Ouverture…" : "Continuer"}</button></div>
           </form>
         </section>
       </div>}
@@ -2273,6 +2381,7 @@ export function App() {
   const [scheduleModalChildId, setScheduleModalChildId] = useState(null);
   const [isContactIdsOpen, setIsContactIdsOpen] = useState(false);
   const [parentThreads, setParentThreads] = useState([]);
+  const [serverConversations, setServerConversations] = useState([]);
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
   const [presenceByContactId, setPresenceByContactId] = useState({});
   const [pendingContactId, setPendingContactId] = useState(() => {
@@ -2338,15 +2447,28 @@ export function App() {
     setSettingsByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneSafetySettings(child.settings)])));
     setSchedulesByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneCommunicationSchedule(child.schedule)])));
     setParentThreads([]);
+    setServerConversations([]);
     setPresenceByContactId({});
+  };
+
+  const applyServerConversations = (account, conversationsPayload) => {
+    const mapped = conversationsPayload.map((conversation) => mapServerConversation(conversation, account));
+    if (account.role === "parent") {
+      setParentThreads(mapped);
+    } else {
+      setServerConversations(mapped);
+      setSelectedConversation((current) => current ? mapped.find((conversation) => conversation.id === current.id) ?? current : null);
+    }
+    return mapped;
   };
 
   const openAuthenticatedSession = async (parent) => {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     if (!parent.demo) {
       applyFamilyChildren([]);
-      const family = await api.children();
+      const [family, conversationData] = await Promise.all([api.children(), api.conversations()]);
       applyFamilyChildren(family.children.filter((child) => child.contactId !== demoChildContactId));
+      applyServerConversations({ ...parentWithId, role: "parent" }, conversationData.conversations);
     }
     setFamilyOwner(parentWithId);
     setSession({ ...parentWithId, role: "parent" });
@@ -2354,10 +2476,14 @@ export function App() {
     setSelectedConversation(null);
   };
 
-  const openChildSession = (child) => {
+  const openChildSession = async (child) => {
     applyFamilyChildren([child]);
+    if (!child.demo) {
+      const conversationData = await api.conversations();
+      applyServerConversations({ ...child, role: "child" }, conversationData.conversations);
+    }
     setFamilyOwner({ name: "Compte parent", email: "", contactId: "" });
-    setSession({ name: child.name, role: "child", childId: child.id });
+    setSession({ ...child, role: "child", childId: child.id });
     setActiveChildId(child.id);
     setParentView(null);
     setSelectedConversation(null);
@@ -2382,6 +2508,7 @@ export function App() {
     setSettingsByChild({ emma: cloneSafetySettings() });
     setSchedulesByChild({ emma: cloneCommunicationSchedule({ ...defaultCommunicationSchedule, calls: { ...defaultCommunicationSchedule.calls, enabled: true, start: "00:00", end: "23:59" }, video: { ...defaultCommunicationSchedule.video, enabled: true, start: "00:00", end: "23:59" } }) });
     setParentThreads(cloneParentThreads());
+    setServerConversations([]);
     setFamilyOwner({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639" });
   };
 
@@ -2394,7 +2521,7 @@ export function App() {
     try {
       const { account } = await api.login({ contactId, password });
       if (account.role !== "child" || account.contactId === demoChildContactId) return false;
-      openChildSession(account);
+      await openChildSession(account);
       return true;
     } catch {
       return false;
@@ -2419,6 +2546,7 @@ export function App() {
     setSettingsByChild({});
     setSchedulesByChild({});
     setParentThreads([]);
+    setServerConversations([]);
     setParentView(null);
     setChildModal(null);
     setScheduleModalChildId(null);
@@ -2498,22 +2626,91 @@ export function App() {
     setScheduleModalChildId(null);
   };
 
+  const openFamilyConversation = async (contactId) => {
+    const familyChild = children.find((child) => child.contactId === contactId);
+    if (!familyChild) throw new Error("Cet enfant n’appartient pas à votre famille.");
+
+    if (session?.demo) {
+      const threadId = `family-${familyChild.id}`;
+      setParentThreads((current) => current.some((thread) => thread.id === threadId) ? current : [{
+        id: threadId,
+        name: familyChild.name,
+        contactId: familyChild.contactId,
+        contactRole: "child",
+        isFamily: true,
+        relation: "Mon enfant",
+        initials: familyChild.name.slice(0, 1).toUpperCase(),
+        preview: "Commencez votre conversation familiale.",
+        time: "Maintenant",
+        unread: 0,
+        messages: [],
+      }, ...current]);
+      setSelectedParentThreadId(threadId);
+      setParentView("messages");
+      return threadId;
+    }
+
+    const { conversation } = await api.openFamilyConversation(contactId);
+    const conversationData = await api.conversations();
+    applyServerConversations(session, conversationData.conversations);
+    setSelectedParentThreadId(conversation.id);
+    setParentView("messages");
+    return conversation.id;
+  };
+
   const openParentThread = (threadId) => {
     setSelectedParentThreadId(threadId);
     if (!threadId) return;
     setParentThreads((current) => current.map((thread) => thread.id === threadId ? { ...thread, unread: 0 } : thread));
   };
 
-  const sendParentMessage = (threadId, text) => {
-    const messageId = `parent-message-${Date.now()}`;
+  const sendParentMessage = async (threadId, text) => {
+    const result = session?.demo ? null : await api.sendMessage(threadId, text);
+    const messageId = result?.message?.id ?? `parent-message-${Date.now()}`;
     setParentThreads((current) => current.map((thread) => thread.id === threadId ? {
       ...thread,
       preview: text,
       time: "À l’instant",
       messages: [...thread.messages, { id: messageId, direction: "sent", text, time: "Maintenant", status: "received" }],
     } : thread));
-    window.setTimeout(() => setParentThreads((current) => current.map((thread) => thread.id === threadId ? { ...thread, messages: thread.messages.map((message) => message.id === messageId ? { ...message, status: "seen" } : message) } : thread)), 1400);
+    if (session?.demo) {
+      window.setTimeout(() => setParentThreads((current) => current.map((thread) => thread.id === threadId ? { ...thread, messages: thread.messages.map((message) => message.id === messageId ? { ...message, status: "seen" } : message) } : thread)), 1400);
+    }
+    return result?.message;
   };
+
+  const sendChildMessage = async (conversationId, text) => {
+    if (session?.demo) return null;
+    const { message } = await api.sendMessage(conversationId, text);
+    const nextMessage = { id: message.id, direction: "sent", text, time: formatServerMessageTime(message.created_at), status: "received" };
+    setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
+      ...conversation,
+      preview: text,
+      time: "À l’instant",
+      messages: [...conversation.messages, nextMessage],
+    } : conversation));
+    setSelectedConversation((current) => current?.id === conversationId ? {
+      ...current,
+      preview: text,
+      time: "À l’instant",
+      messages: [...current.messages, nextMessage],
+    } : current);
+    return message;
+  };
+
+  useEffect(() => {
+    if (!session || session.demo || !getToken()) return undefined;
+    const refreshConversations = async () => {
+      try {
+        const result = await api.conversations();
+        applyServerConversations(session, result.conversations);
+      } catch {
+        // La prochaine synchronisation reprendra après une coupure réseau.
+      }
+    };
+    const timer = window.setInterval(refreshConversations, 15000);
+    return () => window.clearInterval(timer);
+  }, [session?.id, session?.role, session?.demo]);
 
   const screen = useMemo(() => {
     if (!session) {
@@ -2523,7 +2720,7 @@ export function App() {
       return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onOpenFamilyConversation={openFamilyConversation} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
     if (parentView === "dashboard") {
       return (
@@ -2536,6 +2733,7 @@ export function App() {
           onSelectChild={setActiveChildId}
           onAddChild={() => setChildModal({ mode: "create" })}
           onEditChild={() => setChildModal({ mode: "edit", childId: activeChild.id })}
+          onMessageChild={() => activeChild && void openFamilyConversation(activeChild.contactId)}
           onApproveRequest={() => activeChild && setRequestStatuses((current) => ({ ...current, [activeChild.id]: "approved" }))}
           onDeclineRequest={() => activeChild && setRequestStatuses((current) => ({ ...current, [activeChild.id]: "declined" }))}
           settings={activeSettings}
@@ -2557,22 +2755,22 @@ export function App() {
       return <PausedChildScreen child={activeChild} onOpenParent={() => setParentView("access")} />;
     }
     if (selectedConversation) {
-      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} />;
     }
     if (activeTab === "clubhouse") return <ClubhouseScreen child={activeChild} />;
     if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onLogout={logoutParent} />;
     const baseFriends = session?.demo ? friends : [];
     const approvedFriends = (session?.demo && activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
-    const availableConversations = approvedFriends.map((friend) => conversations.find((item) => item.id === friend.id) ?? {
+    const availableConversations = session?.demo ? approvedFriends.map((friend) => conversations.find((item) => item.id === friend.id) ?? {
       ...friend,
       preview: "Vous êtes maintenant amis !",
       time: "Maintenant",
       ActivityIcon: Sparkle,
       received: [`Coucou ${activeChild.name} ! On peut enfin discuter ici.`],
       sent: "Bienvenue dans mon Clubhouse !",
-    });
+    }) : serverConversations;
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, familyOwner, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, session]);
+  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, familyOwner, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
