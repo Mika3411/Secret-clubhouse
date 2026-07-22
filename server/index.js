@@ -199,6 +199,26 @@ app.get("/api/me", requireAuth, async (req, res) => {
   res.json({ account: await serializeAccount(result.rows[0]) });
 });
 
+app.patch("/api/account/password", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul le compte parent peut modifier ce mot de passe." });
+  const currentPassword = String(req.body?.currentPassword ?? "");
+  const newPassword = String(req.body?.newPassword ?? "");
+  if (currentPassword.length < 8 || newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ error: "Le nouveau mot de passe doit contenir entre 8 et 128 caractères." });
+  }
+  const result = await pool.query("select password_hash from accounts where id=$1 and role='parent'", [req.auth.sub]);
+  const account = result.rows[0];
+  if (!account || !await bcrypt.compare(currentPassword, account.password_hash)) {
+    return res.status(401).json({ error: "Le mot de passe actuel est incorrect." });
+  }
+  if (await bcrypt.compare(newPassword, account.password_hash)) {
+    return res.status(400).json({ error: "Choisissez un nouveau mot de passe différent de l’ancien." });
+  }
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await pool.query("update accounts set password_hash=$1 where id=$2 and role='parent'", [passwordHash, req.auth.sub]);
+  return res.status(204).end();
+});
+
 app.get("/api/children", requireAuth, async (req, res) => {
   if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
   const result = await pool.query(

@@ -4354,6 +4354,48 @@ input:focus-visible {
   color: #7259ce;
 }
 
+.parent-password-entry {
+  display: grid;
+  min-height: 62px;
+  grid-template-columns: 40px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  text-align: left;
+  color: var(--ink);
+  border: 1px solid #d9eee8;
+  border-radius: 18px;
+  background: linear-gradient(120deg, #fff, #eefbf7);
+}
+
+.parent-password-entry > span:first-child {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 13px;
+  color: #087f67;
+  background: #d6f7ee;
+}
+
+.parent-password-entry > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+}
+
+.parent-password-entry strong {
+  font-size: 11.5px;
+}
+
+.parent-password-entry small {
+  color: #777288;
+  font-size: 8.5px;
+}
+
+.parent-password-entry > svg {
+  color: #19a183;
+}
+
 .children-panel {
   padding: 13px;
   border: 1px solid #e9e5f2;
@@ -4978,6 +5020,214 @@ input:focus-visible {
   border-radius: 24px;
   background: #fff;
   box-shadow: 0 24px 60px rgba(7, 4, 60, 0.34);
+}
+
+.parent-password-modal {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  max-height: calc(100% - 28px);
+  padding: 24px 19px 19px;
+  overflow-y: auto;
+  color: var(--ink);
+  border-radius: 24px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(7, 4, 60, 0.34);
+}
+
+.parent-password-heading {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  padding-right: 30px;
+}
+
+.parent-password-heading > span {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  color: var(--navy);
+  border-radius: 15px;
+  background: var(--mint);
+}
+
+.parent-password-heading > div {
+  display: grid;
+}
+
+.parent-password-heading small {
+  color: #6d55ca;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.parent-password-heading h2,
+.parent-password-success h2 {
+  margin: 2px 0 0;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 20px;
+  line-height: 1.05;
+}
+
+.parent-password-heading p,
+.parent-password-success p {
+  margin: 3px 0 0;
+  color: #797487;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.parent-password-form {
+  display: grid;
+  gap: 11px;
+  margin-top: 18px;
+}
+
+.parent-password-form > label {
+  display: grid;
+  gap: 5px;
+  color: #4c4960;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.parent-password-form > label > input,
+.parent-password-field {
+  width: 100%;
+  height: 44px;
+  border: 1px solid #dcd7e8;
+  border-radius: 12px;
+  outline: 0;
+  background: #faf9fd;
+}
+
+.parent-password-form > label > input {
+  padding: 0 11px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.parent-password-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  align-items: center;
+}
+
+.parent-password-field input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 5px 0 11px;
+  color: var(--ink);
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.parent-password-field button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: #654dc7;
+  border-radius: 10px;
+  background: #ece8fb;
+}
+
+.parent-password-form > label > input:focus,
+.parent-password-field:focus-within {
+  border-color: #765bd6;
+  box-shadow: 0 0 0 3px rgba(118, 91, 214, 0.11);
+}
+
+.parent-password-form label > small {
+  color: #797487;
+  font-size: 8px;
+}
+
+.password-security-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px;
+  color: #397666;
+  border-radius: 11px;
+  background: #e9faf5;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.password-security-note svg {
+  flex: none;
+  color: #18a17f;
+}
+
+.parent-password-error {
+  margin: 0;
+  color: #b52f4c;
+  font-size: 9.5px;
+  font-weight: 800;
+}
+
+.parent-password-actions {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.parent-password-actions button,
+.parent-password-success .primary-button {
+  min-height: 44px;
+  padding: 8px;
+  border-radius: 12px;
+  font-size: 9.5px;
+  font-weight: 900;
+}
+
+.parent-password-actions button:first-child {
+  color: #686373;
+  background: #ece9f1;
+}
+
+.parent-password-actions button:last-child {
+  color: var(--navy);
+  background: var(--mint);
+}
+
+.parent-password-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.parent-password-success {
+  display: grid;
+  justify-items: center;
+  padding: 18px 4px 4px;
+  text-align: center;
+}
+
+.parent-password-success > span {
+  display: grid;
+  width: 62px;
+  height: 62px;
+  place-items: center;
+  margin-bottom: 10px;
+  color: #0d9376;
+  border-radius: 50%;
+  background: #d8f8ef;
+}
+
+.parent-password-success .primary-button {
+  width: 100%;
+  margin-top: 18px;
 }
 
 .contact-ids-heading {

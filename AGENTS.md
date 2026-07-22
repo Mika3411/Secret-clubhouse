@@ -13,6 +13,7 @@ When implementing from a selected generated mock, treat that image as the source
 - The audience is children ages 6–13 on phones and tablets; touch targets must remain large, friendly, and readable without feeling babyish.
 - Accounts use parent-managed usernames and QR friend codes, never child phone numbers or public search.
 - The parent area is separated from the child experience by a four-digit parent code and focuses on contact approval, safety settings, and high-level activity rather than exposing message contents.
+- An authenticated parent can change their password from the protected parent dashboard only after verifying the current password and confirming a different password of at least eight characters; the password hash is updated in PostgreSQL and the current session remains open.
 - A parent can create and manage multiple child profiles (ages 6–13) under one family account. Each child keeps separate contacts and safety settings, and the selected profile becomes the child space shown on the device.
 - A parent can permanently delete one of their own child profiles only after an explicit destructive confirmation. Deletion removes the child account and its conversations, messages, media, contact requests, presence, and notification subscriptions; another family can never delete it.
 - The public entry point is parent-first authentication with separate sign-in and registration forms plus a clearly labeled fake demo account. Registration opens an empty family and immediately offers first-child creation.

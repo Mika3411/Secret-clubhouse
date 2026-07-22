@@ -1721,6 +1721,66 @@ function ParentAccessScreen({ parentName, onBack, onUnlock }) {
   );
 }
 
+function ParentPasswordModal({ isDemo, onClose, onSave }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isComplete, setIsComplete] = useState(false);
+
+  const submitPassword = async (event) => {
+    event.preventDefault();
+    if (currentPassword.length < 8) {
+      setError("Saisissez votre mot de passe actuel.");
+      return;
+    }
+    if (newPassword.length < 8 || newPassword.length > 128) {
+      setError("Le nouveau mot de passe doit contenir entre 8 et 128 caractères.");
+      return;
+    }
+    if (newPassword === currentPassword) {
+      setError("Choisissez un mot de passe différent de l’ancien.");
+      return;
+    }
+    if (newPassword !== confirmation) {
+      setError("Les deux nouveaux mots de passe ne correspondent pas.");
+      return;
+    }
+    setIsSaving(true);
+    setError("");
+    try {
+      await onSave({ currentPassword, newPassword });
+      setIsComplete(true);
+    } catch (saveError) {
+      setError(saveError.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={isSaving ? undefined : onClose}>
+      <section className="parent-password-modal" role="dialog" aria-modal="true" aria-labelledby="parent-password-title" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer" disabled={isSaving}><X size={21} weight="bold" /></button>
+        {isComplete ? <div className="parent-password-success"><span><CheckCircle size={36} weight="fill" /></span><h2 id="parent-password-title">Mot de passe modifié</h2><p>Votre nouveau mot de passe est actif. Votre session actuelle reste ouverte.</p><button type="button" className="primary-button" onClick={onClose}>Terminer</button></div> : <>
+          <div className="parent-password-heading"><span><LockKey size={28} weight="fill" /></span><div><small>Sécurité du compte parent</small><h2 id="parent-password-title">Modifier le mot de passe</h2><p>Confirmez d’abord votre mot de passe actuel.</p></div></div>
+          <form className="parent-password-form" onSubmit={submitPassword}>
+            <label><span>Mot de passe actuel</span><span className="parent-password-field"><input type={showCurrentPassword ? "text" : "password"} value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setError(""); }} autoComplete="current-password" placeholder={isDemo ? "Pour la démo : demo2026" : "Votre mot de passe actuel"} autoFocus /><button type="button" onClick={() => setShowCurrentPassword((current) => !current)} aria-label={showCurrentPassword ? "Masquer le mot de passe actuel" : "Afficher le mot de passe actuel"}>{showCurrentPassword ? <EyeSlash size={19} weight="bold" /> : <Eye size={19} weight="bold" />}</button></span>{isDemo && <small>Faux compte : utilisez <strong>demo2026</strong>.</small>}</label>
+            <label><span>Nouveau mot de passe</span><span className="parent-password-field"><input type={showNewPassword ? "text" : "password"} value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setError(""); }} autoComplete="new-password" placeholder="8 caractères minimum" maxLength={128} /><button type="button" onClick={() => setShowNewPassword((current) => !current)} aria-label={showNewPassword ? "Masquer le nouveau mot de passe" : "Afficher le nouveau mot de passe"}>{showNewPassword ? <EyeSlash size={19} weight="bold" /> : <Eye size={19} weight="bold" />}</button></span></label>
+            <label><span>Confirmer le nouveau mot de passe</span><input type="password" value={confirmation} onChange={(event) => { setConfirmation(event.target.value); setError(""); }} autoComplete="new-password" placeholder="Retapez le nouveau mot de passe" maxLength={128} /></label>
+            <div className="password-security-note"><ShieldCheck size={17} weight="fill" /><span>Le mot de passe est protégé de façon sécurisée et n’est jamais affiché aux enfants.</span></div>
+            {error && <p className="parent-password-error" role="alert">{error}</p>}
+            <div className="parent-password-actions"><button type="button" onClick={onClose} disabled={isSaving}>Annuler</button><button type="submit" disabled={isSaving}>{isSaving ? "Enregistrement…" : "Modifier le mot de passe"}</button></div>
+          </form>
+        </>}
+      </section>
+    </div>
+  );
+}
+
 function PausedChildScreen({ child, onOpenParent }) {
   return (
     <section className="feature-screen paused-child-screen" aria-labelledby="paused-child-title">
@@ -1786,7 +1846,7 @@ function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
-function ParentDashboard({ parentName, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onMessageChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onEditSchedule, onExit, onLogout }) {
+function ParentDashboard({ parentName, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onMessageChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onOpenPassword, onEditSchedule, onExit, onLogout }) {
   const baseFriendsCount = isDemo ? friends.length : 0;
   const approvedCount = requestStatus === "approved" ? baseFriendsCount + 1 : baseFriendsCount;
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
@@ -1819,6 +1879,12 @@ function ParentDashboard({ parentName, children, child, isDemo, requestStatus, o
           <span><IdentificationCard size={23} weight="fill" /></span>
           <span><strong>Identifiants de contact</strong><small>Un numéro unique et non réutilisable par membre.</small></span>
           <span className="family-ids-count">{children.length + 1}</span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </button>
+
+        <button type="button" className="parent-password-entry" onClick={onOpenPassword}>
+          <span><LockKey size={22} weight="fill" /></span>
+          <span><strong>Mot de passe parent</strong><small>Modifier vos informations de connexion.</small></span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
 
@@ -2443,6 +2509,7 @@ export function App() {
   const [childModal, setChildModal] = useState(null);
   const [scheduleModalChildId, setScheduleModalChildId] = useState(null);
   const [isContactIdsOpen, setIsContactIdsOpen] = useState(false);
+  const [isParentPasswordOpen, setIsParentPasswordOpen] = useState(false);
   const [parentThreads, setParentThreads] = useState([]);
   const [serverConversations, setServerConversations] = useState([]);
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
@@ -2614,9 +2681,18 @@ export function App() {
     setChildModal(null);
     setScheduleModalChildId(null);
     setIsContactIdsOpen(false);
+    setIsParentPasswordOpen(false);
     setSelectedParentThreadId(null);
     setSelectedConversation(null);
     setActiveTab("conversations");
+  };
+
+  const changeParentPassword = async ({ currentPassword, newPassword }) => {
+    if (session?.demo) {
+      if (currentPassword !== "demo2026") throw new Error("Pour le faux compte, le mot de passe actuel est demo2026.");
+      return;
+    }
+    await api.updateParentPassword({ currentPassword, newPassword });
   };
 
   const saveChild = async (childData) => {
@@ -2825,6 +2901,7 @@ export function App() {
           unreadMessages={parentUnreadMessages}
           onOpenMessages={() => { setSelectedParentThreadId(null); setParentView("messages"); }}
           onOpenContactIds={() => setIsContactIdsOpen(true)}
+          onOpenPassword={() => setIsParentPasswordOpen(true)}
           onEditSchedule={() => activeChild && setScheduleModalChildId(activeChild.id)}
           onExit={() => setParentView(null)}
           onLogout={logoutParent}
@@ -2872,6 +2949,7 @@ export function App() {
         {session && !selectedConversation && !parentView && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
         {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
         {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} children={children} onClose={() => setIsContactIdsOpen(false)} />}
+        {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal isDemo={Boolean(session.demo)} onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}
         {session && childModal && (
           <ChildAccountModal
             key={`${childModal.mode}-${childModal.childId ?? "new"}`}
