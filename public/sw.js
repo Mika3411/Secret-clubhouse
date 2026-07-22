@@ -6,14 +6,16 @@ self.addEventListener("push", (event) => {
     badge: "/favicon.svg",
     tag: data.tag || "secret-clubhouse",
     renotify: true,
-    data: { conversationId: data.conversationId, url: "/" },
+    actions: [{ action: "open", title: "Ouvrir" }],
+    data: { conversationId: data.conversationId, notificationType: data.notificationType, url: data.url || "/" },
   }));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const destination = new URL(event.notification.data?.url || "/", self.location.origin).href;
   event.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
     const existing = windows.find((windowClient) => windowClient.url.startsWith(self.location.origin));
-    return existing ? existing.focus() : clients.openWindow(event.notification.data?.url || "/");
+    return existing ? existing.focus().then((windowClient) => windowClient.navigate(destination)) : clients.openWindow(destination);
   }));
 });

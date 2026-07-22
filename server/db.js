@@ -42,6 +42,74 @@ export async function initializeDatabase() {
     create unique index if not exists accounts_parent_username_unique on accounts(parent_id, lower(username)) where role = 'child';
     create index if not exists accounts_parent_children_idx on accounts(parent_id, created_at) where role = 'child';
 
+    create table if not exists families (
+      id uuid primary key default gen_random_uuid(),
+      name text not null default 'Ma famille',
+      legacy_owner_id uuid unique references accounts(id) on delete set null,
+      created_at timestamptz not null default now()
+    );
+
+    create table if not exists family_memberships (
+      family_id uuid not null references families(id) on delete cascade,
+      parent_id uuid not null unique references accounts(id) on delete cascade,
+      role text not null check (role in ('primary', 'coparent')),
+      joined_at timestamptz not null default now(),
+      primary key (family_id, parent_id)
+    );
+    create unique index if not exists family_memberships_one_primary_idx
+      on family_memberships(family_id) where role = 'primary';
+
+    create table if not exists family_children (
+      family_id uuid not null references families(id) on delete cascade,
+      child_id uuid not null unique references accounts(id) on delete cascade,
+      added_at timestamptz not null default now(),
+      primary key (family_id, child_id)
+    );
+    create index if not exists family_children_family_idx on family_children(family_id, added_at);
+
+    create table if not exists family_parent_invitations (
+      id uuid primary key default gen_random_uuid(),
+      family_id uuid not null references families(id) on delete cascade,
+      email text not null,
+      token_hash text not null unique,
+      invited_by uuid references accounts(id) on delete set null,
+      accepted_by uuid references accounts(id) on delete set null,
+      status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked', 'expired')),
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now(),
+      accepted_at timestamptz,
+      revoked_at timestamptz
+    );
+    create unique index if not exists family_parent_invitations_pending_email_idx
+      on family_parent_invitations(family_id, lower(email)) where status = 'pending';
+    create index if not exists family_parent_invitations_family_idx
+      on family_parent_invitations(family_id, status, created_at desc);
+
+    -- Existing installations used accounts.parent_id as both ownership and family
+    -- membership. Give every legacy parent a family, then attach their children.
+    -- The NOT EXISTS guards keep this safe when a co-parent restarts the service.
+    insert into families(name, legacy_owner_id)
+    select concat('Famille de ', a.display_name), a.id
+    from accounts a
+    where a.role = 'parent'
+      and not exists (select 1 from family_memberships fm where fm.parent_id = a.id)
+      and not exists (select 1 from families f where f.legacy_owner_id = a.id)
+    on conflict (legacy_owner_id) do nothing;
+
+    insert into family_memberships(family_id, parent_id, role)
+    select f.id, f.legacy_owner_id, 'primary'
+    from families f
+    join accounts a on a.id = f.legacy_owner_id and a.role = 'parent'
+    where not exists (select 1 from family_memberships fm where fm.parent_id = f.legacy_owner_id)
+    on conflict (parent_id) do nothing;
+
+    insert into family_children(family_id, child_id)
+    select fm.family_id, child.id
+    from accounts child
+    join family_memberships fm on fm.parent_id = child.parent_id and fm.role = 'primary'
+    where child.role = 'child'
+    on conflict (child_id) do nothing;
+
     create table if not exists conversations (
       id uuid primary key default gen_random_uuid(),
       kind text not null check (kind in ('child', 'parent')),
@@ -61,6 +129,7 @@ export async function initializeDatabase() {
       created_at timestamptz not null default now(),
       primary key (parent_id, child_id)
     );
+    alter table family_conversations drop constraint if exists family_conversations_child_id_key;
 
     create table if not exists contact_requests (
       id uuid primary key default gen_random_uuid(),
@@ -96,6 +165,14 @@ export async function initializeDatabase() {
       last_seen timestamptz not null default now()
     );
 
+    create table if not exists typing_states (
+      conversation_id uuid not null references conversations(id) on delete cascade,
+      account_id uuid not null references accounts(id) on delete cascade,
+      expires_at timestamptz not null,
+      primary key (conversation_id, account_id)
+    );
+    create index if not exists typing_states_expiry_idx on typing_states(expires_at);
+
     create table if not exists push_subscriptions (
       id uuid primary key default gen_random_uuid(),
       account_id uuid not null references accounts(id) on delete cascade,
@@ -104,6 +181,12 @@ export async function initializeDatabase() {
       created_at timestamptz not null default now()
     );
     create index if not exists push_subscriptions_account_idx on push_subscriptions(account_id);
+
+    create table if not exists application_settings (
+      setting_key text primary key,
+      setting_value jsonb not null,
+      updated_at timestamptz not null default now()
+    );
 
     create table if not exists native_push_tokens (
       id uuid primary key default gen_random_uuid(),

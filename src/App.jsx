@@ -70,6 +70,53 @@ const friends = [
 
 const pendingFriend = { id: "chloe", name: "Chloé", contactId: "SC-759-361-248", image: null };
 const demoChildContactId = "SC-482-917-305";
+const rememberedParentEmailKey = "secret-clubhouse-parent-email";
+const familyInviteQueryKeys = ["familyInvite", "family-invite", "invite"];
+
+const readFamilyInviteToken = () => {
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return familyInviteQueryKeys
+    .flatMap((key) => [hashParams.get(key)?.trim(), params.get(key)?.trim()])
+    .find(Boolean) ?? "";
+};
+
+const clearFamilyInviteFromUrl = () => {
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  familyInviteQueryKeys.forEach((key) => params.delete(key));
+  familyInviteQueryKeys.forEach((key) => hashParams.delete(key));
+  const query = params.toString();
+  const hash = hashParams.toString();
+  window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`);
+};
+
+const normalizeFamily = (payload, currentParent = {}) => {
+  const family = payload?.family ?? payload ?? {};
+  const currentRole = family.role ?? family.currentRole ?? family.current_role ?? "coparent";
+  const members = (family.members ?? []).map((member) => ({
+    ...member,
+    id: member.id ?? member.accountId ?? member.account_id,
+    name: member.name ?? member.displayName ?? member.display_name ?? "Parent",
+    contactId: member.contactId ?? member.contact_id ?? "",
+    role: member.role ?? member.membershipRole ?? member.membership_role ?? "coparent",
+    isCurrent: member.isCurrent ?? member.is_current ?? member.id === currentParent.id,
+  }));
+  const pendingInvitations = family.pendingInvitations ?? family.pending_invitations ?? family.invitations ?? [];
+  return { ...family, role: currentRole, members, pendingInvitations };
+};
+
+const normalizeFamilyInvitation = (payload) => {
+  const invitation = payload?.invitation ?? payload ?? {};
+  return {
+    ...invitation,
+    id: invitation.id,
+    email: invitation.email ?? "",
+    familyName: invitation.familyName ?? invitation.family_name ?? "cette famille",
+    invitedByName: invitation.invitedByName ?? invitation.inviterName ?? invitation.invited_by_name ?? invitation.invitedBy?.name ?? "un parent",
+    expiresAt: invitation.expiresAt ?? invitation.expires_at,
+  };
+};
 
 const initialChildren = [
   {
@@ -491,16 +538,23 @@ function Brand() {
   );
 }
 
-function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) {
+function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo, hasFamilyInvite = false, familyInvitation, familyInvitationError, isFamilyInvitationLoading = false, onDismissFamilyInvite }) {
   const [audience, setAudience] = useState("parent");
   const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => localStorage.getItem(rememberedParentEmailKey) ?? "");
   const [childContactId, setChildContactId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [isTermsOpen, setIsTermsOpen] = useState(false);
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!familyInvitation?.email) return;
+    setAudience("parent");
+    setEmail(familyInvitation.email);
+  }, [familyInvitation?.email]);
 
   const changeMode = (nextMode) => {
     setMode(nextMode);
@@ -508,6 +562,7 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) 
   };
 
   const changeAudience = (nextAudience) => {
+    if (hasFamilyInvite) return;
     setAudience(nextAudience);
     setMode("login");
     setPassword("");
@@ -564,10 +619,19 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) 
         </div>
 
         <div className="auth-card">
-          <div className="auth-role-tabs" role="tablist" aria-label="Choisir son espace">
+          {hasFamilyInvite && <div className={`family-invite-auth-note ${familyInvitationError ? "has-error" : ""}`} role="status">
+            <span><UsersThree size={22} weight="fill" /></span>
+            <div>
+              <strong>{isFamilyInvitationLoading ? "Vérification de l’invitation…" : familyInvitationError ? "Cette invitation n’est plus disponible" : `${familyInvitation.invitedByName} vous invite comme co-parent`}</strong>
+              <small>{isFamilyInvitationLoading ? "Un instant, nous vérifions le lien sécurisé." : familyInvitationError || `Connectez-vous ou créez votre compte ${familyInvitation.email ? `avec ${familyInvitation.email}` : "parent"}.`}</small>
+            </div>
+            {familyInvitationError && <button type="button" onClick={onDismissFamilyInvite}>Continuer sans invitation</button>}
+          </div>}
+
+          {!hasFamilyInvite && <div className="auth-role-tabs" role="tablist" aria-label="Choisir son espace">
             <button type="button" role="tab" aria-selected={audience === "parent"} className={audience === "parent" ? "is-active" : ""} onClick={() => changeAudience("parent")}><ShieldCheck size={17} weight="fill" /> Parent</button>
             <button type="button" role="tab" aria-selected={audience === "child"} className={audience === "child" ? "is-active" : ""} onClick={() => changeAudience("child")}><Smiley size={17} weight="fill" /> Enfant</button>
-          </div>
+          </div>}
 
           {audience === "parent" && <div className="auth-tabs" role="tablist" aria-label="Accès au compte parent">
             <button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "is-active" : ""} onClick={() => changeMode("login")}>Connexion</button>
@@ -575,23 +639,52 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) 
           </div>}
 
           <form className="auth-form" onSubmit={submitAuth}>
-            <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
+            <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
             {audience === "parent" && mode === "register" && <label className="auth-field"><span>Prénom du parent</span><input value={name} onChange={(event) => { setName(event.target.value); setError(""); }} autoComplete="given-name" placeholder="Marie" /></label>}
-            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-482-917-305" /></label>}
+            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-482-917-305" /></label>}
             <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="6 caractères minimum" /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
             {audience === "parent" && mode === "register" && (
               <label className="auth-consent"><input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setError(""); }} /><span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span></label>
             )}
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <button className="primary-button auth-submit" type="submit">{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : mode === "login" ? "Se connecter" : "Créer mon compte"}</button>
+            <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter et accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte"}</button>
           </form>
 
-          <div className="auth-separator"><span>ou</span></div>
-          <button className="demo-account-button" type="button" onClick={audience === "child" ? onChildDemo : onDemo}><Sparkle size={20} weight="fill" /><span><strong>{audience === "child" ? "Tester comme Emma" : "Tester avec un faux compte"}</strong><small>{audience === "child" ? "ID SC-482-917-305 · compte enfant démo" : "Aucune donnée réelle nécessaire"}</small></span><CaretRight size={18} weight="bold" /></button>
-          <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial.</p>
+          {!hasFamilyInvite && <><div className="auth-separator"><span>ou</span></div>
+          <button className="demo-account-button" type="button" onClick={audience === "child" ? onChildDemo : onDemo}><Sparkle size={20} weight="fill" /><span><strong>{audience === "child" ? "Tester comme Emma" : "Tester avec un faux compte"}</strong><small>{audience === "child" ? "ID SC-482-917-305 · compte enfant démo" : "Aucune donnée réelle nécessaire"}</small></span><CaretRight size={18} weight="bold" /></button></>}
+          <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial. <button type="button" onClick={() => setIsTermsOpen(true)}>CGV</button></p>
         </div>
       </div>
+      {isTermsOpen && <TermsModal onClose={() => setIsTermsOpen(false)} />}
     </section>
+  );
+}
+
+function TermsModal({ onClose }) {
+  return (
+    <div className="terms-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title">
+        <header className="terms-modal__header">
+          <div><span>Informations légales</span><h2 id="terms-title">Conditions générales de vente</h2><small>Version du 22 juillet 2026</small></div>
+          <button type="button" onClick={onClose} aria-label="Fermer les conditions générales de vente"><X size={21} weight="bold" /></button>
+        </header>
+        <div className="terms-modal__content">
+          <aside><ShieldCheck size={20} weight="fill" /><span><strong>Document provisoire</strong> Ces CGV doivent être complétées avec l’identité de l’éditeur, les tarifs définitifs et validées par un professionnel du droit avant commercialisation.</span></aside>
+
+          <article><h3>1. Éditeur et champ d’application</h3><p>Secret Clubhouse est un service familial de communication destiné aux enfants de 6 à 13 ans sous le contrôle de leurs responsables légaux. L’identité, l’adresse, le numéro d’immatriculation et les coordonnées définitives de l’éditeur seront ajoutés avant la mise en production.</p></article>
+          <article><h3>2. Acceptation</h3><p>La création d’un compte parent et toute commande éventuelle supposent l’acceptation des présentes conditions par un adulte disposant de l’autorité nécessaire. Un enfant ne peut ni créer seul un compte familial ni effectuer un achat.</p></article>
+          <article><h3>3. Comptes et sécurité</h3><p>Le parent crée et administre les profils enfants, approuve les contacts et règle les autorisations. Les identifiants sont personnels et doivent rester confidentiels. Toute utilisation suspecte doit être signalée sans délai à l’éditeur.</p></article>
+          <article><h3>4. Services proposés</h3><p>Le service peut proposer la messagerie, les messages vocaux, les appels audio et vidéo, le partage de médias autorisé par le parent et des activités privées. Leur disponibilité dépend du réseau, du terminal et des autorisations du système.</p></article>
+          <article><h3>5. Prix et paiement</h3><p>Le prototype présenté est gratuit et ne constitue pas une offre commerciale. Si une formule payante est proposée ultérieurement, son prix toutes taxes comprises, sa durée, son renouvellement et les moyens de paiement seront affichés clairement avant toute validation.</p></article>
+          <article><h3>6. Droit de rétractation</h3><p>Lorsque la réglementation applicable le prévoit, le consommateur dispose du délai légal de rétractation. Pour un contenu ou service numérique commencé immédiatement, un accord exprès et les conséquences sur ce droit seront recueillis avant l’exécution.</p></article>
+          <article><h3>7. Disponibilité et responsabilité</h3><p>L’éditeur met en œuvre des moyens raisonnables pour assurer le fonctionnement du service, sans garantir une disponibilité permanente. Les parents restent responsables de la configuration des profils, du choix des contacts et de l’usage du service par leurs enfants.</p></article>
+          <article><h3>8. Données personnelles</h3><p>Les données sont traitées pour fournir et sécuriser le service. Les modalités détaillées, durées de conservation et droits des personnes devront figurer dans une politique de confidentialité distincte, accessible avant l’inscription.</p></article>
+          <article><h3>9. Suspension et résiliation</h3><p>Le parent peut cesser d’utiliser le service et demander la suppression de son compte. L’éditeur peut suspendre un compte en cas de fraude, de risque pour un enfant, de violation des règles ou d’obligation légale, selon une procédure proportionnée.</p></article>
+          <article><h3>10. Droit applicable et réclamations</h3><p>Les coordonnées du service client, le médiateur de la consommation compétent et les règles de règlement des litiges seront précisés selon le pays d’établissement de l’éditeur et le lieu de résidence du consommateur.</p></article>
+        </div>
+        <footer><button className="primary-button" type="button" onClick={onClose}>Fermer</button></footer>
+      </section>
+    </div>
   );
 }
 
@@ -717,11 +810,70 @@ function MessageStatus({ status = "received" }) {
   return <span className={`message-status message-status--${status}`} role="img" aria-label={label} title={label}><StatusIcon size={15} weight="bold" /></span>;
 }
 
-function PushNotificationButton() {
+function useTypingIndicator(conversationId, enabled) {
+  const [typingName, setTypingName] = useState(null);
+  const lastSignalRef = useRef(0);
+  const stopTimerRef = useRef(null);
+
+  const stopTyping = () => {
+    if (!enabled || !conversationId) return;
+    window.clearTimeout(stopTimerRef.current);
+    stopTimerRef.current = null;
+    lastSignalRef.current = 0;
+    void api.setTyping(conversationId, false).catch(() => {});
+  };
+
+  const notifyTyping = () => {
+    if (!enabled || !conversationId) return;
+    const now = Date.now();
+    if (now - lastSignalRef.current > 2000) {
+      lastSignalRef.current = now;
+      void api.setTyping(conversationId, true).catch(() => {});
+    }
+    window.clearTimeout(stopTimerRef.current);
+    stopTimerRef.current = window.setTimeout(stopTyping, 3500);
+  };
+
+  useEffect(() => {
+    if (!enabled || !conversationId) {
+      setTypingName(null);
+      return undefined;
+    }
+    let active = true;
+    const refresh = async () => {
+      try {
+        const result = await api.typing(conversationId);
+        if (active) setTypingName(result.typing ? result.name : null);
+      } catch {
+        if (active) setTypingName(null);
+      }
+    };
+    void refresh();
+    const pollTimer = window.setInterval(refresh, 1500);
+    return () => {
+      active = false;
+      window.clearInterval(pollTimer);
+      window.clearTimeout(stopTimerRef.current);
+      void api.setTyping(conversationId, false).catch(() => {});
+    };
+  }, [conversationId, enabled]);
+
+  return { typingName, notifyTyping, stopTyping };
+}
+
+function TypingIndicator({ name }) {
+  if (!name) return null;
+  return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
+}
+
+function PushNotificationButton({ isDemo = false }) {
   const native = Capacitor.isNativePlatform();
+  const isWindowsWeb = !native && /Windows/i.test(navigator.userAgent);
   const supported = native || ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
   const [status, setStatus] = useState(supported ? "checking" : "unsupported");
   const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
     if (!supported) return;
@@ -729,11 +881,19 @@ function PushNotificationButton() {
       PushNotifications.checkPermissions().then(({ receive }) => setStatus(receive === "granted" ? "enabled" : receive === "denied" ? "denied" : "disabled"));
       return;
     }
-    navigator.serviceWorker.register("/sw.js").then((registration) => registration.pushManager.getSubscription()).then((subscription) => setStatus(subscription ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled")).catch(() => setStatus("unsupported"));
-  }, [native, supported]);
+    navigator.serviceWorker.register("/sw.js")
+      .then((registration) => registration.pushManager.getSubscription())
+      .then(async (subscription) => {
+        if (subscription && !isDemo) await api.subscribePush(subscription.toJSON());
+        const demoEnabled = isDemo && sessionStorage.getItem("secret-clubhouse-demo-push") === "enabled";
+        setStatus(subscription || demoEnabled ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
+      })
+      .catch(() => setStatus("unsupported"));
+  }, [isDemo, native, supported]);
 
   const togglePush = async () => {
     setError("");
+    setFeedback("");
     try {
       if (native) {
         const permission = await PushNotifications.requestPermissions();
@@ -750,14 +910,21 @@ function PushNotificationButton() {
       }
       const registration = await navigator.serviceWorker.ready;
       const current = await registration.pushManager.getSubscription();
-      if (current) {
-        await api.unsubscribePush(current.endpoint);
-        await current.unsubscribe();
+      if (current || (isDemo && status === "enabled")) {
+        if (current && !isDemo) await api.unsubscribePush(current.endpoint);
+        if (current) await current.unsubscribe();
+        sessionStorage.removeItem("secret-clubhouse-demo-push");
         setStatus("disabled");
         return;
       }
       const permission = await Notification.requestPermission();
       if (permission !== "granted") { setStatus("denied"); return; }
+      if (isDemo) {
+        sessionStorage.setItem("secret-clubhouse-demo-push", "enabled");
+        setStatus("enabled");
+        setFeedback("Mode démo : les alertes sont testées uniquement sur cet appareil.");
+        return;
+      }
       const { publicKey } = await api.pushPublicKey();
       const padding = "=".repeat((4 - publicKey.length % 4) % 4);
       const base64 = (publicKey + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -770,14 +937,48 @@ function PushNotificationButton() {
     }
   };
 
+  const testNotification = async () => {
+    setError("");
+    setFeedback("");
+    setIsTesting(true);
+    try {
+      if (isDemo) {
+        const registration = await navigator.serviceWorker.ready;
+        await registration.showNotification("Secret Clubhouse est prêt", {
+          body: "Les notifications Windows fonctionnent sur cet appareil.",
+          icon: "/favicon.svg",
+          tag: "secret-clubhouse-demo-test",
+          data: { url: "/?notification=test" },
+        });
+      } else {
+        await api.testPush();
+      }
+      setFeedback("Notification de test envoyée à Windows.");
+    } catch (pushError) {
+      setError(pushError.message || "La notification de test n’a pas pu être envoyée.");
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const statusText = status === "enabled"
+    ? isWindowsWeb ? "Activées dans Windows, même lorsque l’application est fermée" : "Activées même lorsque l’application est fermée"
+    : status === "denied"
+      ? isWindowsWeb ? "Bloquées dans les paramètres de notifications Windows ou du navigateur" : "Bloquées dans les réglages du téléphone"
+      : status === "unsupported"
+        ? "Non disponibles sur ce navigateur"
+        : isWindowsWeb ? "Recevoir les messages et demandes dans Windows" : "Recevoir les nouveaux messages en veille";
+
   return (
     <div className="push-setting">
       <button type="button" onClick={togglePush} disabled={status === "checking" || status === "unsupported" || status === "denied"}>
         <Bell size={20} weight="fill" />
-        <span><strong>Notifications et son système</strong><small>{status === "enabled" ? "Activées même lorsque l’application est fermée" : status === "denied" ? "Bloquées dans les réglages du téléphone" : status === "unsupported" ? "Non disponibles sur ce navigateur" : "Recevoir les nouveaux messages en veille"}</small></span>
+        <span><strong>{isWindowsWeb ? "Notifications Windows" : "Notifications et son système"}</strong><small>{statusText}</small></span>
         <span className={`toggle ${status === "enabled" ? "is-on" : ""}`} aria-hidden="true"><span /></span>
       </button>
+      {isWindowsWeb && status === "enabled" && <div className="push-setting__test-row"><button type="button" onClick={testNotification} disabled={isTesting}><Bell size={15} weight="fill" />{isTesting ? "Envoi…" : "Tester dans Windows"}</button></div>}
       {error && <small className="push-setting__error" role="alert">{error}</small>}
+      {feedback && <small className="push-setting__feedback" role="status">{feedback}</small>}
       {/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.matchMedia("(display-mode: standalone)").matches && <small className="push-setting__hint">Sur iPhone/iPad, ajoutez d’abord Secret Clubhouse à l’écran d’accueil.</small>}
     </div>
   );
@@ -1315,6 +1516,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   const autoReply = schedule.autoReply ?? defaultCommunicationSchedule.autoReply;
   const autoReplyIsActive = !messagePolicy.allowed && autoReply.enabled && autoReply.message.trim();
   const nextMessageTime = schedule.messages.start.replace(":", " h ");
+  const { typingName, notifyTyping, stopTyping } = useTypingIndicator(conversation.id, Boolean(conversation.serverBacked));
 
   useEffect(() => () => {
     mediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -1339,6 +1541,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         setSentMessages((current) => [...current, { id: sent?.id ?? `message-${Date.now()}`, type: "text", text: message, status: "received" }]);
       }
       setDraft("");
+      stopTyping();
     } catch (error) {
       setMessageError(error.message);
     }
@@ -1433,6 +1636,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
             <p className="bubble bubble--sent bubble--automatic"><span>{autoReply.message}</span><small>Automatique</small><MessageStatus status="received" /></p>
           </div>
         )}
+        <TypingIndicator name={typingName} />
         <div className="safety-reminder"><LockKey size={16} weight="fill" /> {conversation.isFamily ? "Cette discussion familiale reste entre toi et ton parent." : "Cette discussion reste entre amis approuvés."}</div>
       </div>
 
@@ -1444,7 +1648,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         <button type="button" className={`composer__control ${settings.media ? "" : "is-restricted"}`} aria-label={settings.media ? "Ajouter des photos ou vidéos" : "Photos et vidéos désactivées par un parent"} title={settings.media ? "Ajouter des photos ou vidéos" : "Désactivé par un parent"} onClick={() => mediaInputRef.current?.click()} disabled={!messagePolicy.allowed || !settings.media}><Plus size={22} weight="bold" /></button>
         <label className="composer__field">
           <span className="sr-only">Écris un message</span>
-          <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={messagePolicy.allowed ? "Écris un message…" : `Disponible à ${nextMessageTime}`} disabled={!messagePolicy.allowed} />
+          <input value={draft} onChange={(event) => { setDraft(event.target.value); if (event.target.value.trim()) notifyTyping(); else stopTyping(); }} placeholder={messagePolicy.allowed ? "Écris un message…" : `Disponible à ${nextMessageTime}`} disabled={!messagePolicy.allowed} />
           {messagePolicy.allowed ? <Smiley size={21} aria-hidden="true" /> : <Clock size={20} aria-hidden="true" />}
         </label>
         <VoiceRecorder disabled={!messagePolicy.allowed} onSend={sendVoiceMessage} />
@@ -1662,7 +1866,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
   );
 }
 
-function ProfileScreen({ child, onOpenParent, onOpenPreferences, onLogout }) {
+function ProfileScreen({ child, isDemo, onOpenParent, onOpenPreferences, onLogout }) {
   const [idCopied, setIdCopied] = useState(false);
 
   const copyOwnId = async () => {
@@ -1685,7 +1889,7 @@ function ProfileScreen({ child, onOpenParent, onOpenPreferences, onLogout }) {
         <ShieldCheck size={28} weight="fill" />
         <div><strong>Compte protégé</strong><span>Géré par un parent</span></div>
       </div>
-      <PushNotificationButton />
+      <PushNotificationButton isDemo={isDemo} />
       <button type="button" className="parent-access-button" onClick={onOpenParent}>
         <LockKey size={20} weight="fill" />
         <span><strong>Espace parent</strong><small>Contacts et sécurité</small></span>
@@ -1877,6 +2081,172 @@ function ParentPasswordModal({ isDemo, onClose, onSave }) {
   );
 }
 
+function FamilyInviteAcceptanceModal({ invitation, parent, onAccept, onUseAnotherAccount, onDismiss }) {
+  const [isAccepting, setIsAccepting] = useState(false);
+  const [error, setError] = useState("");
+  const emailMatches = !invitation.email || invitation.email.toLowerCase() === String(parent.email ?? "").toLowerCase();
+
+  const accept = async () => {
+    setIsAccepting(true);
+    setError("");
+    try {
+      await onAccept();
+    } catch (acceptError) {
+      setError(acceptError.message || "Impossible d’accepter cette invitation.");
+    } finally {
+      setIsAccepting(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="family-invite-acceptance" role="dialog" aria-modal="true" aria-labelledby="family-invite-acceptance-title">
+        <button type="button" className="modal-close" onClick={onDismiss} aria-label="Fermer" disabled={isAccepting}><X size={21} weight="bold" /></button>
+        <span className="family-invite-acceptance__icon"><UsersThree size={34} weight="fill" /></span>
+        <small>Invitation de co-parent</small>
+        <h2 id="family-invite-acceptance-title">Rejoindre {invitation.familyName}</h2>
+        <p><strong>{invitation.invitedByName}</strong> souhaite vous donner accès aux mêmes profils enfant et réglages familiaux.</p>
+        <div className={`family-invite-account ${emailMatches ? "" : "has-error"}`}><UserCircle size={23} weight="fill" /><span><strong>{parent.name}</strong><small>{parent.email}</small></span>{emailMatches ? <CheckCircle size={19} weight="fill" /> : <X size={18} weight="bold" />}</div>
+        {!emailMatches && <p className="family-invite-error" role="alert">Cette invitation est destinée à {invitation.email}. Utilisez le compte correspondant.</p>}
+        {error && <p className="family-invite-error" role="alert">{error}</p>}
+        <div className="family-invite-acceptance__actions">
+          <button type="button" onClick={onUseAnotherAccount} disabled={isAccepting}>Utiliser un autre compte</button>
+          <button type="button" onClick={accept} disabled={!emailMatches || isAccepting}><CheckCircle size={18} weight="fill" /> {isAccepting ? "Acceptation…" : "Accepter l’invitation"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function FamilyInviteErrorModal({ message, onDismiss }) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onDismiss}>
+      <section className="family-invite-acceptance" role="dialog" aria-modal="true" aria-labelledby="family-invite-error-title" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onDismiss} aria-label="Fermer"><X size={21} weight="bold" /></button>
+        <span className="family-invite-acceptance__icon family-invite-acceptance__icon--error"><X size={30} weight="bold" /></span>
+        <small>Invitation indisponible</small>
+        <h2 id="family-invite-error-title">Ce lien ne peut plus être utilisé</h2>
+        <p>{message}</p>
+        <button type="button" className="primary-button family-parents-close" onClick={onDismiss}>Revenir à ma famille</button>
+      </section>
+    </div>
+  );
+}
+
+function FamilyParentsModal({ family, currentParent, isDemo, onClose, onInvite, onRevoke, onRemove }) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+  const [createdInvitation, setCreatedInvitation] = useState(null);
+  const [copiedInvitationId, setCopiedInvitationId] = useState(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const isPrimary = family?.role === "primary";
+  const members = family?.members ?? [];
+  const invitations = family?.pendingInvitations ?? [];
+
+  const inviteParent = async (event) => {
+    event.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setError("Saisissez l’adresse e-mail valide du co-parent.");
+      return;
+    }
+    setBusyAction("invite");
+    setError("");
+    try {
+      const result = await onInvite(cleanEmail);
+      const invitation = result?.invitation ?? result;
+      setCreatedInvitation(invitation);
+      setEmail("");
+    } catch (inviteError) {
+      setError(inviteError.message || "Impossible de créer l’invitation.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const copyInvitationLink = async (invitation) => {
+    const link = invitation?.link ?? invitation?.inviteUrl ?? invitation?.invite_url;
+    if (!link) {
+      setError("Le lien secret n’est affiché qu’au moment de créer l’invitation. Révoquez-la et créez-en une nouvelle si nécessaire.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiedInvitationId(invitation.id ?? "new");
+    } catch {
+      setError("Le presse-papiers est indisponible. Sélectionnez et copiez le lien manuellement.");
+    }
+  };
+
+  const revokeInvitation = async (invitationId) => {
+    setBusyAction(`revoke-${invitationId}`);
+    setError("");
+    try {
+      await onRevoke(invitationId);
+      if (createdInvitation?.id === invitationId) setCreatedInvitation(null);
+    } catch (revokeError) {
+      setError(revokeError.message || "Impossible de révoquer cette invitation.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const removeParent = async (member) => {
+    if (confirmRemoveId !== member.id) {
+      setConfirmRemoveId(member.id);
+      return;
+    }
+    setBusyAction(`remove-${member.id}`);
+    setError("");
+    try {
+      await onRemove(member.id);
+      setConfirmRemoveId(null);
+    } catch (removeError) {
+      setError(removeError.message || "Impossible de retirer ce co-parent.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={busyAction ? undefined : onClose}>
+      <section className="family-parents-modal" role="dialog" aria-modal="true" aria-labelledby="family-parents-title" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer" disabled={Boolean(busyAction)}><X size={21} weight="bold" /></button>
+        <div className="family-parents-heading"><span><UsersThree size={29} weight="fill" /></span><div><small>Accès adultes protégés</small><h2 id="family-parents-title">Parents de la famille</h2><p>Chaque parent utilise son propre compte.</p></div></div>
+
+        <div className="family-role-note"><ShieldCheck size={18} weight="fill" /><span><strong>{isPrimary ? "Vous êtes le parent principal" : "Vous êtes co-parent"}</strong><small>{isPrimary ? "Vous contrôlez les invitations, les retraits et les suppressions définitives." : "Vous pouvez gérer les profils et leurs règles, sans supprimer la famille."}</small></span></div>
+
+        <div className="family-parent-list">
+          {members.map((member) => {
+            const isCurrent = member.isCurrent || member.id === currentParent.id;
+            const canRemove = isPrimary && member.role === "coparent" && !isCurrent;
+            return <article className="family-parent-card" key={member.id}>
+              <span className={`family-parent-avatar ${member.role === "primary" ? "is-primary" : ""}`}><UserCircle size={27} weight="fill" /></span>
+              <div><strong>{member.name}{isCurrent ? " · vous" : ""}</strong><small>{member.email}</small><span>{member.role === "primary" ? "Parent principal" : "Co-parent"}</span></div>
+              {canRemove ? <button type="button" className={confirmRemoveId === member.id ? "is-confirming" : ""} onClick={() => removeParent(member)} disabled={busyAction === `remove-${member.id}`} aria-label={`Retirer ${member.name}`}><Trash size={16} weight="bold" /><span>{busyAction === `remove-${member.id}` ? "Retrait…" : confirmRemoveId === member.id ? "Confirmer" : "Retirer"}</span></button> : <ShieldCheck size={19} weight="fill" />}
+            </article>;
+          })}
+        </div>
+
+        {isPrimary && <form className="family-invite-form" onSubmit={inviteParent}>
+          <div><span><UserPlus size={20} weight="fill" /></span><div><strong>Inviter un co-parent</strong><small>Le lien expire et fonctionne seulement avec cette adresse e-mail.</small></div></div>
+          <label htmlFor="coparent-email">Adresse e-mail</label>
+          <div className="family-invite-field"><input id="coparent-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} placeholder="coparent@exemple.fr" autoComplete="email" disabled={busyAction === "invite"} /><button type="submit" disabled={busyAction === "invite"}><UserPlus size={17} weight="bold" /> {busyAction === "invite" ? "Création…" : "Inviter"}</button></div>
+        </form>}
+
+        {createdInvitation?.link && <div className="family-created-invite" role="status"><CheckCircle size={19} weight="fill" /><span><strong>Invitation prête pour {createdInvitation.email}</strong><small>Copiez ce lien maintenant : le secret ne sera plus affiché ensuite.</small><code>{createdInvitation.link}</code></span><button type="button" onClick={() => copyInvitationLink(createdInvitation)}>{copiedInvitationId === createdInvitation.id ? <CheckCircle size={17} weight="fill" /> : <Copy size={17} weight="bold" />}{copiedInvitationId === createdInvitation.id ? "Copié" : "Copier"}</button></div>}
+
+        {invitations.length > 0 && <section className="family-pending-invites" aria-labelledby="pending-family-invites-title"><h3 id="pending-family-invites-title">Invitations en attente</h3>{invitations.map((invitation) => <article key={invitation.id}><span><strong>{invitation.email}</strong><small>Expire le {new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(invitation.expiresAt))}</small></span>{isPrimary && <button type="button" onClick={() => revokeInvitation(invitation.id)} disabled={busyAction === `revoke-${invitation.id}`}><X size={15} weight="bold" /> {busyAction === `revoke-${invitation.id}` ? "Révocation…" : "Révoquer"}</button>}</article>)}</section>}
+
+        {error && <p className="family-invite-error" role="alert">{error}</p>}
+        {isDemo && <p className="family-demo-note"><Sparkle size={16} weight="fill" /> Les changements restent dans ce faux compte de démonstration.</p>}
+        <button type="button" className="primary-button family-parents-close" onClick={onClose} disabled={Boolean(busyAction)}>Terminer</button>
+      </section>
+    </div>
+  );
+}
+
 function PausedChildScreen({ child, onOpenParent }) {
   return (
     <section className="feature-screen paused-child-screen" aria-labelledby="paused-child-title">
@@ -1942,7 +2312,24 @@ function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
-function ParentDashboard({ parentName, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onMessageChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onOpenPassword, onEditSchedule, onExit, onLogout }) {
+function ParentGamesScreen({ parent, children, isDemo, onBack }) {
+  const demoContacts = children.map((child) => ({ id: child.id, name: child.name, contactId: child.contactId, role: "child" }));
+  return (
+    <section className="parent-games-screen" aria-labelledby="parent-games-title">
+      <header className="parent-messages-header">
+        <button type="button" className="parent-back-button" onClick={onBack} aria-label="Retour au tableau de bord parent"><ArrowLeft size={22} weight="bold" /></button>
+        <div><span>Mode parent</span><h1 id="parent-games-title">Jeux en famille</h1></div>
+        <span className="parent-games-screen__icon"><GameController size={25} weight="fill" /></span>
+      </header>
+      <div className="parent-games-screen__content">
+        <div className="parent-games-intro"><ShieldCheck size={20} weight="fill" /><span><strong>Un espace de jeu privé</strong><small>Jouez avec vos enfants, vos co-parents et vos contacts approuvés.</small></span></div>
+        <ConnectFourGame child={parent} contacts={demoContacts} isDemo={isDemo} />
+      </div>
+    </section>
+  );
+}
+
+function ParentDashboard({ parentName, family, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onMessageChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onEditSchedule, onExit, onLogout }) {
   const baseFriendsCount = isDemo ? friends.length : 0;
   const approvedCount = requestStatus === "approved" ? baseFriendsCount + 1 : baseFriendsCount;
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
@@ -1971,10 +2358,23 @@ function ParentDashboard({ parentName, children, child, isDemo, requestStatus, o
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
 
+        <button type="button" className="parent-games-entry" onClick={onOpenGames}>
+          <span className="parent-games-entry__icon"><GameController size={24} weight="fill" /></span>
+          <span><strong>Jeux en famille</strong><small>Acceptez une invitation ou lancez une partie avec vos enfants.</small></span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </button>
+
+        <button type="button" className="family-parents-entry" onClick={onOpenFamilyParents}>
+          <span><UsersThree size={23} weight="fill" /></span>
+          <span><strong>Parents de la famille</strong><small>{family?.role === "primary" ? "Invitez et gérez les co-parents autorisés." : "Consultez les adultes autorisés de la famille."}</small></span>
+          <span className="family-parents-count">{family?.members?.length ?? 1}{family?.pendingInvitations?.length ? <small>+{family.pendingInvitations.length}</small> : null}</span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </button>
+
         <button type="button" className="family-ids-entry" onClick={onOpenContactIds}>
           <span><IdentificationCard size={23} weight="fill" /></span>
           <span><strong>Identifiants de contact</strong><small>Un numéro unique et non réutilisable par membre.</small></span>
-          <span className="family-ids-count">{children.length + 1}</span>
+          <span className="family-ids-count">{children.length + (family?.members?.length ?? 1)}</span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
 
@@ -2061,7 +2461,7 @@ function ParentDashboard({ parentName, children, child, isDemo, requestStatus, o
 
         </>}
 
-        <PushNotificationButton />
+        <PushNotificationButton isDemo={isDemo} />
         {child ? <button className="parent-exit" type="button" onClick={onExit}><SignOut size={19} weight="bold" /> Quitter le mode parent</button> : <button className="parent-exit" type="button" onClick={onLogout}><ArrowLeft size={19} weight="bold" /> Revenir à l’accueil</button>}
       </div>
     </section>
@@ -2081,6 +2481,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
   const parentMediaInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+  const { typingName, notifyTyping, stopTyping } = useTypingIndicator(selectedThread?.id, Boolean(selectedThread && !isDemo && selectedThread.serverBacked));
 
   const submitContact = async (event) => {
     event.preventDefault();
@@ -2123,6 +2524,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
     try {
       await onSend(selectedThread.id, message);
       setDraft("");
+      stopTyping();
     } catch (error) {
       setMessageError(error.message);
     }
@@ -2198,13 +2600,14 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
                 <figcaption><span>{media.type === "video" ? "Vidéo" : "Photo"} envoyée · Maintenant</span><MessageStatus status={media.status} /></figcaption>
               </figure>
             ))}
+          <TypingIndicator name={typingName} />
         </div>
         {messageError && <div className="parent-media-error" role="alert">{messageError}</div>}
         {mediaError && <div className="parent-media-error" role="alert">{mediaError}</div>}
         <form className="parent-message-composer" onSubmit={submitMessage}>
           <input ref={parentMediaInputRef} className="sr-only" type="file" accept="image/*,video/*" multiple onChange={sendParentMedia} />
           <button type="button" className="parent-media-button" onClick={() => parentMediaInputRef.current?.click()} aria-label="Ajouter des photos ou vidéos"><Plus size={21} weight="bold" /></button>
-          <label><span className="sr-only">Écrire un message à {selectedThread.name}</span><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Votre message…" /></label>
+          <label><span className="sr-only">Écrire un message à {selectedThread.name}</span><input value={draft} onChange={(event) => { setDraft(event.target.value); if (event.target.value.trim()) notifyTyping(); else stopTyping(); }} placeholder="Votre message…" /></label>
           <VoiceRecorder onSend={sendParentVoice} parent />
           <button type="submit" disabled={!draft.trim()} aria-label="Envoyer le message"><PaperPlaneTilt size={21} weight="fill" /></button>
         </form>
@@ -2261,7 +2664,7 @@ function toUsername(value) {
     .slice(0, 18);
 }
 
-function ChildAccountModal({ child, onClose, onSave, onDelete }) {
+function ChildAccountModal({ child, canDelete = true, onClose, onSave, onDelete }) {
   const isEditing = Boolean(child);
   const [name, setName] = useState(child?.name ?? "");
   const [age, setAge] = useState(child?.age ?? 8);
@@ -2354,11 +2757,11 @@ function ChildAccountModal({ child, onClose, onSave, onDelete }) {
           </button>
         )}
 
-        {isEditing && !isConfirmingDelete && (
+        {isEditing && canDelete && !isConfirmingDelete && (
           <button className="delete-child-trigger" type="button" onClick={() => { setIsConfirmingDelete(true); setError(""); }}><Trash size={17} weight="bold" /> Supprimer ce compte enfant</button>
         )}
 
-        {isEditing && isConfirmingDelete && (
+        {isEditing && canDelete && isConfirmingDelete && (
           <section className="delete-child-confirmation" aria-labelledby="delete-child-title">
             <div><Trash size={20} weight="fill" /><span><strong id="delete-child-title">Supprimer définitivement {child.name} ?</strong><small>Son compte, ses contacts et toutes ses conversations seront supprimés. Cette action est irréversible.</small></span></div>
             <label htmlFor="delete-child-confirmation"><span>Tapez <strong>SUPPRIMER</strong> pour confirmer</span><input id="delete-child-confirmation" value={deleteConfirmation} onChange={(event) => { setDeleteConfirmation(event.target.value.toUpperCase()); setError(""); }} autoComplete="off" disabled={isDeleting} /></label>
@@ -2376,11 +2779,12 @@ function ChildAccountModal({ child, onClose, onSave, onDelete }) {
   );
 }
 
-function ContactIdsModal({ parent, children, onClose }) {
+function ContactIdsModal({ parent, family, children, onClose }) {
   const [copiedMemberId, setCopiedMemberId] = useState(null);
+  const parents = family?.members?.length ? family.members : [{ id: parent.id ?? "parent", name: parent.name, contactId: parent.contactId, role: "primary" }];
   const members = [
-    { id: "parent", name: parent.name, role: "Compte parent", contactId: parent.contactId, isParent: true },
-    ...children.map((child) => ({ ...child, role: `Compte enfant · ${child.age} ans` })),
+    ...parents.map((member) => ({ ...member, roleLabel: member.role === "primary" ? "Parent principal" : "Co-parent", isParent: true })),
+    ...children.map((child) => ({ ...child, roleLabel: `Compte enfant · ${child.age} ans` })),
   ];
 
   const copyMemberId = async (member) => {
@@ -2392,13 +2796,13 @@ function ContactIdsModal({ parent, children, onClose }) {
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section className="contact-ids-modal" role="dialog" aria-modal="true" aria-labelledby="contact-ids-title" onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer"><X size={21} weight="bold" /></button>
-        <div className="contact-ids-heading"><span><IdentificationCard size={28} weight="fill" /></span><div><small>Famille de {parent.name}</small><h2 id="contact-ids-title">Identifiants de contact</h2><p>Un numéro opaque et unique pour chaque membre.</p></div></div>
+        <div className="contact-ids-heading"><span><IdentificationCard size={28} weight="fill" /></span><div><small>{family?.name ?? `Famille de ${parent.name}`}</small><h2 id="contact-ids-title">Identifiants de contact</h2><p>Un numéro opaque et unique pour chaque membre.</p></div></div>
         <div className="contact-id-safety"><ShieldCheck size={18} weight="fill" /><span>Seul ce numéro exact cible un compte. Le pseudo n’est jamais utilisé pour démarrer une discussion.</span></div>
         <div className="contact-member-list">
           {members.map((member) => (
             <article className="contact-member-card" key={member.id}>
               {member.isParent ? <span className="contact-parent-avatar"><UserCircle size={29} weight="fill" /></span> : <Avatar person={member} size="child-tab" />}
-              <div className="contact-member-copy"><strong>{member.name}</strong><small>{member.role}</small><span>ID {member.contactId}</span></div>
+              <div className="contact-member-copy"><strong>{member.name}</strong><small>{member.roleLabel}</small><span>ID {member.contactId}</span></div>
               <button type="button" className={copiedMemberId === member.id ? "is-copied" : ""} onClick={() => copyMemberId(member)} aria-label={`Copier l’identifiant de ${member.name}`}>{copiedMemberId === member.id ? <CheckCircle size={18} weight="fill" /> : <Copy size={18} weight="bold" />}<span>{copiedMemberId === member.id ? "Copié" : "Copier"}</span></button>
             </article>
           ))}
@@ -2592,7 +2996,14 @@ function QrModal({ child, onClose, onRequestAdd }) {
 export function App() {
   const dragScrollRef = useMouseDragScroll();
   const [session, setSession] = useState(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(() => Boolean(getToken()));
   const [familyOwner, setFamilyOwner] = useState({ name: "", email: "", contactId: "" });
+  const [family, setFamily] = useState(null);
+  const [isFamilyParentsOpen, setIsFamilyParentsOpen] = useState(false);
+  const [familyInviteToken, setFamilyInviteToken] = useState(() => readFamilyInviteToken());
+  const [familyInvitation, setFamilyInvitation] = useState(null);
+  const [familyInvitationError, setFamilyInvitationError] = useState("");
+  const [isFamilyInvitationLoading, setIsFamilyInvitationLoading] = useState(() => Boolean(readFamilyInviteToken()));
   const [activeTab, setActiveTab] = useState("conversations");
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [isQrOpen, setIsQrOpen] = useState(false);
@@ -2622,10 +3033,41 @@ export function App() {
   const parentUnreadMessages = parentThreads.reduce((total, thread) => total + thread.unread, 0);
 
   useEffect(() => {
-    if (!getToken()) return;
+    if (!familyInviteToken) {
+      setFamilyInvitation(null);
+      setFamilyInvitationError("");
+      setIsFamilyInvitationLoading(false);
+      return;
+    }
+    let isCurrent = true;
+    setIsFamilyInvitationLoading(true);
+    setFamilyInvitationError("");
+    api.familyInvitation(familyInviteToken)
+      .then((payload) => { if (isCurrent) setFamilyInvitation(normalizeFamilyInvitation(payload)); })
+      .catch((error) => {
+        if (!isCurrent) return;
+        setFamilyInvitation(null);
+        setFamilyInvitationError(error.message || "Ce lien d’invitation est invalide ou expiré.");
+      })
+      .finally(() => { if (isCurrent) setIsFamilyInvitationLoading(false); });
+    return () => { isCurrent = false; };
+  }, [familyInviteToken]);
+
+  useEffect(() => {
+    if (!getToken()) {
+      setIsRestoringSession(false);
+      return;
+    }
     api.me()
-      .then(({ account }) => account.role === "child" ? openChildSession(account) : openAuthenticatedSession(account))
-      .catch(() => clearToken());
+      .then(({ account }) => {
+        if (account.role === "child" && familyInviteToken) {
+          clearToken();
+          return undefined;
+        }
+        return account.role === "child" ? openChildSession(account) : openAuthenticatedSession(account);
+      })
+      .catch(() => clearToken())
+      .finally(() => setIsRestoringSession(false));
   }, []);
 
   useEffect(() => {
@@ -2693,9 +3135,10 @@ export function App() {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     if (!parent.demo) {
       applyFamilyChildren([]);
-      const [family, conversationData] = await Promise.all([api.children(), api.conversations()]);
-      applyFamilyChildren(family.children.filter((child) => child.contactId !== demoChildContactId));
+      const [childrenData, conversationData, familyData] = await Promise.all([api.children(), api.conversations(), api.family()]);
+      applyFamilyChildren(childrenData.children.filter((child) => child.contactId !== demoChildContactId));
       applyServerConversations({ ...parentWithId, role: "parent" }, conversationData.conversations);
+      setFamily(normalizeFamily(familyData, parentWithId));
     }
     setFamilyOwner(parentWithId);
     setSession({ ...parentWithId, role: "parent" });
@@ -2719,13 +3162,34 @@ export function App() {
 
   const loginParent = async (credentials) => {
     const { account } = await api.login(credentials);
-    await openAuthenticatedSession(account);
+    try {
+      if (familyInviteToken) await api.acceptFamilyInvitation(familyInviteToken);
+      localStorage.setItem(rememberedParentEmailKey, credentials.email.trim().toLowerCase());
+      await openAuthenticatedSession(account);
+      if (familyInviteToken) {
+        clearFamilyInviteFromUrl();
+        setFamilyInviteToken("");
+        setFamilyInvitation(null);
+      }
+    } catch (error) {
+      clearToken();
+      throw error;
+    }
   };
 
   const registerParent = async (parent) => {
-    const { account } = await api.register(parent);
+    const { account } = familyInviteToken
+      ? await api.registerWithFamilyInvite({ token: familyInviteToken, name: parent.name, password: parent.password })
+      : await api.register(parent);
+    localStorage.setItem(rememberedParentEmailKey, parent.email.trim().toLowerCase());
     await openAuthenticatedSession(account);
-    setChildModal({ mode: "create" });
+    if (familyInviteToken) {
+      clearFamilyInviteFromUrl();
+      setFamilyInviteToken("");
+      setFamilyInvitation(null);
+    } else {
+      setChildModal({ mode: "create" });
+    }
   };
 
   const restoreDemoFamily = () => {
@@ -2736,12 +3200,23 @@ export function App() {
     setSchedulesByChild({ emma: cloneCommunicationSchedule({ ...defaultCommunicationSchedule, calls: { ...defaultCommunicationSchedule.calls, enabled: true, start: "00:00", end: "23:59" }, video: { ...defaultCommunicationSchedule.video, enabled: true, start: "00:00", end: "23:59" } }) });
     setParentThreads(cloneParentThreads());
     setServerConversations([]);
-    setFamilyOwner({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639" });
+    const demoParent = { id: "demo-parent", name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639" };
+    setFamilyOwner(demoParent);
+    setFamily({
+      id: "demo-family",
+      name: "Famille de Marie",
+      role: "primary",
+      members: [
+        { ...demoParent, role: "primary", isCurrent: true },
+        { id: "demo-coparent", name: "Alex", email: "alex@demo.club", contactId: "SC-193-406-852", role: "coparent", isCurrent: false },
+      ],
+      pendingInvitations: [],
+    });
   };
 
   const openDemoAccount = () => {
     restoreDemoFamily();
-    void openAuthenticatedSession({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639", demo: true });
+    void openAuthenticatedSession({ id: "demo-parent", name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639", demo: true });
   };
 
   const loginChild = async (contactId, password) => {
@@ -2767,6 +3242,7 @@ export function App() {
     clearToken();
     setSession(null);
     setFamilyOwner({ name: "", email: "", contactId: "" });
+    setFamily(null);
     setChildren([]);
     setActiveChildId(null);
     setRequestStatuses({});
@@ -2779,10 +3255,70 @@ export function App() {
     setScheduleModalChildId(null);
     setIsContactIdsOpen(false);
     setIsParentPasswordOpen(false);
+    setIsFamilyParentsOpen(false);
     setIsAvatarPreferencesOpen(false);
     setSelectedParentThreadId(null);
     setSelectedConversation(null);
     setActiveTab("conversations");
+  };
+
+  const dismissFamilyInvitation = () => {
+    clearFamilyInviteFromUrl();
+    setFamilyInviteToken("");
+    setFamilyInvitation(null);
+    setFamilyInvitationError("");
+  };
+
+  const acceptCurrentFamilyInvitation = async () => {
+    if (!familyInviteToken || session?.role !== "parent") throw new Error("Aucune invitation de co-parent à accepter.");
+    await api.acceptFamilyInvitation(familyInviteToken);
+    clearFamilyInviteFromUrl();
+    setFamilyInviteToken("");
+    setFamilyInvitation(null);
+    await openAuthenticatedSession(session);
+  };
+
+  const useAnotherAccountForFamilyInvitation = () => {
+    logoutParent();
+  };
+
+  const refreshFamily = async () => {
+    if (session?.demo) return family;
+    const familyData = await api.family();
+    const normalized = normalizeFamily(familyData, session);
+    setFamily(normalized);
+    return normalized;
+  };
+
+  const inviteFamilyParent = async (email) => {
+    if (session?.demo) {
+      const id = `demo-invite-${Date.now()}`;
+      const token = `demo_${crypto.randomUUID().replace(/-/g, "")}_${Date.now()}`;
+      const invitation = { id, email, expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(), link: `${window.location.origin}${window.location.pathname}#familyInvite=${token}` };
+      setFamily((current) => ({ ...current, pendingInvitations: [invitation, ...(current?.pendingInvitations ?? [])] }));
+      return { invitation };
+    }
+    const result = await api.inviteFamilyParent(email);
+    await refreshFamily();
+    return result;
+  };
+
+  const revokeFamilyInvitation = async (invitationId) => {
+    if (session?.demo) {
+      setFamily((current) => ({ ...current, pendingInvitations: (current?.pendingInvitations ?? []).filter((invitation) => invitation.id !== invitationId) }));
+      return;
+    }
+    await api.revokeFamilyInvitation(invitationId);
+    await refreshFamily();
+  };
+
+  const removeFamilyParent = async (parentId) => {
+    if (session?.demo) {
+      setFamily((current) => ({ ...current, members: (current?.members ?? []).filter((member) => member.id !== parentId) }));
+      return;
+    }
+    await api.removeFamilyParent(parentId);
+    await refreshFamily();
   };
 
   const saveAvatar = async (avatar) => {
@@ -2979,9 +3515,55 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [session?.id, session?.role, session?.demo]);
 
+  useEffect(() => {
+    if (!session) return;
+    const params = new URLSearchParams(window.location.search);
+    const notificationType = params.get("notification");
+    if (!notificationType) return;
+    let handled = notificationType === "test";
+
+    if (notificationType === "message") {
+      const conversationId = params.get("conversation");
+      if (session.role === "parent") {
+        const thread = parentThreads.find((item) => item.id === conversationId);
+        if (!thread) return;
+        setSelectedParentThreadId(thread.id);
+        setParentView("messages");
+        handled = true;
+      } else {
+        const conversation = serverConversations.find((item) => item.id === conversationId);
+        if (!conversation) return;
+        setActiveTab("conversations");
+        setSelectedConversation(conversation);
+        handled = true;
+      }
+    } else if (notificationType === "contact-request" && session.role === "parent") {
+      setSelectedParentThreadId(null);
+      setParentView("dashboard");
+      handled = true;
+    } else if (notificationType === "game") {
+      if (session.role === "parent") setParentView("games");
+      else {
+        setSelectedConversation(null);
+        setActiveTab("clubhouse");
+      }
+      handled = true;
+    }
+
+    if (handled) {
+      params.delete("notification");
+      params.delete("conversation");
+      const query = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    }
+  }, [parentThreads, serverConversations, session]);
+
   const screen = useMemo(() => {
+    if (isRestoringSession) {
+      return <section className="session-restoring" role="status" aria-live="polite"><span className="session-restoring__spinner" aria-hidden="true" /><strong>Ouverture de votre Clubhouse…</strong><small>Votre connexion est restaurée.</small></section>;
+    }
     if (!session) {
-      return <AuthScreen onLogin={loginParent} onRegister={registerParent} onDemo={openDemoAccount} onChildLogin={loginChild} onChildDemo={openDemoChildAccount} />;
+      return <AuthScreen onLogin={loginParent} onRegister={registerParent} onDemo={openDemoAccount} onChildLogin={loginChild} onChildDemo={openDemoChildAccount} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "access") {
       return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
@@ -2989,10 +3571,14 @@ export function App() {
     if (parentView === "messages") {
       return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onOpenFamilyConversation={openFamilyConversation} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
+    if (parentView === "games") {
+      return <ParentGamesScreen parent={familyOwner} children={children} isDemo={Boolean(session.demo)} onBack={() => setParentView("dashboard")} />;
+    }
     if (parentView === "dashboard") {
       return (
         <ParentDashboard
           parentName={familyOwner.name}
+          family={family}
           children={children}
           child={activeChild}
           isDemo={Boolean(session.demo)}
@@ -3008,6 +3594,8 @@ export function App() {
           schedule={activeSchedule}
           unreadMessages={parentUnreadMessages}
           onOpenMessages={() => { setSelectedParentThreadId(null); setParentView("messages"); }}
+          onOpenGames={() => setParentView("games")}
+          onOpenFamilyParents={() => setIsFamilyParentsOpen(true)}
           onOpenContactIds={() => setIsContactIdsOpen(true)}
           onOpenPassword={() => setIsParentPasswordOpen(true)}
           onEditSchedule={() => activeChild && setScheduleModalChildId(activeChild.id)}
@@ -3026,11 +3614,12 @@ export function App() {
       return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} />;
     }
     if (activeTab === "clubhouse") {
-      const gameContacts = session?.demo ? friends : serverConversations.filter((conversation) => conversation.kind === "child").map((conversation) => ({ id: conversation.contactId, name: conversation.name, contactId: conversation.contactId }));
+      const demoAdult = familyOwner.contactId ? [{ id: familyOwner.id ?? "demo-parent", name: familyOwner.name || "Mon parent", contactId: familyOwner.contactId, role: "parent" }] : [];
+      const gameContacts = session?.demo ? [...demoAdult, ...friends.map((friend) => ({ ...friend, role: "child" }))] : [];
       return <ClubhouseScreen child={activeChild} contacts={gameContacts} isDemo={Boolean(session?.demo)} />;
     }
     if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
-    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onLogout={logoutParent} />;
+    if (activeTab === "profile") return <ProfileScreen child={activeChild} isDemo={Boolean(session?.demo)} onOpenParent={() => setParentView("access")} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onLogout={logoutParent} />;
     const baseFriends = session?.demo ? friends : [];
     const approvedFriends = (session?.demo && activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
     const availableConversations = session?.demo ? approvedFriends.map((friend) => conversations.find((item) => item.id === friend.id) ?? {
@@ -3042,7 +3631,7 @@ export function App() {
       sent: "Bienvenue dans mon Clubhouse !",
     }) : serverConversations;
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, familyOwner, isAvatarPreferencesOpen, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
+  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, family, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
@@ -3058,12 +3647,14 @@ export function App() {
         <div className={`screen-scroll ${!session || selectedConversation || parentView || isAvatarPreferencesOpen || activeChild?.status === "paused" || !activeChild ? "screen-scroll--full" : ""}`}>{screen}</div>
         {session && !selectedConversation && !parentView && !isAvatarPreferencesOpen && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
         {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
-        {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} children={children} onClose={() => setIsContactIdsOpen(false)} />}
+        {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} family={family} children={children} onClose={() => setIsContactIdsOpen(false)} />}
         {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal isDemo={Boolean(session.demo)} onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}
+        {session?.role === "parent" && isFamilyParentsOpen && family && <FamilyParentsModal family={family} currentParent={session} isDemo={Boolean(session.demo)} onClose={() => setIsFamilyParentsOpen(false)} onInvite={inviteFamilyParent} onRevoke={revokeFamilyInvitation} onRemove={removeFamilyParent} />}
         {session && childModal && (
           <ChildAccountModal
             key={`${childModal.mode}-${childModal.childId ?? "new"}`}
             child={childModal.mode === "edit" ? children.find((child) => child.id === childModal.childId) : null}
+            canDelete={Boolean(session.demo) || family?.role === "primary"}
             onClose={() => setChildModal(null)}
             onSave={saveChild}
             onDelete={deleteChild}
@@ -3078,6 +3669,8 @@ export function App() {
             onSave={(schedule) => saveChildSchedule(scheduleModalChildId, schedule)}
           />
         )}
+        {session?.role === "parent" && familyInvitation && familyInviteToken && !isFamilyInvitationLoading && <FamilyInviteAcceptanceModal invitation={familyInvitation} parent={session} onAccept={acceptCurrentFamilyInvitation} onUseAnotherAccount={useAnotherAccountForFamilyInvitation} onDismiss={dismissFamilyInvitation} />}
+        {session?.role === "parent" && familyInviteToken && familyInvitationError && !isFamilyInvitationLoading && <FamilyInviteErrorModal message={familyInvitationError} onDismiss={dismissFamilyInvitation} />}
       </div>
     </main>
   );

@@ -37,9 +37,10 @@ function normalizeGame(game) {
   };
 }
 
-export default function ConnectFourGame({ child, contacts, isDemo, onComplete }) {
+export default function ConnectFourGame({ child, contacts: suppliedContacts = [], isDemo, onComplete }) {
   const [games, setGames] = useState([]);
-  const [selectedContactId, setSelectedContactId] = useState(contacts[0]?.contactId ?? "");
+  const [contacts, setContacts] = useState(suppliedContacts);
+  const [selectedContactId, setSelectedContactId] = useState(suppliedContacts[0]?.contactId ?? "");
   const [activeGameId, setActiveGameId] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,8 +58,23 @@ export default function ConnectFourGame({ child, contacts, isDemo, onComplete })
     }
   };
 
+  const refreshContacts = async () => {
+    if (isDemo) {
+      setContacts(suppliedContacts);
+      return;
+    }
+    try {
+      const result = await api.gameContacts();
+      setContacts(result.contacts);
+      setSelectedContactId((current) => result.contacts.some((contact) => contact.contactId === current) ? current : result.contacts[0]?.contactId ?? "");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  };
+
   useEffect(() => {
     refreshGames();
+    refreshContacts();
     if (isDemo) return undefined;
     const timer = window.setInterval(refreshGames, 3000);
     return () => window.clearInterval(timer);
@@ -67,7 +83,7 @@ export default function ConnectFourGame({ child, contacts, isDemo, onComplete })
   useEffect(() => {
     if (activeGame?.status === "completed" && activeGame.winnerId === child.id && !awardedRef.current.has(activeGame.id)) {
       awardedRef.current.add(activeGame.id);
-      onComplete();
+      onComplete?.();
     }
   }, [activeGame, child.id, onComplete]);
 
@@ -160,10 +176,10 @@ export default function ConnectFourGame({ child, contacts, isDemo, onComplete })
   if (!activeGame) return <div className="connect-four-lobby">
     <span className="connect-four-lobby__icon"><GameController size={32} weight="fill" /></span>
     <h3>Choisis ton adversaire</h3>
-    <p>Seuls tes contacts approuvés peuvent recevoir une invitation.</p>
+    <p>Choisis un ami ou un adulte autorisé de ta famille.</p>
     {pendingInvites.map((game) => <div className="game-invite" key={game.id}><span><strong>{game.playerOneName}</strong><small>t’invite à jouer</small></span><button type="button" onClick={() => respond(game, "decline")} aria-label={`Refuser l’invitation de ${game.playerOneName}`}><X size={17} /></button><button type="button" onClick={() => respond(game, "accept")} aria-label={`Accepter l’invitation de ${game.playerOneName}`}><CheckCircle size={18} weight="fill" /></button></div>)}
-    <div className="game-contact-picker">{contacts.map((contact) => <button key={contact.contactId} type="button" className={selectedContactId === contact.contactId ? "is-selected" : ""} onClick={() => setSelectedContactId(contact.contactId)}>{contact.name}</button>)}</div>
-    {contacts.length ? <button className="clubhouse-modal__primary" type="button" onClick={invite} disabled={busy}><PaperPlaneTilt size={18} weight="fill" /> {busy ? "Invitation…" : "Inviter à jouer"}</button> : <p className="game-empty-contacts"><ShieldCheck size={17} weight="fill" /> Ajoute d’abord un contact approuvé.</p>}
+    <div className="game-contact-picker">{contacts.map((contact) => <button key={contact.contactId} type="button" className={selectedContactId === contact.contactId ? "is-selected" : ""} onClick={() => setSelectedContactId(contact.contactId)}><span>{contact.name}</span>{contact.role === "parent" && <small>Adulte</small>}</button>)}</div>
+    {contacts.length ? <button className="clubhouse-modal__primary" type="button" onClick={invite} disabled={busy}><PaperPlaneTilt size={18} weight="fill" /> {busy ? "Invitation…" : "Inviter à jouer"}</button> : <p className="game-empty-contacts"><ShieldCheck size={17} weight="fill" /> Ajoute un contact approuvé ou demande à un adulte de rejoindre ta famille.</p>}
     {error && <p className="game-error" role="alert">{error}</p>}
   </div>;
 
