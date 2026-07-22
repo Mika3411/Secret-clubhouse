@@ -70,11 +70,11 @@ const signSession = (account) => jwt.sign({ sub: account.id, role: account.role 
 const childColors = new Set(["mint", "violet", "sun", "coral"]);
 const childStatuses = new Set(["active", "paused"]);
 const avatarOptions = {
-  hair: new Set(["short", "bob", "curly", "spiky", "bun"]),
-  hairColor: new Set(["brown", "black", "blond", "ginger", "violet"]),
-  face: new Set(["smile", "happy", "calm", "freckles"]),
-  skin: new Set(["light", "warm", "tan", "brown", "deep"]),
-  outfit: new Set(["mint", "violet", "coral", "sun", "blue"]),
+  hair: new Set(["short", "bob", "curly", "spiky", "bun", "long", "wavy", "ponytail", "braids", "afro"]),
+  hairColor: new Set(["brown", "black", "blond", "ginger", "violet", "auburn", "silver", "pink", "blue", "teal"]),
+  face: new Set(["smile", "happy", "calm", "freckles", "wink", "laugh", "surprised", "glasses", "determined", "blush"]),
+  skin: new Set(["porcelain", "light", "peach", "warm", "honey", "tan", "caramel", "brown", "mahogany", "deep"]),
+  outfit: new Set(["mint", "violet", "coral", "sun", "blue", "indigo", "pink", "green", "orange", "navy"]),
 };
 const defaultAvatarConfig = { hair: "bob", hairColor: "brown", face: "smile", skin: "warm", outfit: "mint" };
 
@@ -777,12 +777,30 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
 });
 
 app.patch("/api/account/avatar", requireAuth, async (req, res) => {
-  if (req.auth.role !== "child") return res.status(403).json({ error: "L’avatar appartient au profil enfant." });
-  const currentResult = await pool.query("select * from accounts where id=$1 and role='child'", [req.auth.sub]);
+  let childId = req.auth.sub;
+  let currentResult;
+
+  if (req.auth.role === "parent") {
+    childId = String(req.body?.childId ?? "");
+    if (!uuidPattern.test(childId)) return res.status(400).json({ error: "Identifiant enfant invalide." });
+    currentResult = await pool.query(
+      `select child.*
+       from accounts child
+       join family_children family_child on family_child.child_id=child.id
+       join family_memberships membership on membership.family_id=family_child.family_id
+       where child.id=$1 and child.role='child' and membership.parent_id=$2 and child.contact_id<>$3`,
+      [childId, req.auth.sub, demoChildContactId],
+    );
+  } else if (req.auth.role === "child") {
+    currentResult = await pool.query("select * from accounts where id=$1 and role='child'", [childId]);
+  } else {
+    return res.status(403).json({ error: "Ce compte ne peut pas modifier cet avatar." });
+  }
+
   const current = currentResult.rows[0];
-  if (!current) return res.status(404).json({ error: "Profil enfant introuvable." });
+  if (!current) return res.status(404).json({ error: req.auth.role === "parent" ? "Profil enfant introuvable dans votre famille." : "Profil enfant introuvable." });
   const avatar = normalizeAvatarConfig(req.body?.avatar, current.avatar_config);
-  const result = await pool.query("update accounts set avatar_config=$1::jsonb where id=$2 returning *", [JSON.stringify(avatar), req.auth.sub]);
+  const result = await pool.query("update accounts set avatar_config=$1::jsonb where id=$2 returning *", [JSON.stringify(avatar), childId]);
   res.json({ child: await serializeAccount(result.rows[0]) });
 });
 
