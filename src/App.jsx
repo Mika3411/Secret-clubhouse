@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   DotsThree,
+  DownloadSimple,
   Eye,
   EyeSlash,
   FlagPennant,
@@ -59,6 +60,7 @@ import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import PhaserMemoryGame from "./PhaserMemoryGame";
 import ConnectFourGame from "./ConnectFourGame";
+import { SimonGame, SlidingPuzzleGame, StarCatchGame, TicTacToeGame } from "./ArcadeMiniGames";
 
 const friends = [
   { id: "leo", name: "Léo", contactId: "SC-214-680-531", image: "/avatars/leo.png" },
@@ -258,6 +260,106 @@ const clubhouseActivities = [
       { prompt: "Lequel n’est pas dans l’espace ?", answers: ["Planète", "Étoile", "Bicyclette"], correct: 2 },
     ],
   },
+  {
+    id: "tic-tac-toe",
+    type: "game",
+    variant: "tic-tac-toe",
+    title: "Morpion contre Clubbot",
+    description: "Aligne trois symboles avant le petit robot du Clubhouse.",
+    duration: 4,
+    reward: 30,
+    Icon: GameController,
+    tone: "mint",
+    questions: [
+      { prompt: "Combien font 7 + 6 ?", answers: ["12", "13", "14"], correct: 1 },
+      { prompt: "Combien font 15 − 8 ?", answers: ["6", "7", "8"], correct: 1 },
+      { prompt: "Combien font 4 × 3 ?", answers: ["7", "12", "14"], correct: 1 },
+      { prompt: "Quel nombre complète 18 + ? = 25 ?", answers: ["6", "7", "8"], correct: 1 },
+      { prompt: "Combien font 24 ÷ 4 ?", answers: ["5", "6", "8"], correct: 1 },
+      { prompt: "Quel est le double de 9 ?", answers: ["16", "18", "20"], correct: 1 },
+      { prompt: "Quelle est la moitié de 30 ?", answers: ["10", "15", "20"], correct: 1 },
+      { prompt: "Combien font 11 + 12 ?", answers: ["21", "22", "23"], correct: 2 },
+      { prompt: "Combien font 40 − 17 ?", answers: ["23", "24", "27"], correct: 0 },
+      { prompt: "Combien font 5 × 6 ?", answers: ["25", "30", "35"], correct: 1 },
+      { prompt: "Quel nombre vient après 39 ?", answers: ["38", "40", "49"], correct: 1 },
+      { prompt: "Combien font 9 + 9 + 2 ?", answers: ["18", "19", "20"], correct: 2 },
+    ],
+  },
+  {
+    id: "sliding-puzzle",
+    type: "game",
+    variant: "sliding-puzzle",
+    title: "Taquin 3 × 3",
+    description: "Fais glisser les cases pour remettre les nombres dans l’ordre.",
+    duration: 5,
+    reward: 30,
+    Icon: Star,
+    tone: "violet",
+    questions: [
+      { prompt: "Sur quelle planète vivons-nous ?", answers: ["Mars", "La Terre", "Vénus"], correct: 1 },
+      { prompt: "Comment s’appelle notre étoile ?", answers: ["Le Soleil", "La Lune", "Saturne"], correct: 0 },
+      { prompt: "Quelle planète est célèbre pour ses anneaux ?", answers: ["Mercure", "Saturne", "Mars"], correct: 1 },
+      { prompt: "La Lune est…", answers: ["Une étoile", "Un satellite", "Une comète"], correct: 1 },
+      { prompt: "Quelle planète est surnommée la planète rouge ?", answers: ["Mars", "Neptune", "Jupiter"], correct: 0 },
+      { prompt: "Qui a marché sur la Lune ?", answers: ["Des astronautes", "Des plongeurs", "Des archéologues"], correct: 0 },
+      { prompt: "Quelle planète est la plus proche du Soleil ?", answers: ["Mercure", "La Terre", "Uranus"], correct: 0 },
+      { prompt: "Une étoile filante est surtout…", answers: ["Un météore", "Une planète", "Un avion"], correct: 0 },
+      { prompt: "Quel objet aide à observer les étoiles ?", answers: ["Un microscope", "Un télescope", "Une boussole"], correct: 1 },
+      { prompt: "La Terre tourne autour…", answers: ["Du Soleil", "De Mars", "De la Lune uniquement"], correct: 0 },
+      { prompt: "Quelle planète est la plus grande ?", answers: ["Jupiter", "Vénus", "La Terre"], correct: 0 },
+      { prompt: "Comment appelle-t-on un groupe d’étoiles dessinant une forme ?", answers: ["Une constellation", "Un continent", "Un volcan"], correct: 0 },
+    ],
+  },
+  {
+    id: "simon-lights",
+    type: "game",
+    variant: "simon",
+    title: "Mémoire lumineuse",
+    description: "Observe les couleurs et reproduis une séquence de plus en plus longue.",
+    duration: 4,
+    reward: 25,
+    Icon: PuzzlePiece,
+    tone: "coral",
+    questions: [
+      { prompt: "J’ai des pages mais je ne suis pas un arbre. Qui suis-je ?", answers: ["Un livre", "Une fenêtre", "Un vélo"], correct: 0 },
+      { prompt: "Je tombe sans me faire mal. Qui suis-je ?", answers: ["La nuit", "Une chaise", "Un ballon"], correct: 0 },
+      { prompt: "Plus je sèche, plus je deviens mouillée. Qui suis-je ?", answers: ["Une serviette", "Une chaussure", "Une feuille"], correct: 0 },
+      { prompt: "J’ai des dents mais je ne mords pas. Qui suis-je ?", answers: ["Un peigne", "Un chat", "Un crocodile"], correct: 0 },
+      { prompt: "Je peux faire le tour du monde sans bouger. Qui suis-je ?", answers: ["Un timbre", "Une valise", "Un train"], correct: 0 },
+      { prompt: "Je monte et je descends sans bouger. Qui suis-je ?", answers: ["Un escalier", "Un ascenseur", "Un kangourou"], correct: 0 },
+      { prompt: "J’ai un cou mais pas de tête. Qui suis-je ?", answers: ["Une bouteille", "Une girafe", "Un pull"], correct: 0 },
+      { prompt: "On me casse avant de m’utiliser. Qui suis-je ?", answers: ["Un œuf", "Un verre", "Un jouet"], correct: 0 },
+      { prompt: "Je suis plein de trous mais je garde l’eau. Qui suis-je ?", answers: ["Une éponge", "Un panier", "Un filet"], correct: 0 },
+      { prompt: "J’ai quatre pieds mais je ne marche pas. Qui suis-je ?", answers: ["Une table", "Un chien", "Un robot"], correct: 0 },
+      { prompt: "Je brille la nuit et change de forme. Qui suis-je ?", answers: ["La Lune", "Le Soleil", "Un nuage"], correct: 0 },
+      { prompt: "Je donne l’heure sans parler. Qui suis-je ?", answers: ["Une horloge", "Un livre", "Une radio"], correct: 0 },
+    ],
+  },
+  {
+    id: "star-catch",
+    type: "game",
+    variant: "star-catch",
+    title: "Attrape-étoiles",
+    description: "Touche les étoiles avant qu’elles ne changent de place.",
+    duration: 2,
+    reward: 25,
+    Icon: Star,
+    tone: "blue",
+    questions: [
+      { prompt: "Dans quel sport utilise-t-on un panier ?", answers: ["Basket-ball", "Tennis", "Natation"], correct: 0 },
+      { prompt: "Combien de joueurs une équipe de football aligne-t-elle sur le terrain ?", answers: ["7", "11", "15"], correct: 1 },
+      { prompt: "Dans quel sport porte-t-on souvent un bonnet dans l’eau ?", answers: ["Natation", "Escalade", "Cyclisme"], correct: 0 },
+      { prompt: "Quel objet frappe-t-on au badminton ?", answers: ["Un volant", "Un palet", "Une quille"], correct: 0 },
+      { prompt: "Dans quel sport trouve-t-on un tatami ?", answers: ["Judo", "Rugby", "Aviron"], correct: 0 },
+      { prompt: "Quel sport se pratique avec une raquette et une balle jaune ?", answers: ["Tennis", "Handball", "Ski"], correct: 0 },
+      { prompt: "Dans quel sport glisse-t-on sur la neige ?", answers: ["Ski", "Voile", "Basket-ball"], correct: 0 },
+      { prompt: "Quel sport utilise une planche et des vagues ?", answers: ["Surf", "Golf", "Escrime"], correct: 0 },
+      { prompt: "Que porte-t-on pour protéger sa tête à vélo ?", answers: ["Un casque", "Des palmes", "Un masque de ski"], correct: 0 },
+      { prompt: "Dans quel sport lance-t-on une balle vers des quilles ?", answers: ["Bowling", "Volley-ball", "Hockey"], correct: 0 },
+      { prompt: "Quel sport se joue avec un filet haut et un ballon ?", answers: ["Volley-ball", "Pétanque", "Patinage"], correct: 0 },
+      { prompt: "Dans quel sport essaie-t-on de faire un trou en peu de coups ?", answers: ["Golf", "Boxe", "Course"], correct: 0 },
+    ],
+  },
 ];
 
 function useMouseDragScroll() {
@@ -349,6 +451,21 @@ function useMouseDragScroll() {
 
 const initialParentThreads = [
   {
+    id: "demo-coparent-thread",
+    name: "Alex",
+    contactId: "SC-193-406-852",
+    contactRole: "parent",
+    isHouseholdParent: true,
+    relation: "Co-parent de la famille",
+    initials: "A",
+    preview: "On se retrouve ici pour organiser la famille.",
+    time: "Maintenant",
+    unread: 0,
+    messages: [
+      { id: "alex-1", direction: "received", text: "Bonjour Marie, on peut échanger ici pour la famille.", time: "Maintenant" },
+    ],
+  },
+  {
     id: "thomas",
     name: "Thomas R.",
     relation: "Parent de Chloé",
@@ -404,16 +521,18 @@ const mapServerConversation = (conversation, account) => {
     (account.role === "parent" && conversation.contact_role === "child")
     || (account.role === "child" && conversation.contact_role === "parent")
   );
+  const isHouseholdParent = conversation.kind === "parent" && conversation.contact_role === "parent" && Boolean(conversation.is_family_member);
   return {
     id: conversation.id,
     name: conversation.name,
     contactId: conversation.contact_id,
     contactRole: conversation.contact_role,
     isFamily,
+    isHouseholdParent,
     serverBacked: true,
-    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : "Parent d’un contact",
+    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : isHouseholdParent ? "Parent de ma famille" : "Parent d’un contact",
     initials,
-    preview: latest?.text ?? (isFamily ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
+    preview: latest?.text ?? (isFamily || isHouseholdParent ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
     time: latest?.time ?? "Maintenant",
     unread: 0,
     messages,
@@ -494,9 +613,9 @@ function Avatar({ person, size = "medium", online = null }) {
 
 const defaultAvatar = { hair: "bob", hairColor: "brown", face: "smile", skin: "warm", outfit: "mint" };
 const avatarPalette = {
-  skin: { light: "#f9d8c2", warm: "#eeb992", tan: "#c98960", brown: "#925a3b", deep: "#5c382c" },
-  hairColor: { brown: "#6b3f2a", black: "#201b2c", blond: "#e8b94f", ginger: "#bd5b35", violet: "#6650c7" },
-  outfit: { mint: "#69e4c3", violet: "#8c75e7", coral: "#ff8d83", sun: "#f5c451", blue: "#63b7e8" },
+  skin: { porcelain: "#ffe5d5", light: "#f9d8c2", peach: "#f3c7aa", warm: "#eeb992", honey: "#dda779", tan: "#c98960", caramel: "#ae704c", brown: "#925a3b", mahogany: "#72432f", deep: "#5c382c" },
+  hairColor: { brown: "#6b3f2a", black: "#201b2c", blond: "#e8b94f", ginger: "#bd5b35", violet: "#6650c7", auburn: "#8e3f32", silver: "#b7afc3", pink: "#e66fa8", blue: "#315fa8", teal: "#238d87" },
+  outfit: { mint: "#69e4c3", violet: "#8c75e7", coral: "#ff8d83", sun: "#f5c451", blue: "#63b7e8", indigo: "#4a3bb5", pink: "#f08fc0", green: "#3aa67d", orange: "#f09452", navy: "#243c78" },
 };
 
 function AvatarIllustration({ avatar = defaultAvatar, name = "Mon avatar" }) {
@@ -507,6 +626,9 @@ function AvatarIllustration({ avatar = defaultAvatar, name = "Mon avatar" }) {
   return (
     <svg className="avatar-illustration" viewBox="0 0 120 120" role="img" aria-label={`Avatar personnalisé de ${name}`}>
       <circle cx="60" cy="60" r="60" fill="#d9d0ff" />
+      {config.hair === "long" && <path d="M25 49c0-27 15-42 35-42 23 0 37 17 36 47l-5 56H29z" fill={hair} />}
+      {config.hair === "ponytail" && <><ellipse cx="97" cy="47" rx="17" ry="24" fill={hair} /><circle cx="87" cy="34" r="8" fill={hair} /></>}
+      {config.hair === "braids" && <g fill={hair}><path d="M29 48c0-25 13-38 31-38 20 0 33 14 33 39l-8-7c-16-12-32-12-48 1z"/><circle cx="29" cy="55" r="7"/><circle cx="27" cy="67" r="6.5"/><circle cx="28" cy="79" r="6"/><circle cx="91" cy="55" r="7"/><circle cx="93" cy="67" r="6.5"/><circle cx="92" cy="79" r="6"/></g>}
       <path d="M17 120c4-25 20-38 43-38s39 13 43 38" fill={outfit} />
       <path d="M39 80h42v20c-12 9-30 9-42 0z" fill={skin} />
       <ellipse cx="60" cy="54" rx="31" ry="35" fill={skin} />
@@ -515,11 +637,21 @@ function AvatarIllustration({ avatar = defaultAvatar, name = "Mon avatar" }) {
       {config.hair === "curly" && <g fill={hair}><circle cx="37" cy="30" r="14"/><circle cx="53" cy="21" r="15"/><circle cx="70" cy="22" r="15"/><circle cx="84" cy="34" r="14"/><circle cx="31" cy="48" r="12"/><circle cx="89" cy="50" r="12"/></g>}
       {config.hair === "spiky" && <path d="M29 49l5-27 9 9 5-21 12 15 12-18 4 22 15-9-3 32c-16-18-42-20-59-3z" fill={hair} />}
       {config.hair === "bun" && <><circle cx="61" cy="13" r="15" fill={hair}/><path d="M29 51c0-27 14-40 32-40s31 14 31 40c-17-18-43-18-63 0z" fill={hair}/></>}
-      <circle cx="48" cy="55" r="3.2" fill="#171044"/><circle cx="72" cy="55" r="3.2" fill="#171044"/>
+      {config.hair === "long" && <path d="M29 48c0-27 14-39 32-39 19 0 32 14 32 41-15-17-39-19-64-2z" fill={hair} />}
+      {config.hair === "wavy" && <><path d="M28 49c0-26 14-40 33-40 21 0 34 15 32 43-8-7-12-16-15-24-6 10-15 13-25 10-9-3-16 1-25 11z" fill={hair}/><path d="M31 48q-10 13 0 26t-2 25M89 48q10 13 0 26t2 25" fill="none" stroke={hair} strokeWidth="10" strokeLinecap="round"/></>}
+      {config.hair === "ponytail" && <path d="M29 49c0-27 14-40 32-40 20 0 33 14 32 42-17-17-39-19-64-2z" fill={hair} />}
+      {config.hair === "afro" && <g fill={hair}><circle cx="29" cy="43" r="14"/><circle cx="34" cy="27" r="15"/><circle cx="48" cy="17" r="15"/><circle cx="64" cy="15" r="16"/><circle cx="80" cy="22" r="15"/><circle cx="91" cy="37" r="14"/><circle cx="91" cy="52" r="12"/><circle cx="27" cy="57" r="12"/></g>}
+      {!['happy', 'wink', 'laugh'].includes(config.face) && <><circle cx="48" cy="55" r="3.2" fill="#171044"/><circle cx="72" cy="55" r="3.2" fill="#171044"/></>}
       {config.face === "smile" && <path d="M50 69q10 9 20 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/>}
       {config.face === "happy" && <><path d="M45 55q3-5 6 0M69 55q3-5 6 0" fill="none" stroke="#171044" strokeWidth="3" strokeLinecap="round"/><path d="M49 68q11 13 22 0" fill="#fff" stroke="#8d4150" strokeWidth="2"/></>}
       {config.face === "calm" && <path d="M52 70q8 3 16 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/>}
       {config.face === "freckles" && <><path d="M50 69q10 8 20 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/><g fill="#a8634f"><circle cx="40" cy="64" r="1.4"/><circle cx="45" cy="66" r="1.2"/><circle cx="80" cy="64" r="1.4"/><circle cx="75" cy="66" r="1.2"/></g></>}
+      {config.face === "wink" && <><path d="M44 55q4-5 8 0" fill="none" stroke="#171044" strokeWidth="3" strokeLinecap="round"/><circle cx="72" cy="55" r="3.2" fill="#171044"/><path d="M50 69q10 9 20 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/></>}
+      {config.face === "laugh" && <><path d="M44 55q4-5 8 0M68 55q4-5 8 0" fill="none" stroke="#171044" strokeWidth="3" strokeLinecap="round"/><path d="M48 67q12 18 24 0z" fill="#8d4150"/><path d="M53 71h14" stroke="#fff" strokeWidth="3" strokeLinecap="round"/></>}
+      {config.face === "surprised" && <ellipse cx="60" cy="70" rx="5" ry="7" fill="#8d4150"/>}
+      {config.face === "glasses" && <><g fill="none" stroke="#34256f" strokeWidth="2.5"><circle cx="47" cy="55" r="8"/><circle cx="73" cy="55" r="8"/><path d="M55 55h10M39 53l-7-2M81 53l7-2"/></g><path d="M51 70q9 7 18 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/></>}
+      {config.face === "determined" && <><path d="M41 48l11 3M79 48l-11 3" stroke="#171044" strokeWidth="3" strokeLinecap="round"/><path d="M52 71h16" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/></>}
+      {config.face === "blush" && <><circle cx="39" cy="65" r="5" fill="#df7f8f" opacity=".48"/><circle cx="81" cy="65" r="5" fill="#df7f8f" opacity=".48"/><path d="M50 69q10 9 20 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/></>}
       <path d="M60 58l-2 6h4" fill="none" stroke="#b87962" strokeWidth="1.5" strokeLinecap="round"/>
       <path d="M43 93l17 12 17-12" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="4" strokeLinecap="round"/>
     </svg>
@@ -547,6 +679,7 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo, ha
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isTermsOpen, setIsTermsOpen] = useState(false);
+  const [isPrivacyOpen, setIsPrivacyOpen] = useState(false);
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
 
@@ -652,10 +785,11 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo, ha
 
           {!hasFamilyInvite && <><div className="auth-separator"><span>ou</span></div>
           <button className="demo-account-button" type="button" onClick={audience === "child" ? onChildDemo : onDemo}><Sparkle size={20} weight="fill" /><span><strong>{audience === "child" ? "Tester comme Emma" : "Tester avec un faux compte"}</strong><small>{audience === "child" ? "ID SC-482-917-305 · compte enfant démo" : "Aucune donnée réelle nécessaire"}</small></span><CaretRight size={18} weight="bold" /></button></>}
-          <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial. <button type="button" onClick={() => setIsTermsOpen(true)}>CGV</button></p>
+          <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial. <span><button type="button" onClick={() => setIsTermsOpen(true)}>CGV</button><i aria-hidden="true">·</i><button type="button" onClick={() => setIsPrivacyOpen(true)}>Politique de confidentialité</button></span></p>
         </div>
       </div>
       {isTermsOpen && <TermsModal onClose={() => setIsTermsOpen(false)} />}
+      {isPrivacyOpen && <PrivacyModal onClose={() => setIsPrivacyOpen(false)} />}
     </section>
   );
 }
@@ -681,6 +815,37 @@ function TermsModal({ onClose }) {
           <article><h3>8. Données personnelles</h3><p>Les données sont traitées pour fournir et sécuriser le service. Les modalités détaillées, durées de conservation et droits des personnes devront figurer dans une politique de confidentialité distincte, accessible avant l’inscription.</p></article>
           <article><h3>9. Suspension et résiliation</h3><p>Le parent peut cesser d’utiliser le service et demander la suppression de son compte. L’éditeur peut suspendre un compte en cas de fraude, de risque pour un enfant, de violation des règles ou d’obligation légale, selon une procédure proportionnée.</p></article>
           <article><h3>10. Droit applicable et réclamations</h3><p>Les coordonnées du service client, le médiateur de la consommation compétent et les règles de règlement des litiges seront précisés selon le pays d’établissement de l’éditeur et le lieu de résidence du consommateur.</p></article>
+        </div>
+        <footer><button className="primary-button" type="button" onClick={onClose}>Fermer</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function PrivacyModal({ onClose }) {
+  return (
+    <div className="terms-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="terms-modal privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title">
+        <header className="terms-modal__header">
+          <div><span>Protection des familles</span><h2 id="privacy-title">Politique de confidentialité</h2><small>Version du 22 juillet 2026</small></div>
+          <button type="button" onClick={onClose} aria-label="Fermer la politique de confidentialité"><X size={21} weight="bold" /></button>
+        </header>
+        <div className="terms-modal__content">
+          <aside><ShieldCheck size={20} weight="fill" /><span><strong>Document provisoire</strong> L’identité du responsable, ses coordonnées, les durées définitives et la région d’hébergement doivent être complétées et validées avant la mise en production.</span></aside>
+
+          <article><h3>1. Qui traite les données ?</h3><p>Le responsable du traitement est l’éditeur de Secret Clubhouse. Sa dénomination, son adresse, son numéro d’immatriculation et l’adresse de contact dédiée à la protection des données seront indiqués ici avant l’ouverture du service.</p></article>
+          <article><h3>2. À qui s’adresse cette politique ?</h3><p>Elle concerne les parents, les coparents invités et les enfants de 6 à 13 ans dont le profil est créé et géré par un responsable légal. Une information courte et adaptée à l’âge devra aussi être présentée directement aux enfants.</p></article>
+          <article><h3>3. Données utilisées</h3><p>Le service traite les informations du compte parent, les profils enfants, les identifiants privés, les contacts approuvés, les réglages de sécurité, la présence récente, les messages et médias envoyés, les appels et leurs métadonnées techniques, les abonnements aux notifications et les données nécessaires à la sécurité.</p></article>
+          <article><h3>4. Pourquoi et sur quelle base ?</h3><p>Les données nécessaires au compte et aux communications sont utilisées pour exécuter le service demandé par le parent. La sécurité, la prévention des abus et la continuité du service reposent sur l’intérêt légitime de l’éditeur. Certaines obligations reposent sur la loi. Les fonctions réellement facultatives fondées sur le consentement restent désactivables à tout moment.</p></article>
+          <article><h3>5. Protection particulière des enfants</h3><p>Les enfants ne peuvent pas s’inscrire seuls. Le parent crée leur profil, approuve leurs contacts et règle leurs autorisations. Le service n’utilise ni numéro de téléphone enfant, ni recherche publique, ni publicité comportementale. Lorsqu’un traitement repose sur le consentement, les règles françaises applicables aux mineurs et à l’autorité parentale sont respectées.</p></article>
+          <article><h3>6. Destinataires</h3><p>Les données sont accessibles uniquement aux personnes autorisées : membres concernés de la famille, contacts approuvés pour les contenus échangés, personnel habilité de l’éditeur et prestataires strictement nécessaires. Les parents voient les réglages et l’activité de sécurité prévus, mais pas le contenu des conversations entre enfants.</p></article>
+          <article><h3>7. Hébergement et transferts</h3><p>La source de vérité du service est le serveur Node.js et PostgreSQL hébergé chez Render. La région d’hébergement définitive doit être indiquée. Si des données sont transférées hors de l’Espace économique européen, le mécanisme juridique et les garanties correspondantes seront précisés.</p></article>
+          <article><h3>8. Durées de conservation</h3><p>Les comptes et contenus sont conservés pendant la vie du compte puis supprimés ou archivés pendant les délais strictement nécessaires aux obligations légales et à la sécurité. Les durées précises par catégorie — comptes, messages, médias, journaux, présence et notifications — seront publiées avant la production.</p></article>
+          <article><h3>9. Sécurité</h3><p>Secret Clubhouse prévoit notamment des mots de passe hachés, des sessions authentifiées, un contrôle d’accès par famille, des identifiants opaques, des contacts soumis à approbation et des communications chiffrées en transit. Aucun système ne pouvant garantir un risque nul, les incidents sont traités et notifiés conformément aux obligations applicables.</p></article>
+          <article><h3>10. Vos droits</h3><p>Selon votre situation, vous pouvez demander l’accès, la rectification, l’effacement, la limitation, l’opposition et la portabilité de vos données, ou retirer un consentement. Vous pouvez également définir des directives post-mortem et introduire une réclamation auprès de la CNIL. Une preuve d’identité peut être demandée uniquement lorsque cela est nécessaire.</p></article>
+          <article><h3>11. Exercer vos droits</h3><p>L’adresse de contact de l’éditeur ou de son délégué à la protection des données sera ajoutée ici. La demande devra préciser le compte concerné et le droit exercé. Une réponse sera apportée dans les délais réglementaires.</p></article>
+          <article><h3>12. Stockage local et notifications</h3><p>L’application utilise un stockage local strictement nécessaire pour maintenir la session et mémoriser l’adresse e-mail du parent. Les abonnements Web Push, APNs ou FCM servent uniquement aux notifications activées. Le système du téléphone ou de l’ordinateur permet de les désactiver.</p></article>
+          <article><h3>13. Évolution de la politique</h3><p>Cette politique peut évoluer avec le service ou la réglementation. La date de version sera mise à jour et toute modification importante sera portée à la connaissance des parents avant son application.</p></article>
         </div>
         <footer><button className="primary-button" type="button" onClick={onClose}>Fermer</button></footer>
       </section>
@@ -1690,7 +1855,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
   }, [phase, selectedActivity]);
 
   const openActivity = (activity) => {
-    if (activity.type === "game" && activity.questions) {
+    if (activity.type === "game" && activity.questions && !activity.variant) {
       let deck = questionDecksRef.current[activity.id] ?? [];
       if (deck.length < 3) {
         const previousLastPrompt = deck.at(-1)?.prompt;
@@ -1790,7 +1955,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
             const isComplete = completedActivities.has(activity.id);
             return (
               <button type="button" className={`clubhouse-card clubhouse-card--${activity.tone}`} key={activity.id} onClick={() => openActivity(activity)}>
-                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
+                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.questions && !activity.variant ? "Quiz" : activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
                 <strong>{activity.title}</strong>
                 <small>{activity.description}</small>
                 <span className="clubhouse-card__meta"><span><Timer size={13} weight="bold" /> {activity.duration} min</span><span><Star size={13} weight="fill" /> +{activity.reward}</span></span>
@@ -1817,7 +1982,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
               <>
                 <div className={`clubhouse-modal__hero clubhouse-modal__hero--${selectedActivity.tone}`}>
                   <span><selectedActivity.Icon size={34} weight="fill" /></span>
-                  <div><small>{selectedActivity.type === "game" ? "Mini-jeu" : "Défi créatif"}</small><h2 id="clubhouse-activity-title">{selectedActivity.title}</h2></div>
+                  <div><small>{selectedActivity.questions && !selectedActivity.variant ? "Quiz" : selectedActivity.type === "game" ? "Mini-jeu" : "Défi créatif"}</small><h2 id="clubhouse-activity-title">{selectedActivity.title}</h2></div>
                 </div>
 
                 {phase === "intro" && (
@@ -1836,7 +2001,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
                   </div>
                 )}
 
-                {phase === "active" && selectedActivity.type === "game" && currentQuestion && (
+                {phase === "active" && selectedActivity.type === "game" && !selectedActivity.variant && currentQuestion && (
                   <div className="clubhouse-quiz">
                     <span className="clubhouse-quiz__progress">Question {questionIndex + 1} sur {sessionQuestions.length}</span>
                     <h3>{currentQuestion.prompt}</h3>
@@ -1857,6 +2022,11 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
                 {phase === "active" && selectedActivity.variant === "connect-four" && (
                   <ConnectFourGame child={child} contacts={contacts} isDemo={isDemo} onComplete={completeActivity} />
                 )}
+
+                {phase === "active" && selectedActivity.variant === "tic-tac-toe" && <TicTacToeGame onComplete={completeActivity} />}
+                {phase === "active" && selectedActivity.variant === "sliding-puzzle" && <SlidingPuzzleGame onComplete={completeActivity} />}
+                {phase === "active" && selectedActivity.variant === "simon" && <SimonGame onComplete={completeActivity} />}
+                {phase === "active" && selectedActivity.variant === "star-catch" && <StarCatchGame onComplete={completeActivity} />}
               </>
             )}
           </section>
@@ -1960,11 +2130,11 @@ function ParentAccessScreen({ parentName, onBack, onUnlock }) {
 }
 
 const avatarChoices = [
-  { key: "hair", label: "Coiffure", choices: [{ id: "short", label: "Courte" }, { id: "bob", label: "Carré" }, { id: "curly", label: "Boucles" }, { id: "spiky", label: "Pics" }, { id: "bun", label: "Chignon" }] },
-  { key: "hairColor", label: "Cheveux", choices: [{ id: "brown", label: "Brun" }, { id: "black", label: "Noir" }, { id: "blond", label: "Blond" }, { id: "ginger", label: "Roux" }, { id: "violet", label: "Violet" }] },
-  { key: "face", label: "Visage", choices: [{ id: "smile", label: "Sourire" }, { id: "happy", label: "Joyeux" }, { id: "calm", label: "Calme" }, { id: "freckles", label: "Taches" }] },
-  { key: "skin", label: "Peau", choices: [{ id: "light", label: "Très claire" }, { id: "warm", label: "Claire" }, { id: "tan", label: "Dorée" }, { id: "brown", label: "Brune" }, { id: "deep", label: "Foncée" }] },
-  { key: "outfit", label: "Vêtements", choices: [{ id: "mint", label: "Menthe" }, { id: "violet", label: "Violet" }, { id: "coral", label: "Corail" }, { id: "sun", label: "Soleil" }, { id: "blue", label: "Bleu" }] },
+  { key: "hair", label: "Coiffure", choices: [{ id: "short", label: "Courte" }, { id: "bob", label: "Carré" }, { id: "curly", label: "Boucles" }, { id: "spiky", label: "Pics" }, { id: "bun", label: "Chignon" }, { id: "long", label: "Longs" }, { id: "wavy", label: "Ondulés" }, { id: "ponytail", label: "Queue" }, { id: "braids", label: "Tresses" }, { id: "afro", label: "Afro" }] },
+  { key: "hairColor", label: "Cheveux", choices: [{ id: "brown", label: "Brun" }, { id: "black", label: "Noir" }, { id: "blond", label: "Blond" }, { id: "ginger", label: "Roux" }, { id: "violet", label: "Violet" }, { id: "auburn", label: "Auburn" }, { id: "silver", label: "Argent" }, { id: "pink", label: "Rose" }, { id: "blue", label: "Bleu nuit" }, { id: "teal", label: "Sarcelle" }] },
+  { key: "face", label: "Visage", choices: [{ id: "smile", label: "Sourire" }, { id: "happy", label: "Joyeux" }, { id: "calm", label: "Calme" }, { id: "freckles", label: "Taches" }, { id: "wink", label: "Clin d’œil" }, { id: "laugh", label: "Rire" }, { id: "surprised", label: "Surpris" }, { id: "glasses", label: "Lunettes" }, { id: "determined", label: "Déterminé" }, { id: "blush", label: "Joues roses" }] },
+  { key: "skin", label: "Peau", choices: [{ id: "porcelain", label: "Porcelaine" }, { id: "light", label: "Très claire" }, { id: "peach", label: "Pêche" }, { id: "warm", label: "Claire" }, { id: "honey", label: "Miel" }, { id: "tan", label: "Dorée" }, { id: "caramel", label: "Caramel" }, { id: "brown", label: "Brune" }, { id: "mahogany", label: "Acajou" }, { id: "deep", label: "Foncée" }] },
+  { key: "outfit", label: "Vêtements", choices: [{ id: "mint", label: "Menthe" }, { id: "violet", label: "Violet" }, { id: "coral", label: "Corail" }, { id: "sun", label: "Soleil" }, { id: "blue", label: "Bleu" }, { id: "indigo", label: "Indigo" }, { id: "pink", label: "Rose" }, { id: "green", label: "Forêt" }, { id: "orange", label: "Orange" }, { id: "navy", label: "Marine" }] },
 ];
 
 function AvatarPreferencesScreen({ child, onBack, onSave }) {
@@ -2004,11 +2174,11 @@ function AvatarPreferencesScreen({ child, onBack, onSave }) {
         {avatarChoices.map((item) => <button key={item.key} type="button" role="tab" aria-selected={activeCategory === item.key} className={activeCategory === item.key ? "is-active" : ""} onClick={() => setActiveCategory(item.key)}>{item.label}</button>)}
       </div>
       <section className="avatar-maker-options" aria-label={category.label}>
-        <h2>Choisis : {category.label.toLowerCase()}</h2>
-        <div>
+        <div className="avatar-maker-options__heading"><h2>Choisis : {category.label.toLowerCase()}</h2><span>{category.choices.length} choix</span></div>
+        <div className="avatar-choice-grid">
           {category.choices.map((choice) => (
             <button key={choice.id} type="button" className={`${draft[category.key] === choice.id ? "is-selected" : ""} avatar-choice avatar-choice--${category.key}`} onClick={() => setDraft((current) => ({ ...current, [category.key]: choice.id }))} aria-pressed={draft[category.key] === choice.id}>
-              <span className={`avatar-choice__sample avatar-choice__sample--${choice.id}`} aria-hidden="true">{category.key === "face" ? <Smiley size={25} weight={choice.id === "happy" ? "fill" : "regular"} /> : category.key === "hair" ? <AvatarIllustration avatar={{ ...draft, hair: choice.id }} name="" /> : null}</span>
+              <span className={`avatar-choice__sample avatar-choice__sample--${choice.id}`} aria-hidden="true"><AvatarIllustration avatar={{ ...draft, [category.key]: choice.id }} name="" /></span>
               <small>{choice.label}</small>
               {draft[category.key] === choice.id && <CheckCircle size={17} weight="fill" />}
             </button>
@@ -2353,7 +2523,7 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
 
         <button type="button" className="parent-messages-entry" onClick={onOpenMessages}>
           <span className="parent-messages-entry__icon"><ChatCircleDots size={24} weight="fill" /></span>
-          <span><strong>Famille et parents</strong><small>Échangez avec vos enfants et les parents de leurs contacts.</small></span>
+          <span><strong>Famille et parents</strong><small>Échangez avec l’autre parent, vos enfants et les parents de leurs contacts.</small></span>
           {unreadMessages > 0 ? <span className="parent-message-count">{unreadMessages}</span> : <CheckCircle size={20} weight="fill" />}
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
@@ -2383,6 +2553,13 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
           <span><strong>Mot de passe parent</strong><small>Modifier vos informations de connexion.</small></span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
+
+        <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
+          <span><DownloadSimple size={23} weight="bold" /></span>
+          <span><strong>Installer sur Android</strong><small>Télécharger l’application Secret Clubhouse · APK · 12,7 Mo</small></span>
+          <span className="parent-apk-badge">APK</span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </a>
 
         {!child && (
           <section className="empty-family-card" aria-labelledby="empty-family-title">
@@ -2580,11 +2757,11 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         <header className="parent-messages-header parent-thread-header">
           <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
-          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : `${selectedThread.relation} · Contact adulte`}</small></div>
+          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
           <button type="button" className="parent-thread-call" onClick={() => setCallMode("audio")} aria-label={`Appeler ${selectedThread.name}`}><Phone size={19} weight="fill" /></button>
           <button type="button" className="parent-thread-call" onClick={() => setCallMode("video")} aria-label={`Lancer une visio avec ${selectedThread.name}`}><VideoCamera size={20} weight="fill" /></button>
         </header>
-        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
+        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
           <span className="parent-thread-day">Aujourd’hui</span>
           {selectedThread.messages.map((message) => (
@@ -2624,7 +2801,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
       </header>
 
       <div className="parent-messages-content">
-        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez directement à vos enfants ou aux parents de leurs contacts, sans voir leurs discussions entre amis.</p></div></div>
+        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à l’autre parent de la famille, à vos enfants ou aux parents de leurs contacts, sans voir les discussions entre enfants.</p></div></div>
         <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
@@ -2634,7 +2811,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
               {thread.unread > 0 ? <span className="parent-thread-unread">{thread.unread}</span> : <CaretRight size={18} weight="bold" aria-hidden="true" />}
             </button>
           ))}
-          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
+          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Invitez un co-parent, écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
         </div>
       </div>
       {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
@@ -3326,9 +3503,11 @@ export function App() {
       setChildren((current) => current.map((child) => child.id === activeChild.id ? { ...child, avatar, image: null } : child));
       return;
     }
-    const { child } = await api.updateAvatar(avatar);
+    const { child } = await api.updateAvatar(activeChild.id, avatar);
     setChildren((current) => current.map((item) => item.id === child.id ? child : item));
-    setSession((current) => ({ ...current, ...child, childId: child.id }));
+    if (session?.role === "child") {
+      setSession((current) => ({ ...current, ...child, childId: child.id }));
+    }
   };
 
   const changeParentPassword = async ({ currentPassword, newPassword }) => {

@@ -44,6 +44,27 @@ final result: passed
 
 ---
 
+**Household Parent Conversation QA**
+
+- Source visual truth: `C:/Users/admin/AppData/Local/Temp/codex-clipboard-4a1eee01-4e8c-4968-aae9-92b225730de3.png` (1076 × 712 px, desktop density 1).
+- Implementation screenshot: `C:/Users/admin/OneDrive/Documents/Happy friends kids/.design-reference/parent-coparent-inbox.png` (1280 × 720 px, browser viewport and density 1).
+- State: demo parent account → Famille et parents → protected parent inbox, followed by the private Alex thread.
+- Full-view comparison: the existing indigo, mint, violet and white palette, rounded card geometry, Baloo/Nunito hierarchy, icon proportions and spacing rhythm remain consistent with the supplied parent dashboard.
+- Focused region comparison: the new Alex row and private-thread header were inspected at full browser resolution; a separate crop was unnecessary because their labels and controls were legible.
+- Copy/content: the dashboard now explicitly mentions the other family parent; the inbox identifies Alex as “Co-parent de la famille”; the thread identifies the relationship and privacy boundary without exposing child messages.
+- Image assets: no new raster assets were required. Existing Phosphor icons and established avatar treatment are reused.
+- Interaction evidence: opened the demo account, opened Famille et parents, selected Alex, and verified text composition, voice recording, media attachment, audio call and video-call controls.
+- Console evidence: the only retained log was an older Vite hot-reload warning timestamped before the successful production build; no runtime error occurred during the tested parent-parent flow.
+- Production build, server syntax check and `git diff --check` pass.
+
+**Comparison History**
+
+- Initial implementation: no actionable P0/P1/P2 visual differences; no correction loop required.
+
+final result: passed
+
+---
+
 **Two-player Connect Four QA**
 
 - Implementation tested at `http://127.0.0.1:4174/`, child demo → Clubhouse → Puissance 4 à deux.
