@@ -1664,8 +1664,8 @@ function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
-function ParentDashboard({ parentName, children, child, requestStatus, onSelectChild, onAddChild, onEditChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onEditSchedule, onExit, onLogout }) {
-  const baseFriendsCount = child?.id === "emma" ? friends.length : 0;
+function ParentDashboard({ parentName, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenContactIds, onEditSchedule, onExit, onLogout }) {
+  const baseFriendsCount = isDemo ? friends.length : 0;
   const approvedCount = requestStatus === "approved" ? baseFriendsCount + 1 : baseFriendsCount;
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
 
@@ -2315,7 +2315,8 @@ export function App() {
 
   useEffect(() => {
     if (!session || !getToken()) return undefined;
-    const contactIds = [...friends, pendingFriend, ...parentThreads].map((contact) => contact.contactId).filter(Boolean);
+    const demoContacts = session.demo ? [...friends, pendingFriend] : [];
+    const contactIds = [...demoContacts, ...parentThreads].map((contact) => contact.contactId).filter(Boolean);
     const refreshPresence = async () => {
       try {
         await api.heartbeat();
@@ -2337,11 +2338,13 @@ export function App() {
     setSettingsByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneSafetySettings(child.settings)])));
     setSchedulesByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneCommunicationSchedule(child.schedule)])));
     setParentThreads([]);
+    setPresenceByContactId({});
   };
 
   const openAuthenticatedSession = async (parent) => {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     if (!parent.demo) {
+      applyFamilyChildren([]);
       const family = await api.children();
       applyFamilyChildren(family.children.filter((child) => child.contactId !== demoChildContactId));
     }
@@ -2528,6 +2531,7 @@ export function App() {
           parentName={familyOwner.name}
           children={children}
           child={activeChild}
+          isDemo={Boolean(session.demo)}
           requestStatus={activeRequestStatus}
           onSelectChild={setActiveChildId}
           onAddChild={() => setChildModal({ mode: "create" })}
@@ -2557,8 +2561,8 @@ export function App() {
     }
     if (activeTab === "clubhouse") return <ClubhouseScreen child={activeChild} />;
     if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onLogout={logoutParent} />;
-    const baseFriends = activeChild.id === "emma" ? friends : [];
-    const approvedFriends = (activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
+    const baseFriends = session?.demo ? friends : [];
+    const approvedFriends = (session?.demo && activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
     const availableConversations = approvedFriends.map((friend) => conversations.find((item) => item.id === friend.id) ?? {
       ...friend,
       preview: "Vous êtes maintenant amis !",
