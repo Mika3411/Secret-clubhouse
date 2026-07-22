@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Basketball,
   Bell,
+  Brain,
   CaretRight,
   ChatCircleDots,
   Check,
@@ -27,6 +28,7 @@ import {
   MicrophoneSlash,
   PaperPlaneTilt,
   PencilSimple,
+  PuzzlePiece,
   Phone,
   PhoneDisconnect,
   Plus,
@@ -39,6 +41,8 @@ import {
   SpeakerHigh,
   SpeakerSlash,
   Star,
+  Timer,
+  Trophy,
   UserCircle,
   UserPlus,
   UsersThree,
@@ -86,6 +90,73 @@ const defaultCommunicationSchedule = {
   video: { enabled: false, start: "09:00", end: "18:30" },
   autoReply: { enabled: true, message: "Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés." },
 };
+
+const clubhouseActivities = [
+  {
+    id: "color-hunt",
+    type: "challenge",
+    featured: true,
+    title: "La chasse aux couleurs",
+    description: "Trouve cinq objets de couleurs différentes autour de toi.",
+    duration: 5,
+    reward: 25,
+    Icon: Sparkle,
+    tone: "mint",
+    steps: ["Choisis cinq couleurs", "Trouve un objet pour chaque couleur", "Raconte ta meilleure trouvaille à un ami"],
+  },
+  {
+    id: "one-line-drawing",
+    type: "challenge",
+    title: "Dessin en un trait",
+    description: "Dessine un animal sans lever ton crayon.",
+    duration: 4,
+    reward: 20,
+    Icon: PencilSimple,
+    tone: "violet",
+    steps: ["Choisis ton animal", "Pose ton crayon et ne le lève plus", "Ajoute un nom rigolo à ton dessin"],
+  },
+  {
+    id: "mystery-mime",
+    type: "challenge",
+    title: "Le mime mystère",
+    description: "Fais deviner une activité sans prononcer un mot.",
+    duration: 6,
+    reward: 30,
+    Icon: UsersThree,
+    tone: "coral",
+    steps: ["Choisis une activité secrète", "Mime-la pendant trente secondes", "Laisse les autres proposer une réponse"],
+  },
+  {
+    id: "nature-quiz",
+    type: "game",
+    title: "Quiz des animaux",
+    description: "Teste tes connaissances avec trois questions rapides.",
+    duration: 3,
+    reward: 20,
+    Icon: Brain,
+    tone: "sun",
+    questions: [
+      { prompt: "Quel animal dort debout ?", answers: ["Le cheval", "Le dauphin", "Le lapin"], correct: 0 },
+      { prompt: "Quel animal peut changer de couleur ?", answers: ["Le panda", "Le caméléon", "La loutre"], correct: 1 },
+      { prompt: "Quel animal est le plus grand ?", answers: ["L’éléphant", "La baleine bleue", "La girafe"], correct: 1 },
+    ],
+  },
+  {
+    id: "odd-one-out",
+    type: "game",
+    title: "Trouve l’intrus",
+    description: "Observe bien et choisis l’élément qui ne va pas avec les autres.",
+    duration: 3,
+    reward: 20,
+    Icon: PuzzlePiece,
+    tone: "blue",
+    questions: [
+      { prompt: "Quel mot n’est pas une couleur ?", answers: ["Violet", "Banane", "Menthe"], correct: 1 },
+      { prompt: "Lequel ne vole pas ?", answers: ["Papillon", "Aigle", "Dauphin"], correct: 2 },
+      { prompt: "Lequel n’est pas un sport ?", answers: ["Basket", "Piano", "Natation"], correct: 1 },
+    ],
+  },
+];
 
 function useMouseDragScroll() {
   const rootRef = useRef(null);
@@ -1239,14 +1310,186 @@ function ChatScreen({ child, conversation, settings, schedule, onBack }) {
   );
 }
 
-function ClubhouseScreen() {
+function ClubhouseScreen({ child }) {
+  const [filter, setFilter] = useState("all");
+  const [selectedActivity, setSelectedActivity] = useState(null);
+  const [phase, setPhase] = useState("intro");
+  const [completedActivities, setCompletedActivities] = useState(() => new Set());
+  const [stars, setStars] = useState(120);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState(null);
+  const [rewardEarned, setRewardEarned] = useState(false);
+  const featuredActivity = clubhouseActivities.find((activity) => activity.featured);
+  const visibleActivities = clubhouseActivities.filter((activity) => !activity.featured && (filter === "all" || activity.type === filter));
+  const currentQuestion = selectedActivity?.questions?.[questionIndex] ?? null;
+  const progress = Math.round((completedActivities.size / clubhouseActivities.length) * 100);
+
+  useEffect(() => {
+    if (phase !== "active" || selectedActivity?.type !== "challenge") return undefined;
+    const timer = window.setInterval(() => {
+      setSecondsLeft((current) => {
+        if (current <= 1) {
+          window.clearInterval(timer);
+          return 0;
+        }
+        return current - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [phase, selectedActivity]);
+
+  const openActivity = (activity) => {
+    setSelectedActivity(activity);
+    setPhase("intro");
+    setQuestionIndex(0);
+    setSelectedAnswer(null);
+    setRewardEarned(false);
+    setSecondsLeft(activity.duration * 60);
+  };
+
+  const closeActivity = () => {
+    setSelectedActivity(null);
+    setPhase("intro");
+  };
+
+  const startActivity = () => {
+    setPhase("active");
+    setQuestionIndex(0);
+    setSelectedAnswer(null);
+    setSecondsLeft(selectedActivity.duration * 60);
+  };
+
+  const completeActivity = () => {
+    const alreadyCompleted = completedActivities.has(selectedActivity.id);
+    setRewardEarned(!alreadyCompleted);
+    if (!alreadyCompleted) {
+      setCompletedActivities((current) => new Set([...current, selectedActivity.id]));
+      setStars((current) => current + selectedActivity.reward);
+    }
+    setPhase("complete");
+  };
+
+  const selectQuizAnswer = (answerIndex) => {
+    if (selectedAnswer !== null) return;
+    setSelectedAnswer(answerIndex);
+  };
+
+  const continueQuiz = () => {
+    if (selectedAnswer !== currentQuestion.correct) {
+      setSelectedAnswer(null);
+      return;
+    }
+    if (questionIndex >= selectedActivity.questions.length - 1) {
+      completeActivity();
+      return;
+    }
+    setQuestionIndex((current) => current + 1);
+    setSelectedAnswer(null);
+  };
+
+  const formattedTimer = `${Math.floor(secondsLeft / 60)}:${(secondsLeft % 60).toString().padStart(2, "0")}`;
+
   return (
-    <section className="feature-screen">
-      <div className="feature-icon"><House size={42} weight="fill" /></div>
-      <span className="eyebrow">Ton espace entre amis</span>
-      <h1>Le Clubhouse</h1>
-      <p>Retrouve bientôt des défis créatifs et des activités à partager avec tes amis approuvés.</p>
-      <button type="button" className="primary-button"><Sparkle size={18} weight="fill" /> Voir le défi du jour</button>
+    <section className="clubhouse-screen" aria-labelledby="clubhouse-title">
+      <header className="clubhouse-header">
+        <span className="clubhouse-header__icon"><House size={25} weight="fill" /></span>
+        <div><span>Ton espace entre amis</span><h1 id="clubhouse-title">Le Clubhouse</h1></div>
+        <span className="clubhouse-stars" aria-label={`${stars} étoiles`}><Star size={18} weight="fill" /> {stars}</span>
+      </header>
+
+      <div className="clubhouse-content">
+        <section className="clubhouse-welcome" aria-label="Progression du Clubhouse">
+          <div><span>Salut {child.name} !</span><strong>Prête pour une nouvelle mission ?</strong></div>
+          <div className="clubhouse-streak"><Lightning size={17} weight="fill" /><span><strong>3 jours</strong><small>de suite</small></span></div>
+          <div className="clubhouse-progress"><span style={{ width: `${Math.max(8, progress)}%` }} /><small>{completedActivities.size}/{clubhouseActivities.length} activités terminées</small></div>
+        </section>
+
+        <button type="button" className="clubhouse-featured" onClick={() => openActivity(featuredActivity)}>
+          <span className="clubhouse-featured__badge">Défi du jour</span>
+          <span className="clubhouse-featured__icon"><featuredActivity.Icon size={32} weight="fill" /></span>
+          <span className="clubhouse-featured__copy"><strong>{featuredActivity.title}</strong><small>{featuredActivity.description}</small><span><Timer size={14} weight="bold" /> {featuredActivity.duration} min <Star size={14} weight="fill" /> +{featuredActivity.reward}</span></span>
+          {completedActivities.has(featuredActivity.id) ? <CheckCircle className="clubhouse-featured__arrow is-complete" size={25} weight="fill" /> : <CaretRight className="clubhouse-featured__arrow" size={23} weight="bold" />}
+        </button>
+
+        <div className="clubhouse-section-title"><div><span>À toi de jouer</span><h2>Défis et mini-jeux</h2></div><GameController size={25} weight="fill" /></div>
+
+        <div className="clubhouse-filters" role="tablist" aria-label="Filtrer les activités">
+          {[{ id: "all", label: "Tout" }, { id: "challenge", label: "Défis" }, { id: "game", label: "Jeux" }].map((item) => (
+            <button key={item.id} type="button" role="tab" aria-selected={filter === item.id} className={filter === item.id ? "is-active" : ""} onClick={() => setFilter(item.id)}>{item.label}</button>
+          ))}
+        </div>
+
+        <div className="clubhouse-grid">
+          {visibleActivities.map((activity) => {
+            const ActivityIcon = activity.Icon;
+            const isComplete = completedActivities.has(activity.id);
+            return (
+              <button type="button" className={`clubhouse-card clubhouse-card--${activity.tone}`} key={activity.id} onClick={() => openActivity(activity)}>
+                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
+                <strong>{activity.title}</strong>
+                <small>{activity.description}</small>
+                <span className="clubhouse-card__meta"><span><Timer size={13} weight="bold" /> {activity.duration} min</span><span><Star size={13} weight="fill" /> +{activity.reward}</span></span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedActivity && (
+        <div className="clubhouse-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeActivity(); }}>
+          <section className="clubhouse-modal" role="dialog" aria-modal="true" aria-labelledby="clubhouse-activity-title">
+            <button type="button" className="clubhouse-modal__close" onClick={closeActivity} aria-label="Fermer l’activité"><X size={21} weight="bold" /></button>
+            {phase === "complete" ? (
+              <div className="clubhouse-complete" role="status">
+                <span><Trophy size={42} weight="fill" /></span>
+                <small>Mission terminée</small>
+                <h2 id="clubhouse-activity-title">Bravo, {child.name} !</h2>
+                <p>{rewardEarned ? `Tu gagnes ${selectedActivity.reward} nouvelles étoiles.` : "Tu avais déjà gagné les étoiles de cette activité, mais tu peux la rejouer quand tu veux."}</p>
+                <div><Star size={22} weight="fill" /><strong>{stars}</strong><span>étoiles au total</span></div>
+                <button type="button" className="clubhouse-modal__primary" onClick={closeActivity}>Continuer</button>
+              </div>
+            ) : (
+              <>
+                <div className={`clubhouse-modal__hero clubhouse-modal__hero--${selectedActivity.tone}`}>
+                  <span><selectedActivity.Icon size={34} weight="fill" /></span>
+                  <div><small>{selectedActivity.type === "game" ? "Mini-jeu" : "Défi créatif"}</small><h2 id="clubhouse-activity-title">{selectedActivity.title}</h2></div>
+                </div>
+
+                {phase === "intro" && (
+                  <div className="clubhouse-modal__intro">
+                    <p>{selectedActivity.description}</p>
+                    <div className="clubhouse-modal__facts"><span><Timer size={18} weight="fill" /><strong>{selectedActivity.duration} min</strong><small>durée</small></span><span><Star size={18} weight="fill" /><strong>+{selectedActivity.reward}</strong><small>étoiles</small></span><span><ShieldCheck size={18} weight="fill" /><strong>Privé</strong><small>rien n’est publié</small></span></div>
+                    <button type="button" className="clubhouse-modal__primary" onClick={startActivity}><Sparkle size={18} weight="fill" /> Commencer</button>
+                  </div>
+                )}
+
+                {phase === "active" && selectedActivity.type === "challenge" && (
+                  <div className="clubhouse-challenge">
+                    <div className="clubhouse-timer"><Timer size={20} weight="fill" /><span><small>Temps restant</small><strong>{formattedTimer}</strong></span></div>
+                    <ol>{selectedActivity.steps.map((step, index) => <li key={step}><span>{index + 1}</span>{step}</li>)}</ol>
+                    <button type="button" className="clubhouse-modal__primary" onClick={completeActivity}><CheckCircle size={19} weight="fill" /> J’ai terminé</button>
+                  </div>
+                )}
+
+                {phase === "active" && selectedActivity.type === "game" && currentQuestion && (
+                  <div className="clubhouse-quiz">
+                    <span className="clubhouse-quiz__progress">Question {questionIndex + 1} sur {selectedActivity.questions.length}</span>
+                    <h3>{currentQuestion.prompt}</h3>
+                    <div>{currentQuestion.answers.map((answer, index) => {
+                      const isSelected = selectedAnswer === index;
+                      const isCorrect = selectedAnswer !== null && index === currentQuestion.correct;
+                      return <button key={answer} type="button" className={`${isSelected ? "is-selected" : ""} ${isCorrect ? "is-correct" : ""}`} onClick={() => selectQuizAnswer(index)} disabled={selectedAnswer !== null}>{answer}{isCorrect && <CheckCircle size={18} weight="fill" />}</button>;
+                    })}</div>
+                    {selectedAnswer !== null && <p className={selectedAnswer === currentQuestion.correct ? "is-correct" : "is-wrong"}>{selectedAnswer === currentQuestion.correct ? "Bien joué !" : "Presque ! Essaie encore."}</p>}
+                    {selectedAnswer !== null && <button type="button" className="clubhouse-modal__primary" onClick={continueQuiz}>{selectedAnswer === currentQuestion.correct ? (questionIndex === selectedActivity.questions.length - 1 ? "Voir mon résultat" : "Question suivante") : "Réessayer"}<CaretRight size={18} weight="bold" /></button>}
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+      )}
     </section>
   );
 }
@@ -1424,7 +1667,7 @@ function ParentDashboard({ parentName, children, child, requestStatus, onSelectC
         <div className="parent-topbar__actions">
           <button type="button" className="parent-message-button" onClick={onOpenMessages} aria-label={`Ouvrir la messagerie parentale${unreadMessages ? `, ${unreadMessages} messages non lus` : ""}`}><ChatCircleDots size={21} weight="fill" />{unreadMessages > 0 && <span>{unreadMessages}</span>}</button>
           <span className="parent-avatar" aria-label={`Profil de ${parentName}`} role="img"><UserCircle size={30} weight="fill" /></span>
-          <button type="button" className="parent-logout-button" onClick={onLogout} aria-label="Se déconnecter"><SignOut size={20} weight="bold" /></button>
+          <button type="button" className="parent-logout-button" onClick={onLogout}><SignOut size={19} weight="bold" /><span>Déconnexion</span></button>
         </div>
       </header>
 
@@ -1526,7 +1769,7 @@ function ParentDashboard({ parentName, children, child, requestStatus, onSelectC
   );
 }
 
-function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend, isDemo, initialContactId = "" }) {
+function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend, isDemo, initialContactId = "", onContactHandled }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");

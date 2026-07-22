@@ -2307,6 +2307,712 @@ input:focus-visible {
   }
 }
 
+.clubhouse-screen {
+  position: relative;
+  min-height: 100%;
+  color: var(--ink);
+  background: #f5f3fb;
+}
+
+.clubhouse-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  min-height: 86px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  color: #fff;
+  background: var(--navy);
+  box-shadow: 0 5px 18px rgba(11, 7, 86, 0.16);
+}
+
+.clubhouse-header__icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 15px;
+  color: var(--navy);
+  background: var(--mint);
+}
+
+.clubhouse-header > div {
+  min-width: 0;
+}
+
+.clubhouse-header > div > span {
+  color: var(--mint);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.clubhouse-header h1 {
+  margin: 1px 0 0;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.clubhouse-stars {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  color: #34266f;
+  border-radius: 18px;
+  background: #ffe58d;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.clubhouse-content {
+  display: grid;
+  max-width: 720px;
+  gap: 13px;
+  margin-inline: auto;
+  padding: 13px 13px 28px;
+}
+
+.clubhouse-welcome {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d9d2f2;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(48, 35, 101, 0.06);
+}
+
+.clubhouse-welcome > div:first-child {
+  display: grid;
+  gap: 1px;
+}
+
+.clubhouse-welcome > div:first-child span {
+  color: #7259cf;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.clubhouse-welcome > div:first-child strong {
+  font-family: "Baloo 2", sans-serif;
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.clubhouse-streak {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  color: #8e4b21;
+  border-radius: 12px;
+  background: #fff0d3;
+}
+
+.clubhouse-streak > span {
+  display: grid;
+}
+
+.clubhouse-streak strong {
+  font-size: 9px;
+}
+
+.clubhouse-streak small {
+  font-size: 7px;
+  font-weight: 800;
+}
+
+.clubhouse-progress {
+  position: relative;
+  height: 6px;
+  grid-column: 1 / -1;
+  margin-top: 1px;
+  border-radius: 10px;
+  background: #e9e5f3;
+}
+
+.clubhouse-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #6fddbe;
+  transition: width 260ms ease;
+}
+
+.clubhouse-progress small {
+  position: absolute;
+  top: 9px;
+  right: 0;
+  color: #858095;
+  font-size: 7px;
+  font-weight: 800;
+}
+
+.clubhouse-featured {
+  position: relative;
+  display: grid;
+  min-height: 126px;
+  grid-template-columns: 58px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 21px 12px 12px;
+  overflow: hidden;
+  text-align: left;
+  color: #fff;
+  border-radius: 20px;
+  background: #6549ce;
+  box-shadow: 0 10px 24px rgba(70, 46, 160, 0.2);
+}
+
+.clubhouse-featured__badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 5px 10px;
+  color: var(--navy);
+  border-radius: 0 0 12px 0;
+  background: var(--mint);
+  font-size: 7.5px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.clubhouse-featured__icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border-radius: 18px;
+  color: var(--navy);
+  background: #d5fff3;
+}
+
+.clubhouse-featured__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.clubhouse-featured__copy > strong {
+  font-family: "Baloo 2", sans-serif;
+  font-size: 18px;
+  line-height: 1.05;
+}
+
+.clubhouse-featured__copy > small {
+  color: #e4defd;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.clubhouse-featured__copy > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  color: #d5fff3;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.clubhouse-featured__copy > span svg:nth-of-type(2) {
+  margin-left: 5px;
+  color: #ffe58d;
+}
+
+.clubhouse-featured__arrow {
+  color: #fff;
+}
+
+.clubhouse-featured__arrow.is-complete {
+  color: var(--mint);
+}
+
+.clubhouse-section-title {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-top: 3px;
+  color: #6049b7;
+}
+
+.clubhouse-section-title > div {
+  display: grid;
+}
+
+.clubhouse-section-title span {
+  color: #827c93;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.clubhouse-section-title h2 {
+  margin: 1px 0 0;
+  color: var(--ink);
+  font-family: "Baloo 2", sans-serif;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.clubhouse-filters {
+  display: flex;
+  gap: 6px;
+}
+
+.clubhouse-filters button {
+  min-height: 33px;
+  padding: 0 13px;
+  color: #746e87;
+  border: 1px solid #ddd8e9;
+  border-radius: 17px;
+  background: #fff;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.clubhouse-filters button.is-active {
+  color: #fff;
+  border-color: #6549ce;
+  background: #6549ce;
+}
+
+.clubhouse-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.clubhouse-card {
+  display: grid;
+  min-height: 164px;
+  align-content: start;
+  gap: 5px;
+  padding: 10px;
+  text-align: left;
+  color: var(--ink);
+  border: 1px solid #e2deea;
+  border-radius: 17px;
+  background: #fff;
+  box-shadow: 0 5px 14px rgba(48, 35, 101, 0.06);
+}
+
+.clubhouse-card__top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+
+.clubhouse-card__top > svg {
+  margin-left: auto;
+  color: #25b38e;
+}
+
+.clubhouse-card__icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 13px;
+  color: #6549ce;
+  background: #eee9ff;
+}
+
+.clubhouse-card--coral .clubhouse-card__icon {
+  color: #a53f63;
+  background: #ffe5ee;
+}
+
+.clubhouse-card--sun .clubhouse-card__icon {
+  color: #9a691c;
+  background: #fff0bd;
+}
+
+.clubhouse-card--blue .clubhouse-card__icon {
+  color: #23669b;
+  background: #dff1ff;
+}
+
+.clubhouse-card__type {
+  color: #716b80;
+  font-size: 7px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.clubhouse-card > strong {
+  font-family: "Baloo 2", sans-serif;
+  font-size: 15px;
+  line-height: 1.05;
+}
+
+.clubhouse-card > small {
+  color: #716c7e;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.clubhouse-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  margin-top: auto;
+  padding-top: 6px;
+  color: #736d82;
+  border-top: 1px solid #eeeaf2;
+  font-size: 7.5px;
+  font-weight: 900;
+}
+
+.clubhouse-card__meta > span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.clubhouse-card__meta > span:last-child {
+  color: #9a691c;
+}
+
+.clubhouse-modal-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(9, 6, 70, 0.64);
+}
+
+.clubhouse-modal {
+  position: relative;
+  width: min(100%, 430px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  border-radius: 24px 24px 18px 18px;
+  color: var(--ink);
+  background: #fff;
+  box-shadow: 0 20px 55px rgba(8, 5, 64, 0.3);
+}
+
+.clubhouse-modal__close {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 13px;
+  color: #fff;
+  background: rgba(13, 9, 91, 0.42);
+}
+
+.clubhouse-modal__hero {
+  display: grid;
+  min-height: 122px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 22px 54px 18px 18px;
+  color: #fff;
+  background: #6549ce;
+}
+
+.clubhouse-modal__hero--coral {
+  background: #a94970;
+}
+
+.clubhouse-modal__hero--sun {
+  color: #33245f;
+  background: #f7ce68;
+}
+
+.clubhouse-modal__hero--blue {
+  background: #367bad;
+}
+
+.clubhouse-modal__hero--mint {
+  color: #20175e;
+  background: var(--mint);
+}
+
+.clubhouse-modal__hero > span {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border-radius: 18px;
+  color: #2b1d6c;
+  background: #fff;
+}
+
+.clubhouse-modal__hero small {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.clubhouse-modal__hero h2 {
+  margin: 2px 0 0;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 23px;
+  line-height: 1;
+}
+
+.clubhouse-modal__intro,
+.clubhouse-challenge,
+.clubhouse-quiz,
+.clubhouse-complete {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.clubhouse-modal__intro > p,
+.clubhouse-complete > p {
+  margin: 0;
+  color: #6f697e;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.clubhouse-modal__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.clubhouse-modal__facts > span {
+  display: grid;
+  min-height: 72px;
+  place-items: center;
+  align-content: center;
+  gap: 2px;
+  color: #6549ce;
+  border: 1px solid #e1dcef;
+  border-radius: 14px;
+  background: #f8f6fd;
+}
+
+.clubhouse-modal__facts strong {
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.clubhouse-modal__facts small {
+  color: #7e788c;
+  font-size: 7px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.clubhouse-modal__primary {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 15px;
+  color: var(--navy);
+  border-radius: 14px;
+  background: var(--mint);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.clubhouse-timer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px;
+  color: #6549ce;
+  border-radius: 14px;
+  background: #f0ecff;
+}
+
+.clubhouse-timer > span {
+  display: grid;
+}
+
+.clubhouse-timer small {
+  color: #777086;
+  font-size: 7px;
+  font-weight: 800;
+}
+
+.clubhouse-timer strong {
+  font-size: 15px;
+}
+
+.clubhouse-challenge ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clubhouse-challenge li {
+  display: grid;
+  min-height: 48px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid #e3deed;
+  border-radius: 13px;
+  color: #514c60;
+  background: #faf9fd;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.clubhouse-challenge li > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #6d52dc;
+  font-size: 10px;
+}
+
+.clubhouse-quiz__progress {
+  justify-self: center;
+  padding: 4px 9px;
+  color: #6549ce;
+  border-radius: 12px;
+  background: #eee9ff;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.clubhouse-quiz h3 {
+  margin: 0;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 20px;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.clubhouse-quiz > div {
+  display: grid;
+  gap: 8px;
+}
+
+.clubhouse-quiz > div > button {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 13px;
+  text-align: left;
+  color: #514b61;
+  border: 1px solid #ded9e8;
+  border-radius: 13px;
+  background: #faf9fd;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.clubhouse-quiz > div > button.is-selected {
+  color: #fff;
+  border-color: #7559db;
+  background: #7559db;
+}
+
+.clubhouse-quiz > div > button.is-correct {
+  color: #135b49;
+  border-color: #7de4c8;
+  background: #dff9f2;
+}
+
+.clubhouse-quiz > p {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.clubhouse-quiz > p.is-correct {
+  color: #188367;
+}
+
+.clubhouse-quiz > p.is-wrong {
+  color: #b14467;
+}
+
+.clubhouse-complete {
+  justify-items: center;
+  padding-top: 28px;
+  text-align: center;
+}
+
+.clubhouse-complete > span:first-child {
+  display: grid;
+  width: 78px;
+  height: 78px;
+  place-items: center;
+  color: #9a691c;
+  border-radius: 50%;
+  background: #ffe58d;
+}
+
+.clubhouse-complete > small {
+  color: #6549ce;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.clubhouse-complete h2 {
+  margin: -8px 0 0;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 25px;
+}
+
+.clubhouse-complete > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 13px;
+  color: #865c19;
+  border-radius: 15px;
+  background: #fff3ca;
+}
+
+.clubhouse-complete > div strong {
+  font-size: 16px;
+}
+
+.clubhouse-complete > div span {
+  font-size: 8px;
+  font-weight: 800;
+}
+
 .feature-screen {
   display: flex;
   height: 100%;
@@ -3307,6 +4013,17 @@ input:focus-visible {
   color: #dcd7f5;
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.08);
+}
+
+.parent-logout-button {
+  width: auto;
+  min-width: 40px;
+  padding: 0 11px;
+  grid-auto-flow: column;
+  gap: 6px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .parent-message-button {

@@ -25,6 +25,7 @@ When implementing from a selected generated mock, treat that image as the source
 - Parents can configure one neutral automatic reply for messages and audio/video call attempts received outside allowed hours. It must not reveal schedules or personal details, and automatic messages must never trigger another automatic reply.
 - Sent messages and media show delivery state consistently in child and parent chats: one check means received and a colored double check means seen.
 - Child and parent conversations support recorded voice messages with microphone permission requested on demand, a two-minute limit, preview, cancel, send, playback, and received/seen status.
+- The child Clubhouse is an interactive activity hub with filterable creative challenges and mini-games, private progress, earned stars, daily streaks, and replayable activities.
 - Children can send images, photos, and videos only when the parent has enabled media sharing for that child; media remains limited to approved contacts and allowed messaging hours.
 - The separate adult-only parent inbox supports parent-to-parent audio/video calls and photo, image, and video attachments.
 - Production persistence uses only a Render Node.js web service and Render PostgreSQL; do not introduce Supabase or another external backend/storage provider. Accounts, messages, and media must use the server API and PostgreSQL as their source of truth.
