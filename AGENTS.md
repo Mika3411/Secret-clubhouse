@@ -15,6 +15,7 @@ When implementing from a selected generated mock, treat that image as the source
 - The parent area is separated from the child experience by a four-digit parent code and focuses on contact approval, safety settings, and high-level activity rather than exposing message contents.
 - A parent can create and manage multiple child profiles (ages 6–13) under one family account. Each child keeps separate contacts and safety settings, and the selected profile becomes the child space shown on the device.
 - The public entry point is parent-first authentication with separate sign-in and registration forms plus a clearly labeled fake demo account. Registration opens an empty family and immediately offers first-child creation.
+- Demo family data is isolated to explicit demo sessions and must never seed, overwrite, or appear in an authenticated production family.
 - The "Mode calme" safety row opens a per-child schedule editor with separate allowed time windows for messages, audio calls, and video calls.
 - Every child profile has a parent-managed private username and password so the child can sign in independently without a phone number; children can never self-register.
 - The parent account includes a separate adult-only inbox for messaging the parents of approved or pending child contacts; it never exposes or mixes in the children’s conversations.
@@ -26,6 +27,7 @@ When implementing from a selected generated mock, treat that image as the source
 - Sent messages and media show delivery state consistently in child and parent chats: one check means received and a colored double check means seen.
 - Child and parent conversations support recorded voice messages with microphone permission requested on demand, a two-minute limit, preview, cancel, send, playback, and received/seen status.
 - The child Clubhouse is an interactive activity hub with filterable creative challenges and mini-games, private progress, earned stars, daily streaks, and replayable activities.
+- The child profile uses one centered 300 px card column: contact ID, protection, notifications, and parent access share consistent widths, radii, icon proportions, and spacing on phones and tablets.
 - Children can send images, photos, and videos only when the parent has enabled media sharing for that child; media remains limited to approved contacts and allowed messaging hours.
 - The separate adult-only parent inbox supports parent-to-parent audio/video calls and photo, image, and video attachments.
 - Production persistence uses only a Render Node.js web service and Render PostgreSQL; do not introduce Supabase or another external backend/storage provider. Accounts, messages, and media must use the server API and PostgreSQL as their source of truth.

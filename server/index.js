@@ -41,6 +41,86 @@ app.use(express.json({ limit: "1mb" }));
 
 const makeContactId = () => `SC-${Array.from({ length: 3 }, () => crypto.randomInt(100, 1000)).join("-")}`;
 const signSession = (account) => jwt.sign({ sub: account.id, role: account.role }, jwtSecret, { expiresIn: "7d", issuer: "secret-clubhouse" });
+const childColors = new Set(["mint", "violet", "sun", "coral"]);
+const childStatuses = new Set(["active", "paused"]);
+const defaultSafetySettings = { media: true };
+const defaultCommunicationSchedule = {
+  enabled: true,
+  messages: { enabled: true, start: "07:30", end: "20:30" },
+  calls: { enabled: true, start: "08:00", end: "19:30" },
+  video: { enabled: false, start: "09:00", end: "18:30" },
+  autoReply: { enabled: true, message: "Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés." },
+};
+
+const normalizeUsername = (value) => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, ".")
+  .replace(/^\.|\.$/g, "")
+  .slice(0, 18);
+
+const normalizeChannelSchedule = (value, fallback) => ({
+  enabled: typeof value?.enabled === "boolean" ? value.enabled : fallback.enabled,
+  start: /^([01]\d|2[0-3]):[0-5]\d$/.test(value?.start) ? value.start : fallback.start,
+  end: /^([01]\d|2[0-3]):[0-5]\d$/.test(value?.end) ? value.end : fallback.end,
+});
+
+function normalizeSchedule(value = {}, fallback = defaultCommunicationSchedule) {
+  const current = {
+    ...defaultCommunicationSchedule,
+    ...fallback,
+    messages: { ...defaultCommunicationSchedule.messages, ...fallback?.messages },
+    calls: { ...defaultCommunicationSchedule.calls, ...fallback?.calls },
+    video: { ...defaultCommunicationSchedule.video, ...fallback?.video },
+    autoReply: { ...defaultCommunicationSchedule.autoReply, ...fallback?.autoReply },
+  };
+  const message = typeof value?.autoReply?.message === "string"
+    ? value.autoReply.message.trim().slice(0, 240)
+    : current.autoReply.message;
+  return {
+    enabled: typeof value?.enabled === "boolean" ? value.enabled : current.enabled,
+    messages: normalizeChannelSchedule(value?.messages, current.messages),
+    calls: normalizeChannelSchedule(value?.calls, current.calls),
+    video: normalizeChannelSchedule(value?.video, current.video),
+    autoReply: {
+      enabled: typeof value?.autoReply?.enabled === "boolean" ? value.autoReply.enabled : current.autoReply.enabled,
+      message,
+    },
+  };
+}
+
+function normalizeChildProfile(body, current = null) {
+  const name = body.name === undefined ? current?.display_name ?? "" : String(body.name).trim().slice(0, 24);
+  const age = body.age === undefined ? Number(current?.age) : Number(body.age);
+  const username = body.username === undefined ? current?.username ?? "" : normalizeUsername(body.username);
+  const color = body.color === undefined ? current?.avatar_color ?? "mint" : String(body.color);
+  const status = body.status === undefined ? current?.status ?? "active" : String(body.status);
+  const password = body.password === undefined || body.password === null ? "" : String(body.password);
+  if (name.length < 2 || !Number.isInteger(age) || age < 6 || age > 13 || username.length < 3) {
+    return { error: "Vérifiez le prénom, l’âge et le pseudo de l’enfant." };
+  }
+  if (!childColors.has(color) || !childStatuses.has(status)) return { error: "Profil enfant invalide." };
+  if (!current && password.length < 6) return { error: "Le mot de passe enfant doit contenir au moins 6 caractères." };
+  if (current && password.length > 0 && password.length < 6) return { error: "Le nouveau mot de passe doit contenir au moins 6 caractères." };
+  return {
+    profile: {
+      name,
+      age,
+      username,
+      color,
+      status,
+      password,
+      settings: {
+        ...defaultSafetySettings,
+        ...(current?.safety_settings ?? {}),
+        ...(body.settings ?? {}),
+        media: typeof body.settings?.media === "boolean" ? body.settings.media : (current?.safety_settings?.media ?? defaultSafetySettings.media),
+      },
+      schedule: normalizeSchedule(body.schedule, current?.communication_schedule),
+    },
+  };
+}
 
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -54,7 +134,19 @@ function requireAuth(req, res, next) {
 }
 
 async function serializeAccount(account) {
-  return { id: account.id, role: account.role, name: account.display_name, email: account.email, contactId: account.contact_id };
+  const serialized = { id: account.id, role: account.role, name: account.display_name, email: account.email, contactId: account.contact_id };
+  if (account.role !== "child") return serialized;
+  return {
+    ...serialized,
+    parentId: account.parent_id,
+    age: Number(account.age),
+    username: account.username,
+    image: account.avatar_path,
+    color: account.avatar_color || "mint",
+    status: account.status || "active",
+    settings: { ...defaultSafetySettings, ...(account.safety_settings ?? {}) },
+    schedule: normalizeSchedule({}, account.communication_schedule),
+  };
 }
 
 app.get("/api/health", async (_req, res) => {
@@ -84,8 +176,8 @@ app.post("/api/auth/register", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   const { email, contactId, password } = req.body ?? {};
   const result = email
-    ? await pool.query("select * from accounts where email=$1", [String(email).trim().toLowerCase()])
-    : await pool.query("select * from accounts where contact_id=$1", [String(contactId ?? "").trim().toUpperCase()]);
+    ? await pool.query("select * from accounts where role='parent' and email=$1", [String(email).trim().toLowerCase()])
+    : await pool.query("select * from accounts where role='child' and contact_id=$1", [String(contactId ?? "").trim().toUpperCase()]);
   const account = result.rows[0];
   if (!account || !await bcrypt.compare(String(password ?? ""), account.password_hash)) return res.status(401).json({ error: "Identifiants incorrects." });
   res.json({ token: signSession(account), account: await serializeAccount(account) });
@@ -95,6 +187,88 @@ app.get("/api/me", requireAuth, async (req, res) => {
   const result = await pool.query("select * from accounts where id=$1", [req.auth.sub]);
   if (!result.rows[0]) return res.status(404).json({ error: "Compte introuvable." });
   res.json({ account: await serializeAccount(result.rows[0]) });
+});
+
+app.get("/api/children", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
+  const result = await pool.query(
+    "select * from accounts where role='child' and parent_id=$1 order by created_at, display_name",
+    [req.auth.sub],
+  );
+  res.json({ children: await Promise.all(result.rows.map(serializeAccount)) });
+});
+
+app.post("/api/children", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut créer un compte enfant." });
+  const normalized = normalizeChildProfile(req.body ?? {});
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
+  const { profile } = normalized;
+  const passwordHash = await bcrypt.hash(profile.password, 12);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const result = await pool.query(
+        `insert into accounts(role,contact_id,password_hash,display_name,parent_id,age,username,avatar_color,status,safety_settings,communication_schedule)
+         values('child',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb) returning *`,
+        [
+          makeContactId(),
+          passwordHash,
+          profile.name,
+          req.auth.sub,
+          profile.age,
+          profile.username,
+          profile.color,
+          profile.status,
+          JSON.stringify(profile.settings),
+          JSON.stringify(profile.schedule),
+        ],
+      );
+      return res.status(201).json({ child: await serializeAccount(result.rows[0]) });
+    } catch (error) {
+      if (error.code === "23505" && error.constraint === "accounts_contact_id_key") continue;
+      if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo est déjà utilisé dans votre famille." });
+      throw error;
+    }
+  }
+  return res.status(503).json({ error: "Impossible de générer un identifiant enfant unique. Réessayez." });
+});
+
+app.patch("/api/children/:id", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut modifier un compte enfant." });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.id)) {
+    return res.status(400).json({ error: "Identifiant enfant invalide." });
+  }
+  const existingResult = await pool.query(
+    "select * from accounts where id=$1 and role='child' and parent_id=$2",
+    [req.params.id, req.auth.sub],
+  );
+  const existing = existingResult.rows[0];
+  if (!existing) return res.status(404).json({ error: "Profil enfant introuvable dans votre famille." });
+  const normalized = normalizeChildProfile(req.body ?? {}, existing);
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
+  const { profile } = normalized;
+  const passwordHash = profile.password ? await bcrypt.hash(profile.password, 12) : existing.password_hash;
+  try {
+    const result = await pool.query(
+      `update accounts set password_hash=$1,display_name=$2,age=$3,username=$4,avatar_color=$5,status=$6,
+       safety_settings=$7::jsonb,communication_schedule=$8::jsonb where id=$9 and parent_id=$10 returning *`,
+      [
+        passwordHash,
+        profile.name,
+        profile.age,
+        profile.username,
+        profile.color,
+        profile.status,
+        JSON.stringify(profile.settings),
+        JSON.stringify(profile.schedule),
+        req.params.id,
+        req.auth.sub,
+      ],
+    );
+    res.json({ child: await serializeAccount(result.rows[0]) });
+  } catch (error) {
+    if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo est déjà utilisé dans votre famille." });
+    throw error;
+  }
 });
 
 app.post("/api/presence/heartbeat", requireAuth, async (req, res) => {

@@ -91,6 +91,17 @@ const defaultCommunicationSchedule = {
   autoReply: { enabled: true, message: "Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés." },
 };
 
+const cloneSafetySettings = (settings = defaultSafetySettings) => ({ ...defaultSafetySettings, ...settings });
+
+const cloneCommunicationSchedule = (schedule = defaultCommunicationSchedule) => ({
+  ...defaultCommunicationSchedule,
+  ...schedule,
+  messages: { ...defaultCommunicationSchedule.messages, ...schedule.messages },
+  calls: { ...defaultCommunicationSchedule.calls, ...schedule.calls },
+  video: { ...defaultCommunicationSchedule.video, ...schedule.video },
+  autoReply: { ...defaultCommunicationSchedule.autoReply, ...schedule.autoReply },
+});
+
 const clubhouseActivities = [
   {
     id: "color-hunt",
@@ -458,7 +469,7 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) 
 
           <div className="auth-separator"><span>ou</span></div>
           <button className="demo-account-button" type="button" onClick={audience === "child" ? onChildDemo : onDemo}><Sparkle size={20} weight="fill" /><span><strong>{audience === "child" ? "Tester comme Emma" : "Tester avec un faux compte"}</strong><small>{audience === "child" ? "ID SC-482-917-305 · compte enfant démo" : "Aucune donnée réelle nécessaire"}</small></span><CaretRight size={18} weight="bold" /></button>
-          <p className="auth-legal"><LockKey size={13} weight="fill" /> Prototype : aucune information n’est envoyée à un serveur.</p>
+          <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial.</p>
         </div>
       </div>
     </section>
@@ -1965,7 +1976,7 @@ function ChildAccountModal({ child, onClose, onSave }) {
     setError("");
   };
 
-  const submitChild = (event) => {
+  const submitChild = async (event) => {
     event.preventDefault();
     const cleanName = name.trim();
     const cleanUsername = toUsername(username);
@@ -1978,16 +1989,20 @@ function ChildAccountModal({ child, onClose, onSave }) {
       setError("Le mot de passe enfant doit contenir au moins 6 caractères.");
       return;
     }
-    onSave({
-      ...child,
-      name: cleanName,
-      age: numericAge,
-      username: cleanUsername,
-      password: password || child?.password,
-      image: child?.image ?? null,
-      color,
-      status: isActive ? "active" : "paused",
-    });
+    try {
+      await onSave({
+        ...child,
+        name: cleanName,
+        age: numericAge,
+        username: cleanUsername,
+        password: password || child?.password,
+        image: child?.image ?? null,
+        color,
+        status: isActive ? "active" : "paused",
+      });
+    } catch (saveError) {
+      setError(saveError.message);
+    }
   };
 
   return (
@@ -2061,6 +2076,7 @@ function ContactIdsModal({ parent, children, onClose }) {
 }
 
 function ScheduleModal({ childName, schedule, onClose, onSave }) {
+  const [error, setError] = useState("");
   const [draft, setDraft] = useState({
     ...schedule,
     messages: { ...schedule.messages },
@@ -2086,7 +2102,7 @@ function ScheduleModal({ childName, schedule, onClose, onSave }) {
     }));
   };
 
-  const saveSchedule = (event) => {
+  const saveSchedule = async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const scheduleWithCurrentTimes = ["messages", "calls", "video"].reduce(
@@ -2100,7 +2116,11 @@ function ScheduleModal({ childName, schedule, onClose, onSave }) {
       }),
       draft,
     );
-    onSave(scheduleWithCurrentTimes);
+    try {
+      await onSave(scheduleWithCurrentTimes);
+    } catch (saveError) {
+      setError(saveError.message);
+    }
   };
 
   return (
@@ -2147,6 +2167,7 @@ function ScheduleModal({ childName, schedule, onClose, onSave }) {
 
         <button className="copy-hours-button" type="button" onClick={copyMessageHours} disabled={!draft.enabled}><Clock size={16} weight="bold" /> Utiliser l’horaire des messages pour tout</button>
         <div className="schedule-note"><ShieldCheck size={17} weight="fill" /><span>En dehors de ces horaires, les messages attendent et les appels audio ou visio sont refusés. Le contact reçoit cette réponse automatique.</span></div>
+        {error && <p className="child-form-error" role="alert">{error}</p>}
         <div className="child-modal-actions"><button type="button" className="decline-button" onClick={onClose}>Annuler</button><button type="submit" className="primary-button"><CheckCircle size={18} weight="fill" /> Enregistrer</button></div>
       </form>
     </div>
@@ -2237,20 +2258,20 @@ function QrModal({ child, onClose, onRequestAdd }) {
 export function App() {
   const dragScrollRef = useMouseDragScroll();
   const [session, setSession] = useState(null);
-  const [familyOwner, setFamilyOwner] = useState({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639" });
+  const [familyOwner, setFamilyOwner] = useState({ name: "", email: "", contactId: "" });
   const [activeTab, setActiveTab] = useState("conversations");
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [isQrOpen, setIsQrOpen] = useState(false);
   const [parentView, setParentView] = useState(null);
-  const [children, setChildren] = useState(initialChildren);
-  const [activeChildId, setActiveChildId] = useState("emma");
-  const [requestStatuses, setRequestStatuses] = useState({ emma: "pending" });
-  const [settingsByChild, setSettingsByChild] = useState({ emma: defaultSafetySettings });
-  const [schedulesByChild, setSchedulesByChild] = useState({ emma: defaultCommunicationSchedule });
+  const [children, setChildren] = useState([]);
+  const [activeChildId, setActiveChildId] = useState(null);
+  const [requestStatuses, setRequestStatuses] = useState({});
+  const [settingsByChild, setSettingsByChild] = useState({});
+  const [schedulesByChild, setSchedulesByChild] = useState({});
   const [childModal, setChildModal] = useState(null);
   const [scheduleModalChildId, setScheduleModalChildId] = useState(null);
   const [isContactIdsOpen, setIsContactIdsOpen] = useState(false);
-  const [parentThreads, setParentThreads] = useState(() => cloneParentThreads());
+  const [parentThreads, setParentThreads] = useState([]);
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
   const [presenceByContactId, setPresenceByContactId] = useState({});
   const [pendingContactId, setPendingContactId] = useState(() => {
@@ -2265,7 +2286,9 @@ export function App() {
 
   useEffect(() => {
     if (!getToken()) return;
-    api.me().then(({ account }) => openAuthenticatedSession(account)).catch(() => clearToken());
+    api.me()
+      .then(({ account }) => account.role === "child" ? openChildSession(account) : openAuthenticatedSession(account))
+      .catch(() => clearToken());
   }, []);
 
   useEffect(() => {
@@ -2306,29 +2329,45 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [session, parentThreads]);
 
-  const openAuthenticatedSession = (parent) => {
-    const reservedIds = [...friends.map((friend) => friend.contactId), pendingFriend.contactId, ...children.map((child) => child.contactId).filter(Boolean)];
-    const parentWithId = { ...parent, contactId: parent.contactId ?? createUniqueContactId(reservedIds) };
+  const applyFamilyChildren = (familyChildren) => {
+    setChildren(familyChildren);
+    setActiveChildId(familyChildren[0]?.id ?? null);
+    setRequestStatuses(Object.fromEntries(familyChildren.map((child) => [child.id, "none"])));
+    setSettingsByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneSafetySettings(child.settings)])));
+    setSchedulesByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneCommunicationSchedule(child.schedule)])));
+    setParentThreads([]);
+  };
+
+  const openAuthenticatedSession = async (parent) => {
+    const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
+    if (!parent.demo) {
+      const family = await api.children();
+      applyFamilyChildren(family.children);
+    }
     setFamilyOwner(parentWithId);
     setSession({ ...parentWithId, role: "parent" });
     setParentView("dashboard");
     setSelectedConversation(null);
   };
 
+  const openChildSession = (child) => {
+    applyFamilyChildren([child]);
+    setFamilyOwner({ name: "Compte parent", email: "", contactId: "" });
+    setSession({ name: child.name, role: "child", childId: child.id });
+    setActiveChildId(child.id);
+    setParentView(null);
+    setSelectedConversation(null);
+    setActiveTab("conversations");
+  };
+
   const loginParent = async (credentials) => {
     const { account } = await api.login(credentials);
-    openAuthenticatedSession(account);
+    await openAuthenticatedSession(account);
   };
 
   const registerParent = async (parent) => {
     const { account } = await api.register(parent);
-    setChildren([]);
-    setActiveChildId(null);
-    setRequestStatuses({});
-    setSettingsByChild({});
-    setSchedulesByChild({});
-    setParentThreads([]);
-    openAuthenticatedSession(account);
+    await openAuthenticatedSession(account);
     setChildModal({ mode: "create" });
   };
 
@@ -2336,26 +2375,26 @@ export function App() {
     setChildren(initialChildren.map((child) => ({ ...child })));
     setActiveChildId("emma");
     setRequestStatuses({ emma: "pending" });
-    setSettingsByChild({ emma: { ...defaultSafetySettings } });
-    setSchedulesByChild({ emma: { ...defaultCommunicationSchedule, messages: { ...defaultCommunicationSchedule.messages }, calls: { ...defaultCommunicationSchedule.calls, enabled: true, start: "00:00", end: "23:59" }, video: { ...defaultCommunicationSchedule.video, enabled: true, start: "00:00", end: "23:59" }, autoReply: { ...defaultCommunicationSchedule.autoReply } } });
+    setSettingsByChild({ emma: cloneSafetySettings() });
+    setSchedulesByChild({ emma: cloneCommunicationSchedule({ ...defaultCommunicationSchedule, calls: { ...defaultCommunicationSchedule.calls, enabled: true, start: "00:00", end: "23:59" }, video: { ...defaultCommunicationSchedule.video, enabled: true, start: "00:00", end: "23:59" } }) });
     setParentThreads(cloneParentThreads());
     setFamilyOwner({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639" });
   };
 
   const openDemoAccount = () => {
     restoreDemoFamily();
-    openAuthenticatedSession({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639", demo: true });
+    void openAuthenticatedSession({ name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639", demo: true });
   };
 
-  const loginChild = (contactId, password) => {
-    const child = children.find((item) => item.contactId.toUpperCase() === contactId.toUpperCase() && item.password === password);
-    if (!child) return false;
-    setSession({ name: child.name, role: "child", childId: child.id });
-    setActiveChildId(child.id);
-    setParentView(null);
-    setSelectedConversation(null);
-    setActiveTab("conversations");
-    return true;
+  const loginChild = async (contactId, password) => {
+    try {
+      const { account } = await api.login({ contactId, password });
+      if (account.role !== "child") return false;
+      openChildSession(account);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   const openDemoChildAccount = () => {
@@ -2369,6 +2408,13 @@ export function App() {
   const logoutParent = () => {
     clearToken();
     setSession(null);
+    setFamilyOwner({ name: "", email: "", contactId: "" });
+    setChildren([]);
+    setActiveChildId(null);
+    setRequestStatuses({});
+    setSettingsByChild({});
+    setSchedulesByChild({});
+    setParentThreads([]);
     setParentView(null);
     setChildModal(null);
     setScheduleModalChildId(null);
@@ -2378,7 +2424,7 @@ export function App() {
     setActiveTab("conversations");
   };
 
-  const saveChild = (childData) => {
+  const saveChild = async (childData) => {
     let uniqueUsername = childData.username;
     let suffix = 2;
     while (children.some((item) => item.id !== childData.id && item.username === uniqueUsername)) {
@@ -2386,28 +2432,66 @@ export function App() {
       suffix += 1;
     }
 
-    if (childData.id) {
-      setChildren((current) => current.map((item) => item.id === childData.id ? { ...item, ...childData, username: uniqueUsername } : item));
+    const profile = {
+      name: childData.name,
+      age: childData.age,
+      username: uniqueUsername,
+      password: childData.password,
+      color: childData.color,
+      status: childData.status,
+    };
+
+    if (session?.demo) {
+      if (childData.id) {
+        setChildren((current) => current.map((item) => item.id === childData.id ? { ...item, ...childData, username: uniqueUsername } : item));
+      } else {
+        const id = `child-${Date.now()}`;
+        const reservedIds = [familyOwner.contactId, ...friends.map((friend) => friend.contactId), pendingFriend.contactId, ...children.map((child) => child.contactId).filter(Boolean)];
+        const createdChild = { ...childData, id, username: uniqueUsername, contactId: childData.contactId ?? createUniqueContactId(reservedIds) };
+        setChildren((current) => [...current, createdChild]);
+        setActiveChildId(id);
+        setRequestStatuses((current) => ({ ...current, [id]: "none" }));
+        setSettingsByChild((current) => ({ ...current, [id]: cloneSafetySettings() }));
+        setSchedulesByChild((current) => ({ ...current, [id]: cloneCommunicationSchedule() }));
+      }
     } else {
-      const id = `child-${Date.now()}`;
-      const reservedIds = [familyOwner.contactId, ...friends.map((friend) => friend.contactId), pendingFriend.contactId, ...children.map((child) => child.contactId).filter(Boolean)];
-      const createdChild = { ...childData, id, username: uniqueUsername, contactId: childData.contactId ?? createUniqueContactId(reservedIds) };
-      setChildren((current) => [...current, createdChild]);
-      setActiveChildId(id);
-      setRequestStatuses((current) => ({ ...current, [id]: "none" }));
-      setSettingsByChild((current) => ({ ...current, [id]: { ...defaultSafetySettings } }));
-      setSchedulesByChild((current) => ({
-        ...current,
-        [id]: {
-          ...defaultCommunicationSchedule,
-          messages: { ...defaultCommunicationSchedule.messages },
-          calls: { ...defaultCommunicationSchedule.calls },
-          video: { ...defaultCommunicationSchedule.video },
-          autoReply: { ...defaultCommunicationSchedule.autoReply },
-        },
-      }));
+      const result = childData.id
+        ? await api.updateChild(childData.id, profile)
+        : await api.createChild(profile);
+      const savedChild = result.child;
+      setChildren((current) => childData.id
+        ? current.map((item) => item.id === savedChild.id ? savedChild : item)
+        : [...current, savedChild]);
+      setActiveChildId(savedChild.id);
+      setRequestStatuses((current) => ({ ...current, [savedChild.id]: current[savedChild.id] ?? "none" }));
+      setSettingsByChild((current) => ({ ...current, [savedChild.id]: cloneSafetySettings(savedChild.settings) }));
+      setSchedulesByChild((current) => ({ ...current, [savedChild.id]: cloneCommunicationSchedule(savedChild.schedule) }));
     }
     setChildModal(null);
+  };
+
+  const toggleChildSetting = async (childId, key) => {
+    const previousSettings = cloneSafetySettings(settingsByChild[childId]);
+    const nextSettings = { ...previousSettings, [key]: !previousSettings[key] };
+    setSettingsByChild((current) => ({ ...current, [childId]: nextSettings }));
+    if (session?.demo) return;
+    try {
+      const { child } = await api.updateChild(childId, { settings: nextSettings });
+      setSettingsByChild((current) => ({ ...current, [childId]: cloneSafetySettings(child.settings) }));
+    } catch {
+      setSettingsByChild((current) => ({ ...current, [childId]: previousSettings }));
+    }
+  };
+
+  const saveChildSchedule = async (childId, schedule) => {
+    const nextSchedule = cloneCommunicationSchedule(schedule);
+    if (!session?.demo) {
+      const { child } = await api.updateChild(childId, { schedule: nextSchedule });
+      setSchedulesByChild((current) => ({ ...current, [childId]: cloneCommunicationSchedule(child.schedule) }));
+    } else {
+      setSchedulesByChild((current) => ({ ...current, [childId]: nextSchedule }));
+    }
+    setScheduleModalChildId(null);
   };
 
   const openParentThread = (threadId) => {
@@ -2450,7 +2534,7 @@ export function App() {
           onApproveRequest={() => activeChild && setRequestStatuses((current) => ({ ...current, [activeChild.id]: "approved" }))}
           onDeclineRequest={() => activeChild && setRequestStatuses((current) => ({ ...current, [activeChild.id]: "declined" }))}
           settings={activeSettings}
-          onToggleSetting={(key) => activeChild && setSettingsByChild((current) => ({ ...current, [activeChild.id]: { ...activeSettings, [key]: !activeSettings[key] } }))}
+          onToggleSetting={(key) => activeChild && void toggleChildSetting(activeChild.id, key)}
           schedule={activeSchedule}
           unreadMessages={parentUnreadMessages}
           onOpenMessages={() => { setSelectedParentThreadId(null); setParentView("messages"); }}
@@ -2513,7 +2597,7 @@ export function App() {
             childName={children.find((child) => child.id === scheduleModalChildId)?.name ?? "cet enfant"}
             schedule={schedulesByChild[scheduleModalChildId] ?? defaultCommunicationSchedule}
             onClose={() => setScheduleModalChildId(null)}
-            onSave={(schedule) => { setSchedulesByChild((current) => ({ ...current, [scheduleModalChildId]: schedule })); setScheduleModalChildId(null); }}
+            onSave={(schedule) => saveChildSchedule(scheduleModalChildId, schedule)}
           />
         )}
       </div>

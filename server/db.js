@@ -19,9 +19,26 @@ export async function initializeDatabase() {
       password_hash text not null,
       display_name text not null,
       parent_id uuid references accounts(id) on delete cascade,
+      age smallint,
+      username text,
+      avatar_path text,
+      avatar_color text,
+      status text not null default 'active',
+      safety_settings jsonb not null default '{"media":true}'::jsonb,
+      communication_schedule jsonb not null default '{"enabled":true,"messages":{"enabled":true,"start":"07:30","end":"20:30"},"calls":{"enabled":true,"start":"08:00","end":"19:30"},"video":{"enabled":false,"start":"09:00","end":"18:30"},"autoReply":{"enabled":true,"message":"Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés."}}'::jsonb,
       created_at timestamptz not null default now(),
       check ((role = 'parent' and email is not null and parent_id is null) or (role = 'child' and parent_id is not null))
     );
+
+    alter table accounts add column if not exists age smallint;
+    alter table accounts add column if not exists username text;
+    alter table accounts add column if not exists avatar_path text;
+    alter table accounts add column if not exists avatar_color text;
+    alter table accounts add column if not exists status text not null default 'active';
+    alter table accounts add column if not exists safety_settings jsonb not null default '{"media":true}'::jsonb;
+    alter table accounts add column if not exists communication_schedule jsonb not null default '{"enabled":true,"messages":{"enabled":true,"start":"07:30","end":"20:30"},"calls":{"enabled":true,"start":"08:00","end":"19:30"},"video":{"enabled":false,"start":"09:00","end":"18:30"},"autoReply":{"enabled":true,"message":"Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés."}}'::jsonb;
+    create unique index if not exists accounts_parent_username_unique on accounts(parent_id, lower(username)) where role = 'child';
+    create index if not exists accounts_parent_children_idx on accounts(parent_id, created_at) where role = 'child';
 
     create table if not exists conversations (
       id uuid primary key default gen_random_uuid(),

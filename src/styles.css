@@ -3087,6 +3087,46 @@ input:focus-visible {
   margin-bottom: 4px;
 }
 
+.profile-screen .push-setting {
+  width: min(100%, 300px);
+  margin-bottom: 12px;
+}
+
+.profile-screen .push-setting > button {
+  min-height: 62px;
+  grid-template-columns: 38px minmax(0, 1fr) 40px;
+  gap: 8px;
+  padding: 8px 11px;
+  color: #fff;
+  border-color: #6e62a7;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.profile-screen .push-setting > button > svg {
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  color: var(--navy);
+  border-radius: 12px;
+  background: var(--mint);
+}
+
+.profile-screen .push-setting strong {
+  color: #fff;
+  font-size: 11px;
+}
+
+.profile-screen .push-setting small {
+  color: #cfc9ec;
+  font-size: 8px;
+}
+
+.profile-screen .push-setting__error,
+.profile-screen .push-setting__hint {
+  text-align: left;
+}
+
 .child-username {
   margin-top: -5px;
   color: #bdb6e3;
@@ -3177,6 +3217,7 @@ input:focus-visible {
 .parent-card {
   display: flex;
   width: min(100%, 300px);
+  min-height: 62px;
   align-items: center;
   gap: 10px;
   margin: 10px 0 12px;
