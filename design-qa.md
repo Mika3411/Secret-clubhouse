@@ -44,6 +44,19 @@ final result: passed
 
 ---
 
+**Mini-game Variety QA**
+
+- Implementation tested at `http://127.0.0.1:4174/` in two consecutive “Quiz des animaux” sessions.
+- First session began with “Quel animal porte son bébé dans une poche ?”.
+- Second session began with “Quel animal fabrique du miel ?”.
+- Each session displayed three questions, and served questions were removed from the active deck.
+- Existing Clubhouse layout and visual styling were unchanged.
+- Production build passes.
+
+final result: passed
+
+---
+
 **Child Add-Friend Flow QA**
 
 - Source visual language: existing Secret Clubhouse child home and contact QR modal.

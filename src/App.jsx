@@ -142,7 +142,7 @@ const clubhouseActivities = [
     id: "nature-quiz",
     type: "game",
     title: "Quiz des animaux",
-    description: "Teste tes connaissances avec trois questions rapides.",
+    description: "Teste tes connaissances avec trois nouvelles questions à chaque partie.",
     duration: 3,
     reward: 20,
     Icon: Brain,
