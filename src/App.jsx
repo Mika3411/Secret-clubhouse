@@ -11,6 +11,8 @@ import {
   Clock,
   Copy,
   DotsThree,
+  Eye,
+  EyeSlash,
   FlagPennant,
   GameController,
   GearSix,
@@ -294,6 +296,7 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) 
   const [email, setEmail] = useState("");
   const [childContactId, setChildContactId] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
 
@@ -373,7 +376,7 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo }) 
             <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
             {audience === "parent" && mode === "register" && <label className="auth-field"><span>Prénom du parent</span><input value={name} onChange={(event) => { setName(event.target.value); setError(""); }} autoComplete="given-name" placeholder="Marie" /></label>}
             {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-482-917-305" /></label>}
-            <label className="auth-field"><span>Mot de passe</span><input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="6 caractères minimum" /></label>
+            <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="6 caractères minimum" /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
             {audience === "parent" && mode === "register" && (
               <label className="auth-consent"><input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setError(""); }} /><span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span></label>
             )}
@@ -1522,14 +1525,38 @@ function ParentDashboard({ parentName, children, child, requestStatus, onSelectC
   );
 }
 
-function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend }) {
+function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectThread, onBack, onSend, isDemo }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
   const [callMode, setCallMode] = useState(null);
+  const [isAddingContact, setIsAddingContact] = useState(false);
+  const [contactId, setContactId] = useState("");
+  const [contactFeedback, setContactFeedback] = useState(null);
+  const [isSubmittingContact, setIsSubmittingContact] = useState(false);
   const parentMediaInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+
+  const submitContact = async (event) => {
+    event.preventDefault();
+    const normalizedId = contactId.trim().toUpperCase();
+    if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(normalizedId)) {
+      setContactFeedback({ type: "error", text: "Utilisez le format SC-123-456-789." });
+      return;
+    }
+    setIsSubmittingContact(true);
+    setContactFeedback(null);
+    try {
+      if (!isDemo) await api.addContact(normalizedId);
+      setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
+      setContactId("");
+    } catch (error) {
+      setContactFeedback({ type: "error", text: error.message });
+    } finally {
+      setIsSubmittingContact(false);
+    }
+  };
 
   useEffect(() => () => parentMediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
@@ -1634,7 +1661,7 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
 
       <div className="parent-messages-content">
         <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Un espace réservé aux adultes</strong><p>Ces messages ne sont jamais mélangés aux conversations de vos enfants.</p></div></div>
-        <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><ChatCircleDots size={23} weight="fill" /></div>
+        <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
             <button type="button" className="parent-thread-row" key={thread.id} onClick={() => onSelectThread(thread.id)} aria-label={`Ouvrir la conversation avec ${thread.name}`}>
@@ -1646,6 +1673,19 @@ function ParentMessagesScreen({ parentName, threads, selectedThreadId, onSelectT
           {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Les parents des contacts approuvés apparaîtront ici.</span></div>}
         </div>
       </div>
+      {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
+        <section className="add-contact-modal" role="dialog" aria-modal="true" aria-labelledby="add-contact-title" onMouseDown={(event) => event.stopPropagation()}>
+          <span className="add-contact-icon"><UserPlus size={27} weight="fill" /></span>
+          <h2 id="add-contact-title">Ajouter un contact</h2>
+          <p>Saisissez son identifiant privé. Son parent devra approuver la demande avant toute discussion.</p>
+          <form onSubmit={submitContact}>
+            <label htmlFor="new-contact-id">Identifiant du contact</label>
+            <input id="new-contact-id" value={contactId} onChange={(event) => { setContactId(event.target.value.toUpperCase().slice(0, 14)); setContactFeedback(null); }} placeholder="SC-123-456-789" autoComplete="off" autoFocus />
+            {contactFeedback && <div className={`contact-feedback contact-feedback--${contactFeedback.type}`} role="status">{contactFeedback.type === "success" ? <CheckCircle size={17} weight="fill" /> : <Shield size={17} weight="fill" />}<span>{contactFeedback.text}</span></div>}
+            <div className="add-contact-actions"><button type="button" onClick={() => setIsAddingContact(false)}>Annuler</button><button type="submit" disabled={isSubmittingContact}>{isSubmittingContact ? "Envoi…" : "Envoyer la demande"}</button></div>
+          </form>
+        </section>
+      </div>}
     </section>
   );
 }
@@ -2087,7 +2127,7 @@ export function App() {
       return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} isDemo={Boolean(session.demo)} />;
     }
     if (parentView === "dashboard") {
       return (

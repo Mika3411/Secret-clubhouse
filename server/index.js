@@ -160,6 +160,25 @@ app.get("/api/conversations", requireAuth, async (req, res) => {
   res.json({ conversations: result.rows });
 });
 
+app.post("/api/contact-requests", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut ajouter un contact." });
+  const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
+  if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId)) return res.status(400).json({ error: "Saisissez un identifiant au format SC-123-456-789." });
+  const targetResult = await pool.query("select id, parent_id, display_name from accounts where contact_id=$1", [contactId]);
+  const target = targetResult.rows[0];
+  if (!target) return res.status(404).json({ error: "Aucun compte ne correspond à cet identifiant." });
+  const recipientParentId = target.parent_id ?? target.id;
+  if (recipientParentId === req.auth.sub) return res.status(400).json({ error: "Cet identifiant appartient déjà à votre famille." });
+  try {
+    const result = await pool.query(`insert into contact_requests(requester_id,target_account_id,recipient_parent_id)
+      values($1,$2,$3) returning id,status,created_at`, [req.auth.sub, target.id, recipientParentId]);
+    res.status(201).json({ request: result.rows[0], contact: { name: target.display_name, contactId } });
+  } catch (error) {
+    if (error.code === "23505") return res.status(409).json({ error: "Une demande existe déjà pour ce contact." });
+    throw error;
+  }
+});
+
 async function isConversationMember(accountId, conversationId) {
   const result = await pool.query("select 1 from conversation_members where account_id=$1 and conversation_id=$2", [accountId, conversationId]);
   return result.rowCount === 1;

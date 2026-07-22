@@ -35,6 +35,19 @@ export async function initializeDatabase() {
       primary key (conversation_id, account_id)
     );
 
+    create table if not exists contact_requests (
+      id uuid primary key default gen_random_uuid(),
+      requester_id uuid not null references accounts(id) on delete cascade,
+      target_account_id uuid not null references accounts(id) on delete cascade,
+      recipient_parent_id uuid not null references accounts(id) on delete cascade,
+      status text not null default 'pending' check (status in ('pending', 'approved', 'declined')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (requester_id, target_account_id),
+      check (requester_id <> recipient_parent_id)
+    );
+    create index if not exists contact_requests_recipient_idx on contact_requests(recipient_parent_id, status);
+
     create table if not exists presence (
       account_id uuid primary key references accounts(id) on delete cascade,
       last_seen timestamptz not null default now()
