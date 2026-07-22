@@ -39,7 +39,14 @@ app.use((_req, res, next) => {
 });
 app.use(express.json({ limit: "1mb" }));
 
-const makeContactId = () => `SC-${Array.from({ length: 3 }, () => crypto.randomInt(100, 1000)).join("-")}`;
+const demoChildContactId = "SC-482-917-305";
+const makeContactId = () => {
+  let contactId;
+  do {
+    contactId = `SC-${Array.from({ length: 3 }, () => crypto.randomInt(100, 1000)).join("-")}`;
+  } while (contactId === demoChildContactId);
+  return contactId;
+};
 const signSession = (account) => jwt.sign({ sub: account.id, role: account.role }, jwtSecret, { expiresIn: "7d", issuer: "secret-clubhouse" });
 const childColors = new Set(["mint", "violet", "sun", "coral"]);
 const childStatuses = new Set(["active", "paused"]);
@@ -175,9 +182,12 @@ app.post("/api/auth/register", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   const { email, contactId, password } = req.body ?? {};
+  const normalizedContactId = String(contactId ?? "").trim().toUpperCase();
   const result = email
     ? await pool.query("select * from accounts where role='parent' and email=$1", [String(email).trim().toLowerCase()])
-    : await pool.query("select * from accounts where role='child' and contact_id=$1", [String(contactId ?? "").trim().toUpperCase()]);
+    : normalizedContactId === demoChildContactId
+      ? { rows: [] }
+      : await pool.query("select * from accounts where role='child' and contact_id=$1", [normalizedContactId]);
   const account = result.rows[0];
   if (!account || !await bcrypt.compare(String(password ?? ""), account.password_hash)) return res.status(401).json({ error: "Identifiants incorrects." });
   res.json({ token: signSession(account), account: await serializeAccount(account) });
@@ -192,8 +202,8 @@ app.get("/api/me", requireAuth, async (req, res) => {
 app.get("/api/children", requireAuth, async (req, res) => {
   if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
   const result = await pool.query(
-    "select * from accounts where role='child' and parent_id=$1 order by created_at, display_name",
-    [req.auth.sub],
+    "select * from accounts where role='child' and parent_id=$1 and contact_id<>$2 order by created_at, display_name",
+    [req.auth.sub, demoChildContactId],
   );
   res.json({ children: await Promise.all(result.rows.map(serializeAccount)) });
 });
@@ -238,8 +248,8 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "Identifiant enfant invalide." });
   }
   const existingResult = await pool.query(
-    "select * from accounts where id=$1 and role='child' and parent_id=$2",
-    [req.params.id, req.auth.sub],
+    "select * from accounts where id=$1 and role='child' and parent_id=$2 and contact_id<>$3",
+    [req.params.id, req.auth.sub, demoChildContactId],
   );
   const existing = existingResult.rows[0];
   if (!existing) return res.status(404).json({ error: "Profil enfant introuvable dans votre famille." });
@@ -338,7 +348,9 @@ app.post("/api/contact-requests", requireAuth, async (req, res) => {
   if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut ajouter un contact." });
   const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
   if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId)) return res.status(400).json({ error: "Saisissez un identifiant au format SC-123-456-789." });
-  const targetResult = await pool.query("select id, parent_id, display_name from accounts where contact_id=$1", [contactId]);
+  const targetResult = contactId === demoChildContactId
+    ? { rows: [] }
+    : await pool.query("select id, parent_id, display_name from accounts where contact_id=$1", [contactId]);
   const target = targetResult.rows[0];
   if (!target) return res.status(404).json({ error: "Aucun compte ne correspond à cet identifiant." });
   const recipientParentId = target.parent_id ?? target.id;

@@ -66,6 +66,7 @@ const friends = [
 ];
 
 const pendingFriend = { id: "chloe", name: "Chloé", contactId: "SC-759-361-248", image: null };
+const demoChildContactId = "SC-482-917-305";
 
 const initialChildren = [
   {
@@ -74,7 +75,7 @@ const initialChildren = [
     age: 9,
     username: "emma.club",
     password: "Emma2026!",
-    contactId: "SC-482-917-305",
+    contactId: demoChildContactId,
     image: "/avatars/emma.png",
     color: "violet",
     status: "active",
@@ -2342,7 +2343,7 @@ export function App() {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     if (!parent.demo) {
       const family = await api.children();
-      applyFamilyChildren(family.children);
+      applyFamilyChildren(family.children.filter((child) => child.contactId !== demoChildContactId));
     }
     setFamilyOwner(parentWithId);
     setSession({ ...parentWithId, role: "parent" });
@@ -2389,7 +2390,7 @@ export function App() {
   const loginChild = async (contactId, password) => {
     try {
       const { account } = await api.login({ contactId, password });
-      if (account.role !== "child") return false;
+      if (account.role !== "child" || account.contactId === demoChildContactId) return false;
       openChildSession(account);
       return true;
     } catch {
