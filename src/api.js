@@ -21,6 +21,7 @@ export const api = {
   login: (data) => request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
   me: () => request("/me"),
   updateParentPassword: (data) => request("/account/password", { method: "PATCH", body: JSON.stringify(data) }),
+  updateAvatar: (avatar) => request("/account/avatar", { method: "PATCH", body: JSON.stringify({ avatar }) }),
   children: () => request("/children"),
   createChild: (data) => request("/children", { method: "POST", body: JSON.stringify(data) }),
   updateChild: (childId, data) => request(`/children/${encodeURIComponent(childId)}`, { method: "PATCH", body: JSON.stringify(data) }),

@@ -50,6 +50,22 @@ const makeContactId = () => {
 const signSession = (account) => jwt.sign({ sub: account.id, role: account.role }, jwtSecret, { expiresIn: "7d", issuer: "secret-clubhouse" });
 const childColors = new Set(["mint", "violet", "sun", "coral"]);
 const childStatuses = new Set(["active", "paused"]);
+const avatarOptions = {
+  hair: new Set(["short", "bob", "curly", "spiky", "bun"]),
+  hairColor: new Set(["brown", "black", "blond", "ginger", "violet"]),
+  face: new Set(["smile", "happy", "calm", "freckles"]),
+  skin: new Set(["light", "warm", "tan", "brown", "deep"]),
+  outfit: new Set(["mint", "violet", "coral", "sun", "blue"]),
+};
+const defaultAvatarConfig = { hair: "bob", hairColor: "brown", face: "smile", skin: "warm", outfit: "mint" };
+
+function normalizeAvatarConfig(value, fallback = defaultAvatarConfig) {
+  const current = { ...defaultAvatarConfig, ...(fallback ?? {}) };
+  return Object.fromEntries(Object.entries(avatarOptions).map(([key, allowed]) => {
+    const candidate = String(value?.[key] ?? current[key]);
+    return [key, allowed.has(candidate) ? candidate : current[key]];
+  }));
+}
 const defaultSafetySettings = { media: true };
 const defaultCommunicationSchedule = {
   enabled: true,
@@ -150,6 +166,7 @@ async function serializeAccount(account) {
     username: account.username,
     image: account.avatar_path,
     color: account.avatar_color || "mint",
+    avatar: account.avatar_config ? normalizeAvatarConfig(account.avatar_config) : null,
     status: account.status || "active",
     settings: { ...defaultSafetySettings, ...(account.safety_settings ?? {}) },
     schedule: normalizeSchedule({}, account.communication_schedule),
@@ -299,6 +316,16 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
     if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo est déjà utilisé dans votre famille." });
     throw error;
   }
+});
+
+app.patch("/api/account/avatar", requireAuth, async (req, res) => {
+  if (req.auth.role !== "child") return res.status(403).json({ error: "L’avatar appartient au profil enfant." });
+  const currentResult = await pool.query("select * from accounts where id=$1 and role='child'", [req.auth.sub]);
+  const current = currentResult.rows[0];
+  if (!current) return res.status(404).json({ error: "Profil enfant introuvable." });
+  const avatar = normalizeAvatarConfig(req.body?.avatar, current.avatar_config);
+  const result = await pool.query("update accounts set avatar_config=$1::jsonb where id=$2 returning *", [JSON.stringify(avatar), req.auth.sub]);
+  res.json({ child: await serializeAccount(result.rows[0]) });
 });
 
 app.delete("/api/children/:id", requireAuth, async (req, res) => {

@@ -439,9 +439,43 @@ const conversations = [
 function Avatar({ person, size = "medium", online = null }) {
   return (
     <span className={`avatar avatar--${size} avatar--tone-${person.color ?? "default"}`}>
-      {person.image ? <img src={person.image} alt={`Avatar de ${person.name}`} /> : <span className="avatar__fallback" role="img" aria-label={`Avatar de ${person.name}`}>{person.name.slice(0, 1)}</span>}
+      {person.avatar ? <AvatarIllustration avatar={person.avatar} name={person.name} /> : person.image ? <img src={person.image} alt={`Avatar de ${person.name}`} /> : <span className="avatar__fallback" role="img" aria-label={`Avatar de ${person.name}`}>{person.name.slice(0, 1)}</span>}
       {online !== null && <span className={`online-dot ${online ? "is-online" : "is-offline"}`} aria-label={online ? "En ligne" : "Hors ligne"} title={online ? "En ligne" : "Hors ligne"} />}
     </span>
+  );
+}
+
+const defaultAvatar = { hair: "bob", hairColor: "brown", face: "smile", skin: "warm", outfit: "mint" };
+const avatarPalette = {
+  skin: { light: "#f9d8c2", warm: "#eeb992", tan: "#c98960", brown: "#925a3b", deep: "#5c382c" },
+  hairColor: { brown: "#6b3f2a", black: "#201b2c", blond: "#e8b94f", ginger: "#bd5b35", violet: "#6650c7" },
+  outfit: { mint: "#69e4c3", violet: "#8c75e7", coral: "#ff8d83", sun: "#f5c451", blue: "#63b7e8" },
+};
+
+function AvatarIllustration({ avatar = defaultAvatar, name = "Mon avatar" }) {
+  const config = { ...defaultAvatar, ...avatar };
+  const skin = avatarPalette.skin[config.skin];
+  const hair = avatarPalette.hairColor[config.hairColor];
+  const outfit = avatarPalette.outfit[config.outfit];
+  return (
+    <svg className="avatar-illustration" viewBox="0 0 120 120" role="img" aria-label={`Avatar personnalisé de ${name}`}>
+      <circle cx="60" cy="60" r="60" fill="#d9d0ff" />
+      <path d="M17 120c4-25 20-38 43-38s39 13 43 38" fill={outfit} />
+      <path d="M39 80h42v20c-12 9-30 9-42 0z" fill={skin} />
+      <ellipse cx="60" cy="54" rx="31" ry="35" fill={skin} />
+      {config.hair === "short" && <path d="M30 48c0-28 18-38 34-36 19 2 28 18 26 39-8-14-21-18-35-16-10 2-18 7-25 13z" fill={hair} />}
+      {config.hair === "bob" && <path d="M27 55c-2-28 13-45 34-45 23 0 37 17 34 48l-9 19-5-32c-15-13-30-10-44 1l-4 31z" fill={hair} />}
+      {config.hair === "curly" && <g fill={hair}><circle cx="37" cy="30" r="14"/><circle cx="53" cy="21" r="15"/><circle cx="70" cy="22" r="15"/><circle cx="84" cy="34" r="14"/><circle cx="31" cy="48" r="12"/><circle cx="89" cy="50" r="12"/></g>}
+      {config.hair === "spiky" && <path d="M29 49l5-27 9 9 5-21 12 15 12-18 4 22 15-9-3 32c-16-18-42-20-59-3z" fill={hair} />}
+      {config.hair === "bun" && <><circle cx="61" cy="13" r="15" fill={hair}/><path d="M29 51c0-27 14-40 32-40s31 14 31 40c-17-18-43-18-63 0z" fill={hair}/></>}
+      <circle cx="48" cy="55" r="3.2" fill="#171044"/><circle cx="72" cy="55" r="3.2" fill="#171044"/>
+      {config.face === "smile" && <path d="M50 69q10 9 20 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/>}
+      {config.face === "happy" && <><path d="M45 55q3-5 6 0M69 55q3-5 6 0" fill="none" stroke="#171044" strokeWidth="3" strokeLinecap="round"/><path d="M49 68q11 13 22 0" fill="#fff" stroke="#8d4150" strokeWidth="2"/></>}
+      {config.face === "calm" && <path d="M52 70q8 3 16 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/>}
+      {config.face === "freckles" && <><path d="M50 69q10 8 20 0" fill="none" stroke="#8d4150" strokeWidth="3" strokeLinecap="round"/><g fill="#a8634f"><circle cx="40" cy="64" r="1.4"/><circle cx="45" cy="66" r="1.2"/><circle cx="80" cy="64" r="1.4"/><circle cx="75" cy="66" r="1.2"/></g></>}
+      <path d="M60 58l-2 6h4" fill="none" stroke="#b87962" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M43 93l17 12 17-12" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="4" strokeLinecap="round"/>
+    </svg>
   );
 }
 
@@ -1628,7 +1662,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
   );
 }
 
-function ProfileScreen({ child, onOpenParent, onLogout }) {
+function ProfileScreen({ child, onOpenParent, onOpenPreferences, onLogout }) {
   const [idCopied, setIdCopied] = useState(false);
 
   const copyOwnId = async () => {
@@ -1657,7 +1691,7 @@ function ProfileScreen({ child, onOpenParent, onLogout }) {
         <span><strong>Espace parent</strong><small>Contacts et sécurité</small></span>
         <CaretRight size={19} weight="bold" />
       </button>
-      <button type="button" className="secondary-button"><GearSix size={19} weight="bold" /> Mes préférences</button>
+      <button type="button" className="secondary-button" onClick={onOpenPreferences}><GearSix size={19} weight="bold" /> Mes préférences</button>
       <button type="button" className="child-logout-button" onClick={onLogout}><SignOut size={18} weight="bold" /> Se déconnecter</button>
     </section>
   );
@@ -1717,6 +1751,68 @@ function ParentAccessScreen({ parentName, onBack, onUnlock }) {
         <button className="parent-help" type="button" onClick={() => setShowHelp((current) => !current)}>Code oublié ?</button>
         {showHelp && <p className="parent-help-message" role="status">Dans la version finale, la récupération passera par l’adresse e-mail vérifiée du parent.</p>}
       </form>
+    </section>
+  );
+}
+
+const avatarChoices = [
+  { key: "hair", label: "Coiffure", choices: [{ id: "short", label: "Courte" }, { id: "bob", label: "Carré" }, { id: "curly", label: "Boucles" }, { id: "spiky", label: "Pics" }, { id: "bun", label: "Chignon" }] },
+  { key: "hairColor", label: "Cheveux", choices: [{ id: "brown", label: "Brun" }, { id: "black", label: "Noir" }, { id: "blond", label: "Blond" }, { id: "ginger", label: "Roux" }, { id: "violet", label: "Violet" }] },
+  { key: "face", label: "Visage", choices: [{ id: "smile", label: "Sourire" }, { id: "happy", label: "Joyeux" }, { id: "calm", label: "Calme" }, { id: "freckles", label: "Taches" }] },
+  { key: "skin", label: "Peau", choices: [{ id: "light", label: "Très claire" }, { id: "warm", label: "Claire" }, { id: "tan", label: "Dorée" }, { id: "brown", label: "Brune" }, { id: "deep", label: "Foncée" }] },
+  { key: "outfit", label: "Vêtements", choices: [{ id: "mint", label: "Menthe" }, { id: "violet", label: "Violet" }, { id: "coral", label: "Corail" }, { id: "sun", label: "Soleil" }, { id: "blue", label: "Bleu" }] },
+];
+
+function AvatarPreferencesScreen({ child, onBack, onSave }) {
+  const [draft, setDraft] = useState({ ...defaultAvatar, ...(child.avatar ?? {}) });
+  const [activeCategory, setActiveCategory] = useState("hair");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const category = avatarChoices.find((item) => item.key === activeCategory);
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(draft);
+      onBack();
+    } catch (saveError) {
+      setError(saveError.message || "Impossible d’enregistrer l’avatar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="avatar-maker-screen">
+      <header className="feature-header avatar-maker-header">
+        <button type="button" onClick={onBack} aria-label="Retour"><ArrowLeft size={22} weight="bold" /></button>
+        <div><span className="eyebrow">Mes préférences</span><h1>Mon avatar</h1></div>
+        <span className="avatar-maker-header__sparkle"><Sparkle size={20} weight="fill" /></span>
+      </header>
+      <div className="avatar-maker-preview">
+        <span className="avatar-maker-preview__halo" aria-hidden="true" />
+        <Avatar person={{ ...child, image: null, avatar: draft }} size="maker" />
+        <strong>Crée un avatar qui te ressemble</strong>
+        <small>Tu peux le modifier quand tu veux.</small>
+      </div>
+      <div className="avatar-maker-tabs" role="tablist" aria-label="Parties de l’avatar">
+        {avatarChoices.map((item) => <button key={item.key} type="button" role="tab" aria-selected={activeCategory === item.key} className={activeCategory === item.key ? "is-active" : ""} onClick={() => setActiveCategory(item.key)}>{item.label}</button>)}
+      </div>
+      <section className="avatar-maker-options" aria-label={category.label}>
+        <h2>Choisis : {category.label.toLowerCase()}</h2>
+        <div>
+          {category.choices.map((choice) => (
+            <button key={choice.id} type="button" className={`${draft[category.key] === choice.id ? "is-selected" : ""} avatar-choice avatar-choice--${category.key}`} onClick={() => setDraft((current) => ({ ...current, [category.key]: choice.id }))} aria-pressed={draft[category.key] === choice.id}>
+              <span className={`avatar-choice__sample avatar-choice__sample--${choice.id}`} aria-hidden="true">{category.key === "face" ? <Smiley size={25} weight={choice.id === "happy" ? "fill" : "regular"} /> : category.key === "hair" ? <AvatarIllustration avatar={{ ...draft, hair: choice.id }} name="" /> : null}</span>
+              <small>{choice.label}</small>
+              {draft[category.key] === choice.id && <CheckCircle size={17} weight="fill" />}
+            </button>
+          ))}
+        </div>
+      </section>
+      {error && <p className="avatar-maker-error" role="alert">{error}</p>}
+      <button type="button" className="avatar-maker-save" onClick={save} disabled={saving}><Check size={20} weight="bold" /> {saving ? "Enregistrement…" : "Enregistrer mon avatar"}</button>
     </section>
   );
 }
@@ -2510,6 +2606,7 @@ export function App() {
   const [scheduleModalChildId, setScheduleModalChildId] = useState(null);
   const [isContactIdsOpen, setIsContactIdsOpen] = useState(false);
   const [isParentPasswordOpen, setIsParentPasswordOpen] = useState(false);
+  const [isAvatarPreferencesOpen, setIsAvatarPreferencesOpen] = useState(false);
   const [parentThreads, setParentThreads] = useState([]);
   const [serverConversations, setServerConversations] = useState([]);
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
@@ -2682,9 +2779,20 @@ export function App() {
     setScheduleModalChildId(null);
     setIsContactIdsOpen(false);
     setIsParentPasswordOpen(false);
+    setIsAvatarPreferencesOpen(false);
     setSelectedParentThreadId(null);
     setSelectedConversation(null);
     setActiveTab("conversations");
+  };
+
+  const saveAvatar = async (avatar) => {
+    if (session?.demo) {
+      setChildren((current) => current.map((child) => child.id === activeChild.id ? { ...child, avatar, image: null } : child));
+      return;
+    }
+    const { child } = await api.updateAvatar(avatar);
+    setChildren((current) => current.map((item) => item.id === child.id ? child : item));
+    setSession((current) => ({ ...current, ...child, childId: child.id }));
   };
 
   const changeParentPassword = async ({ currentPassword, newPassword }) => {
@@ -2921,7 +3029,8 @@ export function App() {
       const gameContacts = session?.demo ? friends : serverConversations.filter((conversation) => conversation.kind === "child").map((conversation) => ({ id: conversation.contactId, name: conversation.name, contactId: conversation.contactId }));
       return <ClubhouseScreen child={activeChild} contacts={gameContacts} isDemo={Boolean(session?.demo)} />;
     }
-    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onLogout={logoutParent} />;
+    if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
+    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onLogout={logoutParent} />;
     const baseFriends = session?.demo ? friends : [];
     const approvedFriends = (session?.demo && activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
     const availableConversations = session?.demo ? approvedFriends.map((friend) => conversations.find((item) => item.id === friend.id) ?? {
@@ -2933,20 +3042,21 @@ export function App() {
       sent: "Bienvenue dans mon Clubhouse !",
     }) : serverConversations;
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, familyOwner, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
+  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, familyOwner, isAvatarPreferencesOpen, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
     if (scrollContainer) scrollContainer.scrollTop = 0;
     setSelectedConversation(null);
+    setIsAvatarPreferencesOpen(false);
     setActiveTab(tab);
   };
 
   return (
     <main className="app-stage">
       <div className="mobile-prototype" ref={dragScrollRef}>
-        <div className={`screen-scroll ${!session || selectedConversation || parentView || activeChild?.status === "paused" || !activeChild ? "screen-scroll--full" : ""}`}>{screen}</div>
-        {session && !selectedConversation && !parentView && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
+        <div className={`screen-scroll ${!session || selectedConversation || parentView || isAvatarPreferencesOpen || activeChild?.status === "paused" || !activeChild ? "screen-scroll--full" : ""}`}>{screen}</div>
+        {session && !selectedConversation && !parentView && !isAvatarPreferencesOpen && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
         {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
         {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} children={children} onClose={() => setIsContactIdsOpen(false)} />}
         {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal isDemo={Boolean(session.demo)} onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}

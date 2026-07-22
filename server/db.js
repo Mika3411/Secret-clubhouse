@@ -23,6 +23,7 @@ export async function initializeDatabase() {
       username text,
       avatar_path text,
       avatar_color text,
+      avatar_config jsonb,
       status text not null default 'active',
       safety_settings jsonb not null default '{"media":true}'::jsonb,
       communication_schedule jsonb not null default '{"enabled":true,"messages":{"enabled":true,"start":"07:30","end":"20:30"},"calls":{"enabled":true,"start":"08:00","end":"19:30"},"video":{"enabled":false,"start":"09:00","end":"18:30"},"autoReply":{"enabled":true,"message":"Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés."}}'::jsonb,
@@ -34,6 +35,7 @@ export async function initializeDatabase() {
     alter table accounts add column if not exists username text;
     alter table accounts add column if not exists avatar_path text;
     alter table accounts add column if not exists avatar_color text;
+    alter table accounts add column if not exists avatar_config jsonb;
     alter table accounts add column if not exists status text not null default 'active';
     alter table accounts add column if not exists safety_settings jsonb not null default '{"media":true}'::jsonb;
     alter table accounts add column if not exists communication_schedule jsonb not null default '{"enabled":true,"messages":{"enabled":true,"start":"07:30","end":"20:30"},"calls":{"enabled":true,"start":"08:00","end":"19:30"},"video":{"enabled":false,"start":"09:00","end":"18:30"},"autoReply":{"enabled":true,"message":"Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés."}}'::jsonb;
