@@ -58,6 +58,7 @@ import { api, clearToken, getToken } from "./api";
 import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import PhaserMemoryGame from "./PhaserMemoryGame";
+import ConnectFourGame from "./ConnectFourGame";
 
 const friends = [
   { id: "leo", name: "Léo", contactId: "SC-214-680-531", image: "/avatars/leo.png" },
@@ -139,6 +140,17 @@ const clubhouseActivities = [
     Icon: UsersThree,
     tone: "coral",
     steps: ["Choisis une activité secrète", "Mime-la pendant trente secondes", "Laisse les autres proposer une réponse"],
+  },
+  {
+    id: "connect-four",
+    type: "game",
+    variant: "connect-four",
+    title: "Puissance 4 à deux",
+    description: "Invite un contact approuvé et joue chacun ton tour.",
+    duration: 8,
+    reward: 40,
+    Icon: UsersThree,
+    tone: "blue",
   },
   {
     id: "memory-pairs",
@@ -1408,7 +1420,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   );
 }
 
-function ClubhouseScreen({ child }) {
+function ClubhouseScreen({ child, contacts, isDemo }) {
   const [filter, setFilter] = useState("all");
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [phase, setPhase] = useState("intro");
@@ -1602,6 +1614,10 @@ function ClubhouseScreen({ child }) {
 
                 {phase === "active" && selectedActivity.variant === "memory" && (
                   <div className="clubhouse-memory"><PhaserMemoryGame onComplete={completeActivity} /><p><ShieldCheck size={15} weight="fill" /> Le jeu reste entièrement dans Secret Clubhouse.</p></div>
+                )}
+
+                {phase === "active" && selectedActivity.variant === "connect-four" && (
+                  <ConnectFourGame child={child} contacts={contacts} isDemo={isDemo} onComplete={completeActivity} />
                 )}
               </>
             )}
@@ -2824,7 +2840,10 @@ export function App() {
     if (selectedConversation) {
       return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} />;
     }
-    if (activeTab === "clubhouse") return <ClubhouseScreen child={activeChild} />;
+    if (activeTab === "clubhouse") {
+      const gameContacts = session?.demo ? friends : serverConversations.filter((conversation) => conversation.kind === "child").map((conversation) => ({ id: conversation.contactId, name: conversation.name, contactId: conversation.contactId }));
+      return <ClubhouseScreen child={activeChild} contacts={gameContacts} isDemo={Boolean(session?.demo)} />;
+    }
     if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenParent={() => setParentView("access")} onLogout={logoutParent} />;
     const baseFriends = session?.demo ? friends : [];
     const approvedFriends = (session?.demo && activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));

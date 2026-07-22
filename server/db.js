@@ -73,6 +73,22 @@ export async function initializeDatabase() {
     );
     create index if not exists contact_requests_recipient_idx on contact_requests(recipient_parent_id, status);
 
+    create table if not exists game_sessions (
+      id uuid primary key default gen_random_uuid(),
+      game_type text not null check (game_type in ('connect_four')),
+      player_one_id uuid not null references accounts(id) on delete cascade,
+      player_two_id uuid not null references accounts(id) on delete cascade,
+      invited_by uuid not null references accounts(id) on delete cascade,
+      status text not null default 'pending' check (status in ('pending','active','declined','completed')),
+      board jsonb not null default '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]'::jsonb,
+      current_player_id uuid references accounts(id) on delete set null,
+      winner_id uuid references accounts(id) on delete set null,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      check (player_one_id <> player_two_id)
+    );
+    create index if not exists game_sessions_players_idx on game_sessions(player_one_id, player_two_id, updated_at desc);
+
     create table if not exists presence (
       account_id uuid primary key references accounts(id) on delete cascade,
       last_seen timestamptz not null default now()

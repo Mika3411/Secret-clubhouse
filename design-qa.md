@@ -44,6 +44,19 @@ final result: passed
 
 ---
 
+**Two-player Connect Four QA**
+
+- Implementation tested at `http://127.0.0.1:4174/`, child demo → Clubhouse → Puissance 4 à deux.
+- Verified approved-contact selection, invitation action, embedded 7 × 6 board, player turn, simulated contact response and two correctly colored pieces.
+- No browser console errors were recorded.
+- The production API validates child roles, an existing approved child conversation, turn ownership, full columns, wins and draws.
+- Game invitations, boards, current turns and results persist in Render PostgreSQL.
+- Production build and server syntax checks pass.
+
+final result: passed
+
+---
+
 **Embedded Phaser Memory QA**
 
 - Implementation tested at `http://127.0.0.1:4174/`, child demo → Clubhouse → Memory des symboles.

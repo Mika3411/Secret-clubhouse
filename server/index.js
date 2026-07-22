@@ -444,6 +444,99 @@ app.post("/api/contact-requests", requireAuth, async (req, res) => {
   }
 });
 
+const emptyConnectFourBoard = () => Array(42).fill(0);
+const connectFourWinner = (board) => {
+  const directions = [[1, 0], [0, 1], [1, 1], [1, -1]];
+  for (let row = 0; row < 6; row += 1) {
+    for (let column = 0; column < 7; column += 1) {
+      const value = board[row * 7 + column];
+      if (!value) continue;
+      for (const [columnStep, rowStep] of directions) {
+        let matches = 1;
+        for (let offset = 1; offset < 4; offset += 1) {
+          const nextColumn = column + columnStep * offset;
+          const nextRow = row + rowStep * offset;
+          if (nextColumn < 0 || nextColumn >= 7 || nextRow < 0 || nextRow >= 6 || board[nextRow * 7 + nextColumn] !== value) break;
+          matches += 1;
+        }
+        if (matches === 4) return value;
+      }
+    }
+  }
+  return 0;
+};
+
+const gameSelect = `select g.*, p1.display_name as player_one_name, p1.contact_id as player_one_contact_id,
+  p2.display_name as player_two_name, p2.contact_id as player_two_contact_id
+  from game_sessions g join accounts p1 on p1.id=g.player_one_id join accounts p2 on p2.id=g.player_two_id`;
+
+app.get("/api/games", requireAuth, async (req, res) => {
+  if (req.auth.role !== "child") return res.json({ games: [] });
+  const result = await pool.query(`${gameSelect} where g.player_one_id=$1 or g.player_two_id=$1 order by g.updated_at desc limit 20`, [req.auth.sub]);
+  res.json({ games: result.rows });
+});
+
+app.post("/api/games", requireAuth, async (req, res) => {
+  if (req.auth.role !== "child") return res.status(403).json({ error: "Les jeux à deux sont réservés aux profils enfants." });
+  const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
+  const opponentResult = await pool.query("select id from accounts where role='child' and contact_id=$1", [contactId]);
+  const opponent = opponentResult.rows[0];
+  if (!opponent || opponent.id === req.auth.sub) return res.status(404).json({ error: "Contact enfant introuvable." });
+  const approved = await pool.query(`select 1 from conversations c join conversation_members mine on mine.conversation_id=c.id and mine.account_id=$1
+    join conversation_members other on other.conversation_id=c.id and other.account_id=$2 where c.kind='child'`, [req.auth.sub, opponent.id]);
+  if (!approved.rowCount) return res.status(403).json({ error: "Ce contact doit être approuvé avant de jouer." });
+  const result = await pool.query(`insert into game_sessions(game_type,player_one_id,player_two_id,invited_by,board)
+    values('connect_four',$1,$2,$1,$3::jsonb) returning id`, [req.auth.sub, opponent.id, JSON.stringify(emptyConnectFourBoard())]);
+  const game = await pool.query(`${gameSelect} where g.id=$1`, [result.rows[0].id]);
+  res.status(201).json({ game: game.rows[0] });
+});
+
+app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
+  const action = req.body?.action;
+  if (!["accept", "decline"].includes(action)) return res.status(400).json({ error: "Action de partie invalide." });
+  const gameResult = await pool.query("select * from game_sessions where id=$1 and player_two_id=$2", [req.params.gameId, req.auth.sub]);
+  const game = gameResult.rows[0];
+  if (!game || game.status !== "pending") return res.status(409).json({ error: "Cette invitation n’est plus disponible." });
+  const status = action === "accept" ? "active" : "declined";
+  const currentPlayerId = action === "accept" ? game.player_one_id : null;
+  await pool.query("update game_sessions set status=$1,current_player_id=$2,updated_at=now() where id=$3", [status, currentPlayerId, game.id]);
+  const updated = await pool.query(`${gameSelect} where g.id=$1`, [game.id]);
+  res.json({ game: updated.rows[0] });
+});
+
+app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
+  const column = Number(req.body?.column);
+  if (!Number.isInteger(column) || column < 0 || column > 6) return res.status(400).json({ error: "Colonne invalide." });
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await client.query("select * from game_sessions where id=$1 for update", [req.params.gameId]);
+    const game = result.rows[0];
+    if (!game || ![game.player_one_id, game.player_two_id].includes(req.auth.sub)) { await client.query("rollback"); return res.status(404).json({ error: "Partie introuvable." }); }
+    if (game.status !== "active" || game.current_player_id !== req.auth.sub) { await client.query("rollback"); return res.status(409).json({ error: "Ce n’est pas votre tour." }); }
+    const board = Array.isArray(game.board) ? [...game.board] : emptyConnectFourBoard();
+    let targetIndex = -1;
+    for (let row = 5; row >= 0; row -= 1) if (!board[row * 7 + column]) { targetIndex = row * 7 + column; break; }
+    if (targetIndex < 0) { await client.query("rollback"); return res.status(409).json({ error: "Cette colonne est pleine." }); }
+    const playerValue = req.auth.sub === game.player_one_id ? 1 : 2;
+    board[targetIndex] = playerValue;
+    const winnerValue = connectFourWinner(board);
+    const isDraw = !winnerValue && board.every(Boolean);
+    const winnerId = winnerValue === 1 ? game.player_one_id : winnerValue === 2 ? game.player_two_id : null;
+    const status = winnerValue || isDraw ? "completed" : "active";
+    const nextPlayerId = status === "active" ? (req.auth.sub === game.player_one_id ? game.player_two_id : game.player_one_id) : null;
+    await client.query("update game_sessions set board=$1::jsonb,status=$2,current_player_id=$3,winner_id=$4,updated_at=now() where id=$5", [JSON.stringify(board), status, nextPlayerId, winnerId, game.id]);
+    await client.query("commit");
+    const updated = await pool.query(`${gameSelect} where g.id=$1`, [game.id]);
+    res.json({ game: updated.rows[0] });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 async function isConversationMember(accountId, conversationId) {
   const result = await pool.query("select 1 from conversation_members where account_id=$1 and conversation_id=$2", [accountId, conversationId]);
   return result.rowCount === 1;
