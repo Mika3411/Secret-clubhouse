@@ -95,6 +95,10 @@ input:focus-visible {
   bottom: 0;
 }
 
+.screen-scroll--profile {
+  background: var(--navy);
+}
+
 .home-screen {
   min-height: 100%;
   background: #fff;
@@ -3490,6 +3494,21 @@ input:focus-visible {
   padding-bottom: 24px;
 }
 
+.profile-screen > .secondary-button,
+.profile-screen > .child-logout-button {
+  width: min(100%, 300px);
+  min-height: 52px;
+  justify-content: flex-start;
+  padding-inline: 16px;
+  border-radius: 17px;
+  font-size: 12px;
+}
+
+.profile-screen > .secondary-button {
+  border-color: #8175bb;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .profile-screen .push-setting {
   width: min(100%, 300px);
   margin-bottom: 12px;
@@ -3591,13 +3610,12 @@ input:focus-visible {
 
 .child-logout-button {
   display: inline-flex;
-  min-height: 42px;
   align-items: center;
   gap: 7px;
-  margin-top: 10px;
-  color: #c9c3e6;
-  background: transparent;
-  font-size: 11px;
+  margin-top: 8px;
+  color: #ded9f6;
+  border: 1px solid rgba(201, 195, 230, 0.42);
+  background: rgba(255, 255, 255, 0.04);
   font-weight: 800;
 }
 
