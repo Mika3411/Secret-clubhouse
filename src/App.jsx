@@ -959,28 +959,32 @@ function PushNotificationButton({ isDemo = false }) {
         throw new Error("Les notifications ne sont pas autorisées dans ce navigateur.");
       }
       if (isDemo) {
-        const registration = await Promise.race([
-          navigator.serviceWorker.ready,
-          new Promise((_, reject) => window.setTimeout(() => reject(new Error("Le service de notifications ne répond pas. Rechargez l’application puis réessayez.")), 5000)),
-        ]);
-        if (!registration.active) throw new Error("Le service de notifications n’est pas actif. Rechargez l’application puis réessayez.");
-        await registration.showNotification("Secret Clubhouse est prêt", {
+        const notification = new Notification("Secret Clubhouse est prêt", {
           body: "Les notifications Windows fonctionnent sur cet appareil.",
-          icon: "/favicon.svg",
-          badge: "/favicon.svg",
           tag: "secret-clubhouse-demo-test",
           renotify: true,
           requireInteraction: true,
-          timestamp: Date.now(),
-          data: { url: "/?notification=test" },
         });
-        const queued = await registration.getNotifications({ tag: "secret-clubhouse-demo-test" });
-        if (!queued.length) throw new Error("Windows n’a pas accepté la notification de test. Vérifiez les notifications de votre navigateur dans les paramètres Windows.");
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+        await new Promise((resolve, reject) => {
+          const timeout = window.setTimeout(() => reject(new Error("Microsoft Edge n’a pas confirmé l’affichage. Vérifiez l’autorisation du site dans Edge puis redémarrez le navigateur.")), 5000);
+          notification.onshow = () => {
+            window.clearTimeout(timeout);
+            resolve();
+          };
+          notification.onerror = () => {
+            window.clearTimeout(timeout);
+            reject(new Error("Microsoft Edge a refusé la notification. Ouvrez les paramètres du site et autorisez les notifications."));
+          };
+        });
       } else {
         const result = await api.testPush();
         if (!result?.delivered) throw new Error("Le serveur n’a trouvé aucun appareil Windows abonné.");
       }
-      setFeedback("Test envoyé à Windows. La notification doit rester affichée jusqu’à sa fermeture.");
+      setFeedback("Notification affichée par Microsoft Edge.");
     } catch (pushError) {
       setError(pushError.message || "La notification de test n’a pas pu être envoyée.");
     } finally {

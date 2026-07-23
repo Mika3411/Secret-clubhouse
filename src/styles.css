@@ -3483,6 +3483,13 @@ input:focus-visible {
   margin-bottom: 4px;
 }
 
+.profile-screen {
+  height: auto;
+  min-height: 100%;
+  justify-content: flex-start;
+  padding-bottom: 24px;
+}
+
 .profile-screen .push-setting {
   width: min(100%, 300px);
   margin-bottom: 12px;

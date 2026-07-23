@@ -2,10 +2,11 @@ self.addEventListener("push", (event) => {
   const data = event.data?.json() ?? {};
   event.waitUntil(self.registration.showNotification(data.title || "Secret Clubhouse", {
     body: data.body || "Vous avez une nouvelle notification.",
-    icon: "/favicon.svg",
-    badge: "/favicon.svg",
     tag: data.tag || "secret-clubhouse",
     renotify: true,
+    requireInteraction: true,
+    silent: false,
+    timestamp: Date.now(),
     actions: [{ action: "open", title: "Ouvrir" }],
     data: { conversationId: data.conversationId, notificationType: data.notificationType, url: data.url || "/" },
   }));
