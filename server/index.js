@@ -58,12 +58,12 @@ app.use((_req, res, next) => {
 });
 app.use(express.json({ limit: "1mb" }));
 
-const demoChildContactId = "SC-482-917-305";
+const legacyReservedContactId = "SC-482-917-305";
 const makeContactId = () => {
   let contactId;
   do {
     contactId = `SC-${Array.from({ length: 3 }, () => crypto.randomInt(100, 1000)).join("-")}`;
-  } while (contactId === demoChildContactId);
+  } while (contactId === legacyReservedContactId);
   return contactId;
 };
 const signSession = (account) => jwt.sign({ sub: account.id, role: account.role }, jwtSecret, { expiresIn: "7d", issuer: "secret-clubhouse" });
@@ -242,6 +242,7 @@ async function acceptFamilyInvitation(token, parentId) {
        where id=$2 and status='pending'`,
       [parentId, invitation.id],
     );
+    await provisionHouseholdParentConversations(client, parentId);
     familyId = invitation.family_id;
     await client.query("commit");
   } catch (error) {
@@ -432,6 +433,7 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
         [account.id, invitation.id],
       );
       if (!accepted.rowCount) throw httpError(410, "Cette invitation n’est plus disponible.");
+      await provisionHouseholdParentConversations(client, account.id);
       await client.query("commit");
       const family = await serializeFamilyForParent(account.id);
       return res.status(201).json({ token: signSession(account), account: await serializeAccount(account), family });
@@ -454,7 +456,7 @@ app.post("/api/auth/login", async (req, res) => {
   const normalizedContactId = String(contactId ?? "").trim().toUpperCase();
   const result = email
     ? await pool.query("select * from accounts where role='parent' and email=$1", [String(email).trim().toLowerCase()])
-    : normalizedContactId === demoChildContactId
+    : normalizedContactId === legacyReservedContactId
       ? { rows: [] }
       : await pool.query("select * from accounts where role='child' and contact_id=$1", [normalizedContactId]);
   const account = result.rows[0];
@@ -647,6 +649,11 @@ app.delete("/api/family/members/:id", requireAuth, async (req, res) => {
       [req.params.id, requester.family_id],
     );
     await client.query(
+      `delete from family_parent_conversations
+       where family_id=$1 and (parent_one_id=$2 or parent_two_id=$2)`,
+      [requester.family_id, req.params.id],
+    );
+    await client.query(
       "delete from family_memberships where family_id=$1 and parent_id=$2 and role='coparent'",
       [requester.family_id, req.params.id],
     );
@@ -669,7 +676,7 @@ app.get("/api/children", requireAuth, async (req, res) => {
      join accounts child on child.id=family_child.child_id and child.role='child'
      where membership.parent_id=$1 and child.contact_id<>$2
      order by family_child.added_at,child.display_name`,
-    [req.auth.sub, demoChildContactId],
+    [req.auth.sub, legacyReservedContactId],
   );
   res.json({ children: await Promise.all(result.rows.map(serializeAccount)) });
 });
@@ -739,7 +746,7 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
      join family_children family_child on family_child.family_id=membership.family_id
      join accounts child on child.id=family_child.child_id and child.role='child'
      where child.id=$1 and membership.parent_id=$2 and child.contact_id<>$3`,
-    [req.params.id, req.auth.sub, demoChildContactId],
+    [req.params.id, req.auth.sub, legacyReservedContactId],
   );
   const existing = existingResult.rows[0];
   if (!existing) return res.status(404).json({ error: "Profil enfant introuvable dans votre famille." });
@@ -808,7 +815,7 @@ app.delete("/api/children/:id", requireAuth, async (req, res) => {
        join accounts child on child.id=family_child.child_id and child.role='child'
        where child.id=$1 and family_child.family_id=$2 and child.contact_id<>$3
        for update of child`,
-      [req.params.id, membership.family_id, demoChildContactId],
+      [req.params.id, membership.family_id, legacyReservedContactId],
     );
     if (!childResult.rows[0]) {
       throw httpError(404, "Profil enfant introuvable dans votre famille.");
@@ -865,47 +872,14 @@ app.post("/api/push/native-token", requireAuth, async (req, res) => {
   res.status(204).end();
 });
 
-const readPushHeader = (headers, name) => {
-  const value = headers?.[name];
-  return Array.isArray(value) ? value.join(",") : value || null;
-};
-
-const describePushAttempt = (row, response, error = null) => {
-  const endpoint = row.subscription?.endpoint || "";
-  let endpointHost = "invalid";
-  try {
-    endpointHost = new URL(endpoint).hostname;
-  } catch {}
-  const headers = response?.headers ?? error?.headers;
-  return {
-    subscriptionId: row.id,
-    endpointHost,
-    endpointHash: crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 12),
-    statusCode: response?.statusCode ?? error?.statusCode ?? null,
-    providerStatus: readPushHeader(headers, "x-wns-status") ?? readPushHeader(headers, "x-wns-notificationstatus"),
-    messageId: readPushHeader(headers, "x-wns-msg-id"),
-    debugTrace: readPushHeader(headers, "x-wns-debug-trace"),
-    correlationVector: readPushHeader(headers, "ms-cv"),
-    providerError: readPushHeader(headers, "x-wns-error-description"),
-    error: error?.message ?? null,
-  };
-};
-
-async function deliverWebPush(rows, payload, diagnostics = null, { ttl = 3600 } = {}) {
+async function deliverWebPush(rows, payload) {
   if (!pushEnabled) return 0;
   const results = await Promise.all(rows.map(async (row) => {
     try {
-      const wirePayload = payload === null ? undefined : JSON.stringify(payload);
-      const response = await webpush.sendNotification(row.subscription, wirePayload, { TTL: ttl, urgency: "high" });
-      const diagnostic = describePushAttempt(row, response);
-      diagnostics?.push(diagnostic);
-      if (diagnostics) console.info("Diagnostic transport Web Push", diagnostic);
-      return !["dropped", "channelthrottled"].includes(diagnostic.providerStatus?.toLowerCase());
+      await webpush.sendNotification(row.subscription, JSON.stringify(payload), { TTL: 3600, urgency: "high" });
+      return true;
     }
     catch (error) {
-      const diagnostic = describePushAttempt(row, null, error);
-      diagnostics?.push(diagnostic);
-      if (diagnostics) console.info("Diagnostic transport Web Push", diagnostic);
       if (error.statusCode === 404 || error.statusCode === 410) await pool.query("delete from push_subscriptions where id=$1", [row.id]);
       else console.error("Échec push", error.statusCode || error.message);
       return false;
@@ -926,71 +900,10 @@ async function notifyConversation(conversationId, senderId, payload) {
   return deliverWebPush(result.rows, payload);
 }
 
-app.post("/api/push/test", requireAuth, async (req, res) => {
-  const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint.trim() : "";
-  const requestId = typeof req.body?.requestId === "string" ? req.body.requestId.trim() : "";
-  const mode = req.body?.mode ?? "encrypted";
-  if (!endpoint.startsWith("https://") || endpoint.length > 2048) return res.status(400).json({ error: "Abonnement de test invalide." });
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return res.status(400).json({ error: "Identifiant de test invalide." });
-  if (!["encrypted", "payloadless"].includes(mode)) return res.status(400).json({ error: "Mode de test invalide." });
-  if (mode === "payloadless") {
-    return res.json({
-      accepted: true,
-      mode,
-      skipped: true,
-      transportStatus: null,
-      providerStatus: "legacy_skipped",
-    });
-  }
-  const subscriptions = await pool.query("select id,subscription from push_subscriptions where account_id=$1 and endpoint=$2", [req.auth.sub, endpoint]);
-  if (!subscriptions.rowCount) {
-    return res.status(409).json({
-      error: "Cet abonnement Edge n’est plus enregistré. Désactivez puis réactivez les notifications.",
-      code: "subscription_missing",
-      mode,
-    });
-  }
-  const diagnostics = [];
-  const encryptedPayload = {
-    title: "Secret Clubhouse est prêt",
-    body: "Votre notification de test a été envoyée.",
-    notificationType: "test",
-    tag: "secret-clubhouse-test",
-    url: "/?notification=test",
-    requestId,
-  };
-  const accepted = await deliverWebPush(subscriptions.rows, encryptedPayload, diagnostics, { ttl: 30 });
-  const transport = diagnostics[0] ?? null;
-  if (!accepted) {
-    const providerStatus = transport?.providerStatus?.toLowerCase();
-    const expired = transport?.statusCode === 404 || transport?.statusCode === 410;
-    const error = expired
-      ? "L’abonnement de cet Edge a expiré. Désactivez puis réactivez les notifications."
-      : providerStatus === "channelthrottled"
-        ? "WNS limite temporairement les tests de cet Edge. Patientez quelques minutes avant de recommencer."
-        : providerStatus === "dropped"
-          ? "WNS a rejeté la notification destinée à cet Edge."
-          : "Le service Push a refusé la notification destinée à cet Edge.";
-    return res.status(409).json({
-      error,
-      code: expired ? "subscription_expired" : providerStatus === "channelthrottled" ? "provider_throttled" : "transport_rejected",
-      mode,
-      transportStatus: transport?.statusCode ?? null,
-      providerStatus: transport?.providerStatus ?? null,
-    });
-  }
-  res.json({
-    accepted: true,
-    mode,
-    transportStatus: transport?.statusCode ?? null,
-    providerStatus: transport?.providerStatus ?? null,
-  });
-});
-
 app.post("/api/family-conversations", requireAuth, async (req, res) => {
   if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut ouvrir une conversation familiale." });
   const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
-  if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId) || contactId === demoChildContactId) {
+  if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId) || contactId === legacyReservedContactId) {
     return res.status(400).json({ error: "Identifiant enfant invalide." });
   }
 
@@ -1087,10 +1000,70 @@ async function ensureFamilyConversations(accountId) {
   }
 }
 
+async function provisionHouseholdParentConversations(executor, accountId) {
+  const pairs = await executor.query(
+    `select mine.family_id, mine.parent_id as current_parent_id, other.parent_id as other_parent_id
+     from family_memberships mine
+     join family_memberships other on other.family_id=mine.family_id and other.parent_id<>mine.parent_id
+     where mine.parent_id=$1
+     for key share of mine,other`,
+    [accountId],
+  );
+  if (!pairs.rowCount) return;
+  const canonicalPairs = pairs.rows
+    .map((pair) => ({ ...pair, parentIds: [pair.current_parent_id, pair.other_parent_id].sort() }))
+    .sort((left, right) => `${left.family_id}:${left.parentIds.join(":")}`.localeCompare(`${right.family_id}:${right.parentIds.join(":")}`));
+  for (const pair of canonicalPairs) {
+    const [parentOneId, parentTwoId] = pair.parentIds;
+    await executor.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", [pair.family_id, `${parentOneId}:${parentTwoId}`]);
+    const existing = await executor.query(
+      `select conversation_id from family_parent_conversations
+       where family_id=$1 and parent_one_id=$2 and parent_two_id=$3`,
+      [pair.family_id, parentOneId, parentTwoId],
+    );
+    let conversationId = existing.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const conversation = await executor.query("insert into conversations(kind) values('parent') returning id");
+      conversationId = conversation.rows[0].id;
+      await executor.query(
+        `insert into family_parent_conversations(family_id,parent_one_id,parent_two_id,conversation_id)
+         values($1,$2,$3,$4)`,
+        [pair.family_id, parentOneId, parentTwoId, conversationId],
+      );
+    }
+    await executor.query(
+      `insert into conversation_members(conversation_id,account_id) values($1,$2),($1,$3)
+       on conflict(conversation_id,account_id) do nothing`,
+      [conversationId, parentOneId, parentTwoId],
+    );
+  }
+}
+
+async function ensureHouseholdParentConversations(accountId) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await provisionHouseholdParentConversations(client, accountId);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 app.get("/api/conversations", requireAuth, async (req, res) => {
   await ensureFamilyConversations(req.auth.sub);
+  if (req.auth.role === "parent") await ensureHouseholdParentConversations(req.auth.sub);
   const result = await pool.query(`
     select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
+      exists(
+        select 1 from family_parent_conversations family_parent
+        where family_parent.conversation_id=c.id and family_parent.family_id in (
+          select family_id from family_memberships where parent_id=$1
+        )
+      ) as is_family_member,
       coalesce(json_agg(json_build_object('id',m.id,'senderId',m.sender_id,'text',m.body,'mediaName',m.media_name,'mediaType',m.media_type,'createdAt',m.created_at) order by m.created_at) filter (where m.id is not null),'[]') as messages
     from conversation_members mine
     join conversations c on c.id=mine.conversation_id
@@ -1098,6 +1071,15 @@ app.get("/api/conversations", requireAuth, async (req, res) => {
     join accounts a on a.id=other.account_id
     left join messages m on m.conversation_id=c.id
     where mine.account_id=$1
+      and (
+        not exists(select 1 from family_parent_conversations family_parent where family_parent.conversation_id=c.id)
+        or exists(
+          select 1 from family_parent_conversations family_parent
+          join family_memberships active_membership on active_membership.family_id=family_parent.family_id and active_membership.parent_id=$1
+          where family_parent.conversation_id=c.id
+            and $1 in (family_parent.parent_one_id,family_parent.parent_two_id)
+        )
+      )
     group by c.id,a.id
     order by max(m.created_at) desc nulls last`, [req.auth.sub]);
   res.json({ conversations: result.rows });
@@ -1109,7 +1091,7 @@ app.post("/api/contact-requests", requireAuth, async (req, res) => {
   if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId)) return res.status(400).json({ error: "Saisissez un identifiant au format SC-123-456-789." });
   const requesterMembership = await getParentFamilyMembership(req.auth.sub);
   if (!requesterMembership) return res.status(404).json({ error: "Ce compte parent n’est rattaché à aucune famille." });
-  const targetResult = contactId === demoChildContactId
+  const targetResult = contactId === legacyReservedContactId
     ? { rows: [] }
     : await pool.query(
       `select target.id,target.role,target.display_name,
@@ -1269,7 +1251,20 @@ app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
 });
 
 async function isConversationMember(accountId, conversationId) {
-  const result = await pool.query("select 1 from conversation_members where account_id=$1 and conversation_id=$2", [accountId, conversationId]);
+  const result = await pool.query(
+    `select 1 from conversation_members member
+     where member.account_id=$1 and member.conversation_id=$2
+       and (
+         not exists(select 1 from family_parent_conversations family_parent where family_parent.conversation_id=member.conversation_id)
+         or exists(
+           select 1 from family_parent_conversations family_parent
+           join family_memberships active_membership on active_membership.family_id=family_parent.family_id and active_membership.parent_id=$1
+           where family_parent.conversation_id=member.conversation_id
+             and $1 in (family_parent.parent_one_id,family_parent.parent_two_id)
+         )
+       )`,
+    [accountId, conversationId],
+  );
   return result.rowCount === 1;
 }
 
@@ -1303,25 +1298,48 @@ app.post("/api/conversations/:id/messages", requireAuth, async (req, res) => {
 });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 6 } });
+const supportedAudioTypes = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/aac", "audio/x-m4a"]);
 app.post("/api/conversations/:id/media", requireAuth, upload.array("media", 6), async (req, res) => {
   if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
-  const files = (req.files ?? []).filter((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/"));
-  if (!files.length) return res.status(400).json({ error: "Photo ou vidéo requise." });
+  const receivedFiles = req.files ?? [];
+  const files = receivedFiles.filter((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/") || supportedAudioTypes.has(file.mimetype));
+  if (receivedFiles.some((file) => !files.includes(file))) return res.status(415).json({ error: "Format de média non pris en charge." });
+  if (!files.length) return res.status(400).json({ error: "Photo, vidéo ou message vocal requis." });
   const inserted = [];
   for (const file of files) {
     const result = await pool.query("insert into messages(conversation_id,sender_id,media_name,media_type,media_data) values($1,$2,$3,$4,$5) returning id,media_name,media_type,created_at", [req.params.id, req.auth.sub, file.originalname, file.mimetype, file.buffer]);
     inserted.push(result.rows[0]);
   }
   const sender = await pool.query("select display_name from accounts where id=$1", [req.auth.sub]);
-  await notifyConversation(req.params.id, req.auth.sub, { title: sender.rows[0]?.display_name || "Nouveau média", body: files.some((file) => file.mimetype.startsWith("video/")) ? "Vous a envoyé une vidéo." : "Vous a envoyé une photo.", notificationType: "message", conversationId: req.params.id, tag: `conversation-${req.params.id}`, url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}` });
+  const notificationBody = files.some((file) => file.mimetype.startsWith("audio/"))
+    ? "Vous a envoyé un message vocal."
+    : files.some((file) => file.mimetype.startsWith("video/"))
+      ? "Vous a envoyé une vidéo."
+      : "Vous a envoyé une photo.";
+  await notifyConversation(req.params.id, req.auth.sub, { title: sender.rows[0]?.display_name || "Nouveau média", body: notificationBody, notificationType: "message", conversationId: req.params.id, tag: `conversation-${req.params.id}`, url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}` });
   res.status(201).json({ messages: inserted });
 });
 
 app.get("/api/media/:messageId", requireAuth, async (req, res) => {
-  const result = await pool.query(`select m.media_data,m.media_type,m.media_name from messages m join conversation_members cm on cm.conversation_id=m.conversation_id where m.id=$1 and cm.account_id=$2`, [req.params.messageId, req.auth.sub]);
+  const result = await pool.query(
+    `select message.media_data,message.media_type,message.media_name
+     from messages message
+     join conversation_members member on member.conversation_id=message.conversation_id and member.account_id=$2
+     where message.id=$1
+       and (
+         not exists(select 1 from family_parent_conversations family_parent where family_parent.conversation_id=message.conversation_id)
+         or exists(
+           select 1 from family_parent_conversations family_parent
+           join family_memberships active_membership on active_membership.family_id=family_parent.family_id and active_membership.parent_id=$2
+           where family_parent.conversation_id=message.conversation_id
+             and $2 in (family_parent.parent_one_id,family_parent.parent_two_id)
+         )
+       )`,
+    [req.params.messageId, req.auth.sub],
+  );
   const media = result.rows[0];
   if (!media?.media_data) return res.status(404).json({ error: "Média introuvable." });
-  res.set({ "Content-Type": media.media_type, "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(media.media_name)}`, "Cache-Control": "private, max-age=3600" });
+  res.set({ "Content-Type": media.media_type, "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(media.media_name)}`, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" });
   res.send(media.media_data);
 });
 

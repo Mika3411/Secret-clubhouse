@@ -77,7 +77,7 @@ export async function openMicrophoneStream() {
   });
 }
 
-export async function createDemoAudioStream() {
+export async function createRemoteAudioPlaceholder() {
   const AudioContextConstructor = window.AudioContext ?? window.webkitAudioContext;
   if (!AudioContextConstructor) throw new Error("Web Audio n’est pas disponible dans ce navigateur.");
 
@@ -103,7 +103,7 @@ export async function createDemoAudioStream() {
   };
 }
 
-export function createDemoVideoStream(name, colors = ["#6d52dc", "#6fe6c5"]) {
+export function createRemoteVideoPlaceholder(name, colors = ["#6d52dc", "#6fe6c5"]) {
   const canvas = document.createElement("canvas");
   canvas.width = 960;
   canvas.height = 540;
@@ -139,7 +139,7 @@ export function createDemoVideoStream(name, colors = ["#6d52dc", "#6fe6c5"]) {
     context.fillText(name, canvas.width / 2, 395);
     context.font = "600 24px sans-serif";
     context.fillStyle = "rgba(255,255,255,.82)";
-    context.fillText("Démo WebRTC sécurisée", canvas.width / 2, 440);
+    context.fillText("Connexion WebRTC sécurisée", canvas.width / 2, 440);
     animationFrame = requestAnimationFrame(draw);
   };
 

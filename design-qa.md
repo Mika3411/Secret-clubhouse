@@ -110,3 +110,61 @@ final result: passed
 - Production build passes.
 
 final result: passed
+
+---
+
+**Parent-to-parent Messaging QA**
+
+**Comparison Target**
+
+- Source visual truth: `C:/Users/admin/AppData/Local/Temp/codex-clipboard-3a477ac3-886f-4750-bde0-03f04254a0a5.png` (1172 × 606 px).
+- Browser-rendered inbox: `C:/Users/admin/OneDrive/Documents/Happy friends kids/.design-reference/parent-parent-inbox-implementation.png` (1178 × 606 px).
+- Browser-rendered thread: `C:/Users/admin/OneDrive/Documents/Happy friends kids/.design-reference/parent-parent-chat-implementation.png` (1178 × 606 px).
+- Same-state side-by-side evidence: `C:/Users/admin/OneDrive/Documents/Happy friends kids/.design-reference/parent-parent-inbox-comparison.png`.
+- Viewport: 1178 × 606 CSS px, effective device density 1. The implementation inbox was downsampled by 6 horizontal pixels to 1172 × 606 only for equal-size visual comparison.
+- State: authenticated primary parent → Messagerie parentale → automatically provisioned conversation with an accepted co-parent.
+
+**Findings**
+
+- No actionable P0/P1/P2 mismatch.
+- Typography: the existing Baloo/Nunito hierarchy, optical weights, truncation behavior and compact relationship label remain consistent with the supplied inbox.
+- Spacing and layout: the protected-message panel, section heading, add-contact action and rounded conversation row preserve the source anatomy and rhythm. The source capture uses a visibly wider legacy/production shell and includes the Windows on-screen keyboard; the implementation intentionally retains the current 834 px phone/tablet desktop cap and was judged on the shared content region.
+- Colors and tokens: indigo framing, mint protection treatment, violet action, white cards and pale-lavender canvas match the established Secret Clubhouse palette.
+- Image and icon fidelity: no new raster assets were introduced. Existing Phosphor lock, chevron, attachment and microphone icons remain sharp and consistent with the app.
+- Copy and content: the new row is explicitly labeled “Parent de ma famille”; the thread is labeled “Discussion privée” and explains that it is private between the parents of the family.
+
+**Interaction Evidence**
+
+- Accepted a co-parent invitation with a second real local account.
+- Verified both parents receive the same PostgreSQL-backed conversation ID.
+- Sent a message from the primary parent and verified it was returned to the co-parent.
+- Opened the co-parent conversation from the inbox.
+- Verified the text field, photo/video attachment action and voice recorder.
+- Uploaded a server-backed voice message, verified it in the other parent’s conversation payload, downloaded it with the coparent account, and rendered its audio player after reload.
+- Removed the coparent and verified its existing token receives HTTP 403 when attempting to post to the deleted family conversation.
+- Reloaded the authenticated client, reopened the inbox and thread, and found no new browser console errors.
+
+**Focused Region Comparison**
+
+- A separate crop was unnecessary: the protected-message panel, section title, relationship label, timestamp, preview and chevron are all legible in the equal-size full-view comparison. The thread screenshot separately documents the text composer, media attachment action and persistent voice-message control; simulated call controls are intentionally absent.
+
+**Comparison History**
+
+- Initial comparison: no P0/P1/P2 issue attributable to the parent-to-parent implementation, so no visual correction loop was required.
+
+**Implementation Checklist**
+
+- [x] Automatic private conversation for every active same-family parent pair.
+- [x] Same thread visible to both the primary parent and co-parent.
+- [x] Persistent messages backed by Render/PostgreSQL data structures.
+- [x] Text, photo, video and persistent voice messages available in the adult thread.
+- [x] Local-only call simulations are not exposed as genuine parent-to-parent calls.
+- [x] Conversation access revoked when the co-parent membership is removed.
+- [x] Server syntax, production build, dual-account API flow and browser flow verified.
+
+**Follow-up Polish**
+
+- P3: a future parent-management screen could expose a direct “Écrire” shortcut beside each accepted co-parent; the automatically provisioned inbox thread already covers the complete task.
+- Live audio/video controls should return only with real cross-device signaling and incoming-call handling; the local placeholder is intentionally not exposed in this shipped messaging state.
+
+final result: passed

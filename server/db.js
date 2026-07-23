@@ -131,6 +131,31 @@ export async function initializeDatabase() {
     );
     alter table family_conversations drop constraint if exists family_conversations_child_id_key;
 
+    create table if not exists family_parent_conversations (
+      family_id uuid not null references families(id) on delete cascade,
+      parent_one_id uuid not null references accounts(id) on delete cascade,
+      parent_two_id uuid not null references accounts(id) on delete cascade,
+      conversation_id uuid not null unique references conversations(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (family_id, parent_one_id, parent_two_id),
+      foreign key (family_id, parent_one_id) references family_memberships(family_id, parent_id) on delete cascade,
+      foreign key (family_id, parent_two_id) references family_memberships(family_id, parent_id) on delete cascade,
+      check (parent_one_id < parent_two_id)
+    );
+    create index if not exists family_parent_conversations_parent_one_idx on family_parent_conversations(parent_one_id);
+    create index if not exists family_parent_conversations_parent_two_idx on family_parent_conversations(parent_two_id);
+    create or replace function delete_orphaned_family_parent_conversation()
+    returns trigger language plpgsql as $$
+    begin
+      delete from conversations where id=old.conversation_id;
+      return old;
+    end;
+    $$;
+    drop trigger if exists family_parent_conversations_cleanup on family_parent_conversations;
+    create trigger family_parent_conversations_cleanup
+      after delete on family_parent_conversations
+      for each row execute function delete_orphaned_family_parent_conversation();
+
     create table if not exists contact_requests (
       id uuid primary key default gen_random_uuid(),
       requester_id uuid not null references accounts(id) on delete cascade,

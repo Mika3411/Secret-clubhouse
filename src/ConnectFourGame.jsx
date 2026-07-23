@@ -4,25 +4,6 @@ import { api } from "./api";
 
 const EMPTY_BOARD = Array(42).fill(0);
 
-function winnerFor(board) {
-  const directions = [[1, 0], [0, 1], [1, 1], [1, -1]];
-  for (let row = 0; row < 6; row += 1) for (let column = 0; column < 7; column += 1) {
-    const value = board[row * 7 + column];
-    if (!value) continue;
-    for (const [dx, dy] of directions) {
-      let count = 1;
-      for (let step = 1; step < 4; step += 1) {
-        const x = column + dx * step;
-        const y = row + dy * step;
-        if (x < 0 || x >= 7 || y < 0 || y >= 6 || board[y * 7 + x] !== value) break;
-        count += 1;
-      }
-      if (count === 4) return value;
-    }
-  }
-  return 0;
-}
-
 function normalizeGame(game) {
   return {
     ...game,
@@ -37,10 +18,10 @@ function normalizeGame(game) {
   };
 }
 
-export default function ConnectFourGame({ child, contacts: suppliedContacts = [], isDemo, onComplete }) {
+export default function ConnectFourGame({ child, onComplete }) {
   const [games, setGames] = useState([]);
-  const [contacts, setContacts] = useState(suppliedContacts);
-  const [selectedContactId, setSelectedContactId] = useState(suppliedContacts[0]?.contactId ?? "");
+  const [contacts, setContacts] = useState([]);
+  const [selectedContactId, setSelectedContactId] = useState("");
   const [activeGameId, setActiveGameId] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,7 +30,6 @@ export default function ConnectFourGame({ child, contacts: suppliedContacts = []
   const pendingInvites = games.filter((game) => game.status === "pending" && game.playerTwoId === child.id);
 
   const refreshGames = async () => {
-    if (isDemo) return;
     try {
       const result = await api.games();
       setGames(result.games.map(normalizeGame));
@@ -59,10 +39,6 @@ export default function ConnectFourGame({ child, contacts: suppliedContacts = []
   };
 
   const refreshContacts = async () => {
-    if (isDemo) {
-      setContacts(suppliedContacts);
-      return;
-    }
     try {
       const result = await api.gameContacts();
       setContacts(result.contacts);
@@ -75,10 +51,9 @@ export default function ConnectFourGame({ child, contacts: suppliedContacts = []
   useEffect(() => {
     refreshGames();
     refreshContacts();
-    if (isDemo) return undefined;
     const timer = window.setInterval(refreshGames, 3000);
     return () => window.clearInterval(timer);
-  }, [isDemo]);
+  }, []);
 
   useEffect(() => {
     if (activeGame?.status === "completed" && activeGame.winnerId === child.id && !awardedRef.current.has(activeGame.id)) {
@@ -98,16 +73,10 @@ export default function ConnectFourGame({ child, contacts: suppliedContacts = []
     setBusy(true);
     setError("");
     try {
-      if (isDemo) {
-        const demoGame = { id: `demo-game-${Date.now()}`, playerOneId: child.id, playerTwoId: contact.id, playerOneName: child.name, playerTwoName: contact.name, currentPlayerId: child.id, winnerId: null, status: "active", board: [...EMPTY_BOARD] };
-        setGames([demoGame]);
-        setActiveGameId(demoGame.id);
-      } else {
-        const result = await api.inviteGame(contact.contactId);
-        const game = normalizeGame(result.game);
-        setGames((current) => [game, ...current]);
-        setActiveGameId(game.id);
-      }
+      const result = await api.inviteGame(contact.contactId);
+      const game = normalizeGame(result.game);
+      setGames((current) => [game, ...current]);
+      setActiveGameId(game.id);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -129,43 +98,14 @@ export default function ConnectFourGame({ child, contacts: suppliedContacts = []
     }
   };
 
-  const dropPiece = (board, column, value) => {
-    const next = [...board];
-    for (let row = 5; row >= 0; row -= 1) if (!next[row * 7 + column]) { next[row * 7 + column] = value; return next; }
-    return null;
-  };
-
-  const playDemoOpponent = (game) => {
-    window.setTimeout(() => {
-      setGames((current) => current.map((item) => {
-        if (item.id !== game.id || item.status !== "active") return item;
-        const available = Array.from({ length: 7 }, (_, column) => column).filter((column) => !item.board[column]);
-        const column = available[Math.floor(Math.random() * available.length)];
-        const board = dropPiece(item.board, column, 2);
-        const winner = winnerFor(board);
-        return { ...item, board, status: winner || board.every(Boolean) ? "completed" : "active", currentPlayerId: winner ? null : child.id, winnerId: winner === 2 ? item.playerTwoId : null };
-      }));
-    }, 650);
-  };
-
   const playColumn = async (column) => {
     if (!activeGame || activeGame.status !== "active" || activeGame.currentPlayerId !== child.id || busy) return;
     setBusy(true);
     setError("");
     try {
-      if (isDemo) {
-        const value = activeGame.playerOneId === child.id ? 1 : 2;
-        const board = dropPiece(activeGame.board, column, value);
-        if (!board) throw new Error("Cette colonne est pleine.");
-        const winner = winnerFor(board);
-        const updated = { ...activeGame, board, status: winner || board.every(Boolean) ? "completed" : "active", currentPlayerId: winner ? null : activeGame.playerTwoId, winnerId: winner ? child.id : null };
-        setGames((current) => current.map((item) => item.id === updated.id ? updated : item));
-        if (!winner && updated.status === "active") playDemoOpponent(updated);
-      } else {
-        const result = await api.playGameMove(activeGame.id, column);
-        const updated = normalizeGame(result.game);
-        setGames((current) => current.map((item) => item.id === updated.id ? updated : item));
-      }
+      const result = await api.playGameMove(activeGame.id, column);
+      const updated = normalizeGame(result.game);
+      setGames((current) => current.map((item) => item.id === updated.id ? updated : item));
     } catch (requestError) {
       setError(requestError.message);
     } finally {

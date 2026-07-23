@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   ArrowLeft,
-  Basketball,
   Bell,
   Brain,
   CaretRight,
@@ -20,7 +19,6 @@ import {
   GameController,
   GearSix,
   House,
-  Lightbulb,
   IdentificationCard,
   Lightning,
   LockKey,
@@ -54,23 +52,13 @@ import {
   WaveSine,
   X,
 } from "@phosphor-icons/react";
-import { createDemoAudioStream, createDemoVideoStream, createLocalWebRtcSession, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "./webrtc";
+import { createLocalWebRtcSession, createRemoteAudioPlaceholder, createRemoteVideoPlaceholder, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "./webrtc";
 import { api, clearToken, getToken } from "./api";
 import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import PhaserMemoryGame from "./PhaserMemoryGame";
 import ConnectFourGame from "./ConnectFourGame";
 
-const friends = [
-  { id: "leo", name: "Léo", contactId: "SC-214-680-531", image: "/avatars/leo.png" },
-  { id: "ines", name: "Inès", contactId: "SC-317-492-604", image: "/avatars/ines.png" },
-  { id: "noah", name: "Noah", contactId: "SC-421-835-726", image: "/avatars/noah.png" },
-  { id: "maya", name: "Maya", contactId: "SC-536-147-892", image: "/avatars/maya.png" },
-  { id: "tom", name: "Tom", contactId: "SC-648-259-413", image: "/avatars/tom.png" },
-];
-
-const pendingFriend = { id: "chloe", name: "Chloé", contactId: "SC-759-361-248", image: null };
-const demoChildContactId = "SC-482-917-305";
 const rememberedParentEmailKey = "secret-clubhouse-parent-email";
 const familyInviteQueryKeys = ["familyInvite", "family-invite", "invite"];
 
@@ -118,20 +106,6 @@ const normalizeFamilyInvitation = (payload) => {
     expiresAt: invitation.expiresAt ?? invitation.expires_at,
   };
 };
-
-const initialChildren = [
-  {
-    id: "emma",
-    name: "Emma",
-    age: 9,
-    username: "emma.club",
-    password: "Emma2026!",
-    contactId: demoChildContactId,
-    image: "/avatars/emma.png",
-    color: "violet",
-    status: "active",
-  },
-];
 
 const defaultSafetySettings = { media: true };
 
@@ -348,41 +322,6 @@ function useMouseDragScroll() {
   return rootRef;
 }
 
-const initialParentThreads = [
-  {
-    id: "thomas",
-    name: "Thomas R.",
-    relation: "Parent de Chloé",
-    initials: "TR",
-    preview: "Merci, je vous envoie son invitation.",
-    time: "09:32",
-    unread: 2,
-    messages: [
-      { id: "thomas-1", direction: "received", text: "Bonjour Marie, Chloé aimerait ajouter Emma.", time: "09:28" },
-      { id: "thomas-2", direction: "sent", text: "Bonjour Thomas, je vais vérifier avec Emma.", time: "09:30" },
-      { id: "thomas-3", direction: "received", text: "Merci, je vous envoie son invitation.", time: "09:32" },
-    ],
-  },
-  {
-    id: "sophie",
-    name: "Sophie M.",
-    relation: "Parent de Léo",
-    initials: "SM",
-    preview: "Parfait pour samedi à 15 h !",
-    time: "Hier",
-    unread: 0,
-    messages: [
-      { id: "sophie-1", direction: "received", text: "Bonjour, Léo est disponible samedi après-midi.", time: "Hier" },
-      { id: "sophie-2", direction: "sent", text: "Parfait pour samedi à 15 h !", time: "Hier" },
-    ],
-  },
-];
-
-const cloneParentThreads = () => initialParentThreads.map((thread) => ({
-  ...thread,
-  messages: thread.messages.map((message) => ({ ...message })),
-}));
-
 const formatServerMessageTime = (value) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Maintenant";
@@ -395,6 +334,19 @@ const mapServerMessage = (message, accountId, directionOverride = null) => {
   const createdAt = message.createdAt ?? message.created_at;
   const senderId = message.senderId ?? message.sender_id;
   const direction = directionOverride ?? (senderId === accountId ? "sent" : "received");
+  if (mediaType.startsWith("audio/")) {
+    const durationMatch = mediaName.match(/-(\d{1,3})s(?:\.|$)/i);
+    return {
+      id: message.id,
+      direction,
+      type: "audio",
+      mediaType,
+      name: mediaName,
+      duration: durationMatch ? Math.min(120, Number(durationMatch[1])) : 0,
+      time: formatServerMessageTime(createdAt),
+      status: "received",
+    };
+  }
   if (mediaType.startsWith("image/") || mediaType.startsWith("video/")) {
     return {
       id: message.id,
@@ -428,22 +380,24 @@ const mapServerConversation = (conversation, account) => {
     .map((message) => mapServerMessage(message, account.id))
     .filter(Boolean);
   const latest = messages[messages.length - 1];
-  const latestPreview = latest?.type === "video" ? "Vidéo" : latest?.type === "image" ? "Photo" : latest?.text;
+  const latestPreview = latest?.type === "video" ? "Vidéo" : latest?.type === "image" ? "Photo" : latest?.type === "audio" ? "Message vocal" : latest?.text;
   const initials = String(conversation.name ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const isFamily = conversation.kind === "child" && (
     (account.role === "parent" && conversation.contact_role === "child")
     || (account.role === "child" && conversation.contact_role === "parent")
   );
+  const isHouseholdParent = conversation.kind === "parent" && conversation.contact_role === "parent" && Boolean(conversation.is_family_member);
   return {
     id: conversation.id,
     name: conversation.name,
     contactId: conversation.contact_id,
     contactRole: conversation.contact_role,
     isFamily,
+    isHouseholdParent,
     serverBacked: true,
-    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : "Parent d’un contact",
+    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : isHouseholdParent ? "Parent de ma famille" : "Parent d’un contact",
     initials,
-    preview: latestPreview ?? (isFamily ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
+    preview: latestPreview ?? (isFamily || isHouseholdParent ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
     time: latest?.time ?? "Maintenant",
     unread: 0,
     messages,
@@ -453,15 +407,6 @@ const mapServerConversation = (conversation, account) => {
   };
 };
 
-function createUniqueContactId(existingIds = []) {
-  let contactId;
-  do {
-    const digits = String(Math.floor(100000000 + Math.random() * 900000000));
-    contactId = `SC-${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6, 9)}`;
-  } while (existingIds.includes(contactId));
-  return contactId;
-}
-
 async function copyContactId(contactId) {
   try {
     await navigator.clipboard.writeText(contactId);
@@ -469,49 +414,6 @@ async function copyContactId(contactId) {
     // Le statut visuel reste utile dans ce prototype, même sans permission presse-papiers.
   }
 }
-
-const conversations = [
-  {
-    ...friends[0],
-    preview: "Tu veux jouer ce soir ?",
-    time: "09:41",
-    ActivityIcon: GameController,
-    received: ["Coucou Emma !", "Tu veux jouer ce soir ?"],
-    sent: "Oui, après mes devoirs !",
-  },
-  {
-    ...friends[1],
-    preview: "Regarde ce dessin que j’ai fait !",
-    time: "Hier",
-    ActivityIcon: PencilSimple,
-    received: ["J’ai fini mon dessin !", "Je te le montre demain."],
-    sent: "Il va être trop beau !",
-  },
-  {
-    ...friends[2],
-    preview: "Merci pour ton aide !",
-    time: "Hier",
-    ActivityIcon: Sparkle,
-    received: ["Merci pour ton aide !"],
-    sent: "Avec plaisir Noah !",
-  },
-  {
-    ...friends[3],
-    preview: "On se voit à l’entraînement !",
-    time: "Mardi",
-    ActivityIcon: Basketball,
-    received: ["On se voit à l’entraînement !"],
-    sent: "Oui, à 17 h !",
-  },
-  {
-    ...friends[4],
-    preview: "J’ai trouvé une idée trop cool",
-    time: "Lundi",
-    ActivityIcon: Lightbulb,
-    received: ["J’ai trouvé une idée trop cool."],
-    sent: "Raconte-moi !",
-  },
-];
 
 function Avatar({ person, size = "medium", online = null }) {
   return (
@@ -579,7 +481,7 @@ function Brand() {
   );
 }
 
-function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo, hasFamilyInvite = false, familyInvitation, familyInvitationError, isFamilyInvitationLoading = false, onDismissFamilyInvite }) {
+function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false, familyInvitation, familyInvitationError, isFamilyInvitationLoading = false, onDismissFamilyInvite }) {
   const [audience, setAudience] = useState("parent");
   const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
@@ -682,7 +584,7 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo, ha
           <form className="auth-form" onSubmit={submitAuth}>
             <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
             {audience === "parent" && mode === "register" && <label className="auth-field"><span>Prénom du parent</span><input value={name} onChange={(event) => { setName(event.target.value); setError(""); }} autoComplete="given-name" placeholder="Marie" /></label>}
-            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-482-917-305" /></label>}
+            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-123-456-789" /></label>}
             <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="6 caractères minimum" /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
             {audience === "parent" && mode === "register" && (
               <label className="auth-consent"><input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setError(""); }} /><span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span></label>
@@ -691,8 +593,6 @@ function AuthScreen({ onLogin, onRegister, onDemo, onChildLogin, onChildDemo, ha
             <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter et accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte"}</button>
           </form>
 
-          {!hasFamilyInvite && <><div className="auth-separator"><span>ou</span></div>
-          <button className="demo-account-button" type="button" onClick={audience === "child" ? onChildDemo : onDemo}><Sparkle size={20} weight="fill" /><span><strong>{audience === "child" ? "Tester comme Emma" : "Tester avec un faux compte"}</strong><small>{audience === "child" ? "ID SC-482-917-305 · compte enfant démo" : "Aucune donnée réelle nécessaire"}</small></span><CaretRight size={18} weight="bold" /></button></>}
           <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial. <button type="button" onClick={() => setIsTermsOpen(true)}>CGV</button></p>
         </div>
       </div>
@@ -818,15 +718,8 @@ function ConversationList({ availableConversations, onOpen }) {
 
 function HomeScreen({ child, approvedFriends, availableConversations, onQr, onOpenConversation }) {
   const openFriend = (friend) => {
-    const matchingConversation = conversations.find((item) => item.id === friend.id);
-    onOpenConversation(matchingConversation ?? {
-      ...friend,
-      preview: "Vous êtes maintenant amies !",
-      time: "Maintenant",
-      ActivityIcon: Sparkle,
-      received: [`Coucou ${child.name} ! On peut enfin discuter ici.`],
-      sent: "Bienvenue dans mon Clubhouse !",
-    });
+    const matchingConversation = availableConversations.find((item) => item.id === friend.id || item.contactId === friend.contactId);
+    if (matchingConversation) onOpenConversation(matchingConversation);
   };
 
   return (
@@ -907,6 +800,48 @@ function ConversationMediaMessage({ message, parent = false }) {
   );
 }
 
+function ConversationVoiceMessage({ message, parent = false }) {
+  const [mediaUrl, setMediaUrl] = useState(message.url ?? "");
+  const [loadError, setLoadError] = useState("");
+  const isReceived = message.direction === "received";
+
+  useEffect(() => {
+    if (message.url) {
+      setMediaUrl(message.url);
+      setLoadError("");
+      return undefined;
+    }
+    let isCurrent = true;
+    let objectUrl = "";
+    setMediaUrl("");
+    setLoadError("");
+    api.media(message.id)
+      .then((url) => {
+        objectUrl = url;
+        if (isCurrent) setMediaUrl(url);
+        else URL.revokeObjectURL(url);
+      })
+      .catch((error) => {
+        if (isCurrent) setLoadError(error.message || "Message vocal indisponible.");
+      });
+    return () => {
+      isCurrent = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [message.id, message.url]);
+
+  if (!mediaUrl) {
+    return <div className={`voice-message-loading ${parent ? "voice-message-loading--parent" : ""} ${isReceived ? "is-received" : ""}`} role={loadError ? "alert" : "status"}>{loadError || "Chargement du message vocal…"}</div>;
+  }
+
+  return (
+    <div className={`conversation-voice-message ${parent ? "conversation-voice-message--parent" : ""} ${isReceived ? "is-received" : "is-sent"}`}>
+      <VoiceMessage url={mediaUrl} duration={message.duration} status={isReceived ? null : message.status ?? "received"} parent={parent} />
+      {message.time && <time>{message.time}</time>}
+    </div>
+  );
+}
+
 function useTypingIndicator(conversationId, enabled) {
   const [typingName, setTypingName] = useState(null);
   const lastSignalRef = useRef(0);
@@ -963,57 +898,12 @@ function TypingIndicator({ name }) {
   return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
 }
 
-const sendWorkerCommand = (worker, message, timeout = 1000) => new Promise((resolve) => {
-  if (!worker) {
-    resolve(null);
-    return;
-  }
-  const channel = new MessageChannel();
-  let settled = false;
-  const finish = (value) => {
-    if (settled) return;
-    settled = true;
-    window.clearTimeout(timer);
-    channel.port1.close();
-    resolve(value);
-  };
-  const timer = window.setTimeout(() => finish(null), timeout);
-  channel.port1.onmessage = (event) => finish(event.data);
-  try {
-    worker.postMessage(message, [channel.port2]);
-  } catch {
-    finish(null);
-  }
-});
-
-const waitForCurrentPushWorker = async (registration) => {
-  await registration.update().catch(() => {});
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    registration = await navigator.serviceWorker.getRegistration("/") ?? registration;
-    if (registration.waiting) {
-      try {
-        registration.waiting.postMessage({ type: "secret-clubhouse:activate-update" });
-      } catch {}
-    }
-    const workers = [...new Set([registration.active, navigator.serviceWorker.controller].filter(Boolean))];
-    for (const worker of workers) {
-      const response = await sendWorkerCommand(worker, { type: "secret-clubhouse:get-worker-capabilities" }, 500);
-      if (response?.protocolVersion >= 1 && response.capabilities?.includes("push-diagnostics")) return worker;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-  }
-  return registration.active ?? navigator.serviceWorker.controller ?? null;
-};
-
-function PushNotificationButton({ isDemo = false }) {
+function PushNotificationButton() {
   const native = Capacitor.isNativePlatform();
   const isWindowsWeb = !native && /Windows/i.test(navigator.userAgent);
   const supported = native || ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
   const [status, setStatus] = useState(supported ? "checking" : "unsupported");
   const [error, setError] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
     if (!supported) return;
@@ -1027,16 +917,14 @@ function PushNotificationButton({ isDemo = false }) {
         return registration.pushManager.getSubscription();
       })
       .then(async (subscription) => {
-        if (subscription && !isDemo) await api.subscribePush(subscription.toJSON());
-        const demoEnabled = isDemo && sessionStorage.getItem("secret-clubhouse-demo-push") === "enabled";
-        setStatus(subscription || demoEnabled ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
+        if (subscription) await api.subscribePush(subscription.toJSON());
+        setStatus(subscription ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
       })
       .catch(() => setStatus("unsupported"));
-  }, [isDemo, native, supported]);
+  }, [native, supported]);
 
   const togglePush = async () => {
     setError("");
-    setFeedback("");
     try {
       if (native) {
         const permission = await PushNotifications.requestPermissions();
@@ -1053,21 +941,14 @@ function PushNotificationButton({ isDemo = false }) {
       }
       const registration = await navigator.serviceWorker.ready;
       const current = await registration.pushManager.getSubscription();
-      if (current || (isDemo && status === "enabled")) {
-        if (current && !isDemo) await api.unsubscribePush(current.endpoint);
-        if (current) await current.unsubscribe();
-        sessionStorage.removeItem("secret-clubhouse-demo-push");
+      if (current) {
+        await api.unsubscribePush(current.endpoint);
+        await current.unsubscribe();
         setStatus("disabled");
         return;
       }
       const permission = await Notification.requestPermission();
       if (permission !== "granted") { setStatus("denied"); return; }
-      if (isDemo) {
-        sessionStorage.setItem("secret-clubhouse-demo-push", "enabled");
-        setStatus("enabled");
-        setFeedback("Mode démo : les alertes sont testées uniquement sur cet appareil.");
-        return;
-      }
       const { publicKey } = await api.pushPublicKey();
       const padding = "=".repeat((4 - publicKey.length % 4) % 4);
       const base64 = (publicKey + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -1077,103 +958,6 @@ function PushNotificationButton({ isDemo = false }) {
       setStatus("enabled");
     } catch (pushError) {
       setError(pushError.message || "Impossible d’activer les notifications.");
-    }
-  };
-
-  const testNotification = async () => {
-    setError("");
-    setFeedback("");
-    setIsTesting(true);
-    try {
-      if (Notification.permission !== "granted") {
-        setStatus(Notification.permission === "denied" ? "denied" : "disabled");
-        throw new Error("Les notifications ne sont pas autorisées dans ce navigateur.");
-      }
-      const registration = await navigator.serviceWorker.ready;
-      if (!isDemo) await waitForCurrentPushWorker(registration);
-      if (isDemo) {
-        const tag = "secret-clubhouse-demo-test";
-        const previousNotifications = await registration.getNotifications({ tag });
-        previousNotifications.forEach((notification) => notification.close());
-        await registration.showNotification("Secret Clubhouse est prêt", {
-          body: "Voici votre notification de test Secret Clubhouse.",
-          tag,
-          renotify: true,
-          requireInteraction: true,
-          silent: false,
-          data: { notificationType: "test", url: "/?notification=test" },
-        });
-        const registeredNotifications = await registration.getNotifications({ tag });
-        if (!registeredNotifications.length) throw new Error("Microsoft Edge n’a pas enregistré la notification persistante.");
-      } else {
-        const subscription = await registration.pushManager.getSubscription();
-        if (!subscription) {
-          setStatus("disabled");
-          throw new Error("Cet Edge n’est plus abonné. Réactivez les notifications puis recommencez.");
-        }
-        const waitForPushDiagnostic = ({ requestId, acceptParseError = false }) => {
-          let cancel = () => {};
-          let startTimeout = () => {};
-          const promise = new Promise((resolve) => {
-            let settled = false;
-            let timer = null;
-            const finish = (value) => {
-              if (settled) return;
-              settled = true;
-              cancel();
-              resolve(value);
-            };
-            const onMessage = (event) => {
-              const message = event.data;
-              if (message?.type !== "secret-clubhouse:push-diagnostic" || message.stage === "received") return;
-              const matchesRequest = message.requestId === requestId;
-              const matchesUncorrelatedParseError = acceptParseError && message.stage === "parse-error" && message.requestId === null && message.hasPayload === true;
-              if (!matchesRequest && !matchesUncorrelatedParseError) return;
-              finish(message);
-            };
-            cancel = () => {
-              if (timer) window.clearTimeout(timer);
-              navigator.serviceWorker.removeEventListener("message", onMessage);
-            };
-            startTimeout = () => {
-              if (!settled && !timer) timer = window.setTimeout(() => finish(null), 15000);
-            };
-            navigator.serviceWorker.addEventListener("message", onMessage);
-          });
-          return { promise, cancel, startTimeout };
-        };
-        const describeDiagnosticError = (diagnostic) => diagnostic?.stage === "parse-error"
-          ? "Edge a reçu le test, mais n’a pas pu lire son contenu chiffré."
-          : `Edge a reçu le test, mais Windows n’a pas pu créer la notification${diagnostic?.errorMessage ? ` : ${diagnostic.errorMessage}` : "."}`;
-
-        const requestId = crypto.randomUUID();
-        const encryptedWaiter = waitForPushDiagnostic({ requestId, acceptParseError: true });
-        let encryptedResult;
-        try {
-          encryptedResult = await api.testPush(subscription.endpoint, requestId, "encrypted");
-          if (!encryptedResult?.accepted) throw new Error("Le service de notification n’a pas accepté le test pour cet Edge.");
-          encryptedWaiter.startTimeout();
-          const encryptedDiagnostic = await encryptedWaiter.promise;
-          if (encryptedDiagnostic?.stage === "shown") {
-            setFeedback(`Notification créée par Edge (service worker ${encryptedDiagnostic.workerVersion}). Vérifiez la bannière ou le centre de notifications.`);
-            return;
-          }
-          if (encryptedDiagnostic) throw new Error(describeDiagnosticError(encryptedDiagnostic));
-        } finally {
-          encryptedWaiter.cancel();
-        }
-
-        const transport = encryptedResult?.transportStatus ? ` (HTTP ${encryptedResult.transportStatus})` : "";
-        const provider = encryptedResult?.providerStatus ? `, statut WNS ${encryptedResult.providerStatus}` : "";
-        throw new Error(`WNS a accepté le test${transport}${provider}, mais le client Windows d’Edge ne l’a pas transmis à l’application.`);
-      }
-      setFeedback(isDemo
-        ? "Notification persistante créée dans Edge. Vérifiez la bannière ou le centre de notifications."
-        : "Test Web Push remis à cet Edge. Vérifiez la bannière ou le centre de notifications.");
-    } catch (pushError) {
-      setError(pushError.message || "La notification de test n’a pas pu être envoyée.");
-    } finally {
-      setIsTesting(false);
     }
   };
 
@@ -1192,9 +976,7 @@ function PushNotificationButton({ isDemo = false }) {
         <span><strong>{isWindowsWeb ? "Notifications Windows" : "Notifications et son système"}</strong><small>{statusText}</small></span>
         <span className={`toggle ${status === "enabled" ? "is-on" : ""}`} aria-hidden="true"><span /></span>
       </button>
-      {isWindowsWeb && status === "enabled" && <div className="push-setting__test-row"><button type="button" onClick={testNotification} disabled={isTesting}><Bell size={15} weight="fill" />{isTesting ? "Envoi…" : "Tester dans Windows"}</button></div>}
       {error && <small className="push-setting__error" role="alert">{error}</small>}
-      {feedback && <small className="push-setting__feedback" role="status">{feedback}</small>}
       {/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.matchMedia("(display-mode: standalone)").matches && <small className="push-setting__hint">Sur iPhone/iPad, ajoutez d’abord Secret Clubhouse à l’écran d’accueil.</small>}
     </div>
   );
@@ -1225,6 +1007,7 @@ function VoiceRecorder({ disabled = false, onSend, parent = false }) {
   const [elapsed, setElapsed] = useState(0);
   const [preview, setPreview] = useState(null);
   const [error, setError] = useState("");
+  const [isSending, setIsSending] = useState(false);
   const recorderRef = useRef(null);
   const streamRef = useRef(null);
   const chunksRef = useRef([]);
@@ -1331,11 +1114,19 @@ function VoiceRecorder({ disabled = false, onSend, parent = false }) {
     setError("");
   };
 
-  const sendRecording = () => {
-    if (!preview) return;
-    onSend(preview.blob, preview.duration);
-    clearPreview();
-    setElapsed(0);
+  const sendRecording = async () => {
+    if (!preview || isSending) return;
+    setError("");
+    setIsSending(true);
+    try {
+      await onSend(preview.blob, preview.duration);
+      clearPreview();
+      setElapsed(0);
+    } catch (sendError) {
+      setError(sendError?.message || "Le message vocal n’a pas pu être envoyé.");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -1362,7 +1153,7 @@ function VoiceRecorder({ disabled = false, onSend, parent = false }) {
         <div className="voice-recorder-panel voice-recorder-panel--preview">
           <VoiceMessage url={preview.url} duration={preview.duration} parent={parent} preview />
           <button type="button" className="voice-recorder-cancel" onClick={cancelRecording} aria-label="Supprimer le message vocal"><X size={18} weight="bold" /></button>
-          <button type="button" className="voice-recorder-send" onClick={sendRecording} aria-label="Envoyer le message vocal"><PaperPlaneTilt size={18} weight="fill" /></button>
+          <button type="button" className="voice-recorder-send" onClick={sendRecording} aria-label="Envoyer le message vocal" disabled={isSending}><PaperPlaneTilt size={18} weight="fill" /></button>
         </div>
       )}
       {error && <div className="voice-recorder-error" role="alert">{error}</div>}
@@ -1376,9 +1167,8 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
   const receivedStreamRef = useRef(null);
   const remoteSourceRef = useRef(null);
   const rtcSessionRef = useRef(null);
-  const demoCleanupsRef = useRef([]);
+  const streamCleanupsRef = useRef([]);
   const [phase, setPhase] = useState("ready");
-  const [mode, setMode] = useState(null);
   const [error, setError] = useState("");
   const [connectionState, setConnectionState] = useState("new");
   const [isMuted, setIsMuted] = useState(false);
@@ -1393,8 +1183,8 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
     localStreamRef.current = null;
     receivedStreamRef.current = null;
     remoteSourceRef.current = null;
-    demoCleanupsRef.current.forEach((cleanup) => cleanup());
-    demoCleanupsRef.current = [];
+    streamCleanupsRef.current.forEach((cleanup) => cleanup());
+    streamCleanupsRef.current = [];
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
   };
 
@@ -1410,10 +1200,9 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
     if (remoteAudioRef.current && receivedStreamRef.current) remoteAudioRef.current.srcObject = receivedStreamRef.current;
   }, [phase]);
 
-  const startCall = async (selectedMode) => {
+  const startCall = async () => {
     if (!policy.allowed || phase === "connecting") return;
     cleanUpCall();
-    setMode(selectedMode);
     setError("");
     setDuration(0);
     setIsMuted(false);
@@ -1422,12 +1211,11 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
     setPhase("connecting");
 
     try {
-      const localSource = selectedMode === "microphone" ? { stream: await openMicrophoneStream(), stop: null } : await createDemoAudioStream();
-      const remoteSource = await createDemoAudioStream();
+      const localSource = { stream: await openMicrophoneStream(), stop: null };
+      const remoteSource = await createRemoteAudioPlaceholder();
       localStreamRef.current = localSource.stream;
       remoteSourceRef.current = remoteSource.stream;
-      if (localSource.stop) demoCleanupsRef.current.push(localSource.stop);
-      demoCleanupsRef.current.push(remoteSource.stop);
+      streamCleanupsRef.current.push(remoteSource.stop);
 
       rtcSessionRef.current = await createLocalWebRtcSession({
         localStream: localSource.stream,
@@ -1444,7 +1232,7 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
       setPhase("error");
       setConnectionState("failed");
       setError(callError?.name === "NotAllowedError"
-        ? "Le micro n’a pas été autorisé. Tu peux réessayer ou ouvrir la démo sans micro."
+        ? "Le micro n’a pas été autorisé. Vérifie son autorisation puis réessaie."
         : callError?.message ?? "Impossible de démarrer l’appel audio sur cet appareil.");
     }
   };
@@ -1487,11 +1275,8 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
           {!policy.allowed && autoReply?.enabled && autoReply.message.trim() && <div className="call-auto-reply"><ChatCircleDots size={20} weight="fill" /><span><strong>Réponse automatique à l’appelant</strong><p>« {autoReply.message} »</p></span></div>}
           {error && <div className="video-call-error" role="alert"><MicrophoneSlash size={20} weight="fill" /><span>{error}</span></div>}
           <div className="video-lobby-actions">
-            <button type="button" className="audio-start-button" onClick={() => startCall("microphone")} disabled={!policy.allowed}>
+            <button type="button" className="audio-start-button" onClick={startCall} disabled={!policy.allowed}>
               <Microphone size={21} weight="fill" /> Démarrer avec mon micro
-            </button>
-            <button type="button" className="audio-demo-button" onClick={() => startCall("demo")} disabled={!policy.allowed}>
-              <Waveform size={20} weight="bold" /> Tester la démo WebRTC
             </button>
           </div>
           <div className="video-privacy-note"><LockKey size={15} weight="fill" /> Aucun numéro de téléphone n’est partagé.</div>
@@ -1515,7 +1300,7 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
           <Avatar person={conversation} size="hero" online />
         </div>
         <h1>{conversation.name}</h1>
-        <p>{mode === "demo" ? "Démo locale WebRTC" : `En appel avec ${child.name}`}</p>
+        <p>En appel avec {child.name}</p>
         <div className="audio-waveform" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <span key={index} style={{ "--wave-index": index }} />)}</div>
       </div>
       <div className="video-call-controls audio-call-controls" aria-label="Contrôles de l’appel audio">
@@ -1543,9 +1328,8 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
   const receivedStreamRef = useRef(null);
   const remoteSourceRef = useRef(null);
   const rtcSessionRef = useRef(null);
-  const demoCleanupsRef = useRef([]);
+  const streamCleanupsRef = useRef([]);
   const [phase, setPhase] = useState("ready");
-  const [mode, setMode] = useState(null);
   const [error, setError] = useState("");
   const [connectionState, setConnectionState] = useState("new");
   const [isMuted, setIsMuted] = useState(false);
@@ -1560,8 +1344,8 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
     localStreamRef.current = null;
     receivedStreamRef.current = null;
     remoteSourceRef.current = null;
-    demoCleanupsRef.current.forEach((cleanup) => cleanup());
-    demoCleanupsRef.current = [];
+    streamCleanupsRef.current.forEach((cleanup) => cleanup());
+    streamCleanupsRef.current = [];
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   };
@@ -1580,10 +1364,9 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
     if (remoteVideoRef.current && receivedStreamRef.current) remoteVideoRef.current.srcObject = receivedStreamRef.current;
   }, [phase]);
 
-  const startCall = async (selectedMode) => {
+  const startCall = async () => {
     if (!policy.allowed || phase === "connecting") return;
     cleanUpCall();
-    setMode(selectedMode);
     setError("");
     setDuration(0);
     setIsMuted(false);
@@ -1592,24 +1375,17 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
     setPhase("connecting");
 
     try {
-      let localStream;
-      if (selectedMode === "camera") {
-        localStream = await openCameraStream();
-      } else {
-        const localDemo = createDemoVideoStream(child.name, ["#111359", "#7062e8"]);
-        localStream = localDemo.stream;
-        demoCleanupsRef.current.push(localDemo.stop);
-      }
+      const localStream = await openCameraStream();
 
-      const remoteDemo = createDemoVideoStream(conversation.name, ["#644bd7", "#62e7c4"]);
-      demoCleanupsRef.current.push(remoteDemo.stop);
+      const remotePlaceholder = createRemoteVideoPlaceholder(conversation.name, ["#644bd7", "#62e7c4"]);
+      streamCleanupsRef.current.push(remotePlaceholder.stop);
       localStreamRef.current = localStream;
-      remoteSourceRef.current = remoteDemo.stream;
+      remoteSourceRef.current = remotePlaceholder.stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
 
       rtcSessionRef.current = await createLocalWebRtcSession({
         localStream,
-        remoteSourceStream: remoteDemo.stream,
+        remoteSourceStream: remotePlaceholder.stream,
         onRemoteStream: (stream) => {
           receivedStreamRef.current = stream;
           if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
@@ -1622,7 +1398,7 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
       setPhase("error");
       setConnectionState("failed");
       setError(callError?.name === "NotAllowedError"
-        ? "La caméra ou le micro n’a pas été autorisé. Tu peux réessayer ou ouvrir la démo sans caméra."
+        ? "La caméra ou le micro n’a pas été autorisé. Vérifie les autorisations puis réessaie."
         : callError?.message ?? "Impossible de démarrer la visio sur cet appareil.");
     }
   };
@@ -1669,11 +1445,8 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
           {!policy.allowed && autoReply?.enabled && autoReply.message.trim() && <div className="call-auto-reply"><ChatCircleDots size={20} weight="fill" /><span><strong>Réponse automatique à l’appelant</strong><p>« {autoReply.message} »</p></span></div>}
           {error && <div className="video-call-error" role="alert"><VideoCameraSlash size={20} weight="fill" /><span>{error}</span></div>}
           <div className="video-lobby-actions">
-            <button type="button" className="video-start-button" onClick={() => startCall("camera")} disabled={!policy.allowed}>
+            <button type="button" className="video-start-button" onClick={startCall} disabled={!policy.allowed}>
               <VideoCamera size={21} weight="fill" /> Démarrer avec ma caméra
-            </button>
-            <button type="button" className="video-demo-button" onClick={() => startCall("demo")} disabled={!policy.allowed}>
-              <WaveSine size={20} weight="bold" /> Tester la démo WebRTC
             </button>
           </div>
           <div className="video-privacy-note"><LockKey size={15} weight="fill" /> Aucun numéro de téléphone n’est partagé.</div>
@@ -1692,15 +1465,15 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
       </header>
       <div className="video-call-person">
         <strong>{conversation.name}</strong>
-        <span>{mode === "demo" ? "Démo locale WebRTC" : "Contact approuvé"}</span>
+        <span>Contact approuvé</span>
       </div>
-      <div className={`local-video-wrap ${isCameraOff ? "is-off" : ""} ${mode === "demo" ? "is-demo" : ""}`}>
+      <div className={`local-video-wrap ${isCameraOff ? "is-off" : ""}`}>
         <video ref={localVideoRef} className="local-video" autoPlay playsInline muted aria-label={`Aperçu caméra de ${child.name}`} />
         {isCameraOff && <span><VideoCameraSlash size={21} weight="fill" /> Caméra coupée</span>}
         <small>Toi</small>
       </div>
       <div className="video-call-controls" aria-label="Contrôles de l’appel">
-        <button type="button" onClick={toggleMicrophone} className={isMuted ? "is-off" : ""} disabled={!hasMicrophone} aria-label={hasMicrophone ? (isMuted ? "Réactiver le micro" : "Couper le micro") : "Micro indisponible dans la démo"} aria-pressed={isMuted}>
+        <button type="button" onClick={toggleMicrophone} className={isMuted ? "is-off" : ""} disabled={!hasMicrophone} aria-label={hasMicrophone ? (isMuted ? "Réactiver le micro" : "Couper le micro") : "Micro indisponible"} aria-pressed={isMuted}>
           {isMuted ? <MicrophoneSlash size={25} weight="fill" /> : <Microphone size={25} weight="fill" />}
           <span>{hasMicrophone ? (isMuted ? "Micro coupé" : "Micro") : "Sans micro"}</span>
         </button>
@@ -1724,10 +1497,6 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   const [messageError, setMessageError] = useState("");
   const mediaInputRef = useRef(null);
   const mediaUrlsRef = useRef([]);
-  const [isAudioCallOpen, setIsAudioCallOpen] = useState(false);
-  const [isVideoCallOpen, setIsVideoCallOpen] = useState(false);
-  const audioPolicy = getChannelPolicy(schedule, "calls");
-  const videoPolicy = getChannelPolicy(schedule, "video");
   const messagePolicy = getChannelPolicy(schedule, "messages");
   const autoReply = schedule.autoReply ?? defaultCommunicationSchedule.autoReply;
   const autoReplyIsActive = !messagePolicy.allowed && autoReply.enabled && autoReply.message.trim();
@@ -1790,24 +1559,16 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
       }
       setMediaError("");
     } catch (error) {
-      setMediaError(error.message || "Le média n’a pas pu être envoyé.");
+      setMediaError(error.message || "La photo n’a pas pu être envoyée.");
     }
   };
 
-  const sendVoiceMessage = (blob, duration) => {
+  const sendVoiceMessage = async (blob, duration) => {
     if (!messagePolicy.allowed) return;
-    const url = URL.createObjectURL(blob);
-    mediaUrlsRef.current.push(url);
-    setSentMessages((current) => [...current, { id: `voice-${Date.now()}`, type: "audio", url, duration, status: "received" }]);
+    const extension = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+    const file = new File([blob], `message-vocal-${duration}s.${extension}`, { type: blob.type || "audio/webm" });
+    await onSendMedia?.(conversation.id, [file]);
   };
-
-  if (isVideoCallOpen) {
-    return <VideoCallScreen child={child} conversation={conversation} policy={videoPolicy} autoReply={autoReply} onClose={() => setIsVideoCallOpen(false)} />;
-  }
-
-  if (isAudioCallOpen) {
-    return <AudioCallScreen child={child} conversation={conversation} policy={audioPolicy} autoReply={autoReply} onClose={() => setIsAudioCallOpen(false)} />;
-  }
 
   return (
     <section className="chat-screen" aria-label={`Conversation avec ${conversation.name}`}>
@@ -1820,12 +1581,6 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
           <strong>{conversation.name}</strong>
           <span><ShieldCheck size={13} weight="fill" /> {conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
         </div>
-        <button className={`icon-button audio-call-button ${audioPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => setIsAudioCallOpen(true)} aria-label={`Appeler ${conversation.name}`} title={audioPolicy.allowed ? "Appel audio" : audioPolicy.reason}>
-          <Phone size={21} weight="bold" />
-        </button>
-        <button className={`icon-button video-call-button ${videoPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => setIsVideoCallOpen(true)} aria-label={`Lancer une visio avec ${conversation.name}`} title={videoPolicy.allowed ? "Appel visio" : videoPolicy.reason}>
-          <VideoCamera size={22} weight="fill" />
-        </button>
         <button className="icon-button" type="button" aria-label="Plus d’options">
           <DotsThree size={23} weight="bold" />
         </button>
@@ -1836,11 +1591,11 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         {!messagePolicy.allowed && (
           <div className="chat-quiet-banner" role="status"><Clock size={18} weight="fill" /><span><strong>Mode calme actif</strong><small>{autoReplyIsActive ? `${conversation.name} reçoit automatiquement un message.` : `Les messages seront disponibles à ${nextMessageTime}.`}</small></span></div>
         )}
-        {conversation.serverBacked ? conversation.messages.map((message) => message.type === "image" || message.type === "video" ? (
-          <ConversationMediaMessage key={message.id} message={message} />
-        ) : (
-          <p className={`bubble bubble--${message.direction}`} key={message.id}>{message.text}{message.direction === "sent" && <MessageStatus status={message.status ?? "received"} />}</p>
-        )) : <>
+        {conversation.serverBacked ? conversation.messages.map((message) => message.type === "audio"
+          ? <ConversationVoiceMessage key={message.id} message={message} />
+          : message.type === "image" || message.type === "video"
+            ? <ConversationMediaMessage key={message.id} message={message} />
+            : <p className={`bubble bubble--${message.direction}`} key={message.id}>{message.text}{message.direction === "sent" && <MessageStatus status={message.status ?? "received"} />}</p>) : <>
           {conversation.received.map((message) => <p className="bubble bubble--received" key={message}>{message}</p>)}
           {conversation.sent && <p className="bubble bubble--sent">{conversation.sent}<MessageStatus status="seen" /></p>}
         </>}
@@ -1877,7 +1632,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   );
 }
 
-function ClubhouseScreen({ child, contacts, isDemo }) {
+function ClubhouseScreen({ child }) {
   const [filter, setFilter] = useState("all");
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [phase, setPhase] = useState("intro");
@@ -2074,7 +1829,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
                 )}
 
                 {phase === "active" && selectedActivity.variant === "connect-four" && (
-                  <ConnectFourGame child={child} contacts={contacts} isDemo={isDemo} onComplete={completeActivity} />
+                  <ConnectFourGame child={child} onComplete={completeActivity} />
                 )}
               </>
             )}
@@ -2085,7 +1840,7 @@ function ClubhouseScreen({ child, contacts, isDemo }) {
   );
 }
 
-function ProfileScreen({ child, isDemo, onOpenParent, onOpenPreferences, onLogout }) {
+function ProfileScreen({ child, onOpenPreferences, onLogout }) {
   const [idCopied, setIdCopied] = useState(false);
 
   const copyOwnId = async () => {
@@ -2108,72 +1863,9 @@ function ProfileScreen({ child, isDemo, onOpenParent, onOpenPreferences, onLogou
         <ShieldCheck size={28} weight="fill" />
         <div><strong>Compte protégé</strong><span>Géré par un parent</span></div>
       </div>
-      <PushNotificationButton isDemo={isDemo} />
-      <button type="button" className="parent-access-button" onClick={onOpenParent}>
-        <LockKey size={20} weight="fill" />
-        <span><strong>Espace parent</strong><small>Contacts et sécurité</small></span>
-        <CaretRight size={19} weight="bold" />
-      </button>
+      <PushNotificationButton />
       <button type="button" className="secondary-button" onClick={onOpenPreferences}><GearSix size={19} weight="bold" /> Mes préférences</button>
       <button type="button" className="child-logout-button" onClick={onLogout}><SignOut size={18} weight="bold" /> Se déconnecter</button>
-    </section>
-  );
-}
-
-function ParentAccessScreen({ parentName, onBack, onUnlock }) {
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState("");
-  const [showHelp, setShowHelp] = useState(false);
-
-  const updatePin = (value) => {
-    setPin(value.replace(/\D/g, "").slice(0, 4));
-    setError("");
-  };
-
-  const submitPin = (event) => {
-    event.preventDefault();
-    if (pin === "2468") {
-      onUnlock();
-      return;
-    }
-    setError("Ce code n’est pas correct. Réessaie.");
-    setPin("");
-  };
-
-  return (
-    <section className="parent-gate" aria-labelledby="parent-gate-title">
-      <header className="parent-gate__header">
-        <button className="icon-button" type="button" onClick={onBack} aria-label="Retour à l’espace enfant">
-          <ArrowLeft size={23} weight="bold" />
-        </button>
-        <Brand />
-      </header>
-      <form className="parent-gate__card" onSubmit={submitPin}>
-        <span className="parent-lock" aria-hidden="true"><LockKey size={38} weight="fill" /></span>
-        <span className="parent-kicker">Accès réservé aux adultes</span>
-        <h1 id="parent-gate-title">Bonjour, {parentName}</h1>
-        <p>Saisissez votre code parent pour gérer les profils de votre famille.</p>
-        <label className="pin-label" htmlFor="parent-pin">Code parent à 4 chiffres</label>
-        <input
-          id="parent-pin"
-          className="pin-input"
-          type="password"
-          inputMode="numeric"
-          autoComplete="current-password"
-          maxLength={4}
-          value={pin}
-          onChange={(event) => updatePin(event.target.value)}
-          aria-describedby={error ? "pin-error" : "pin-demo"}
-          aria-invalid={Boolean(error)}
-          autoFocus
-        />
-        {error ? <p className="pin-error" id="pin-error" role="alert">{error}</p> : <p className="pin-demo" id="pin-demo">Pour tester le prototype : <strong>2468</strong></p>}
-        <button className="primary-button parent-unlock" type="submit" disabled={pin.length !== 4}>
-          <LockKeyOpen size={20} weight="fill" /> Ouvrir l’espace parent
-        </button>
-        <button className="parent-help" type="button" onClick={() => setShowHelp((current) => !current)}>Code oublié ?</button>
-        {showHelp && <p className="parent-help-message" role="status">Dans la version finale, la récupération passera par l’adresse e-mail vérifiée du parent.</p>}
-      </form>
     </section>
   );
 }
@@ -2240,7 +1932,7 @@ function AvatarPreferencesScreen({ child, onBack, onSave }) {
   );
 }
 
-function ParentPasswordModal({ isDemo, onClose, onSave }) {
+function ParentPasswordModal({ onClose, onSave }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -2287,7 +1979,7 @@ function ParentPasswordModal({ isDemo, onClose, onSave }) {
         {isComplete ? <div className="parent-password-success"><span><CheckCircle size={36} weight="fill" /></span><h2 id="parent-password-title">Mot de passe modifié</h2><p>Votre nouveau mot de passe est actif. Votre session actuelle reste ouverte.</p><button type="button" className="primary-button" onClick={onClose}>Terminer</button></div> : <>
           <div className="parent-password-heading"><span><LockKey size={28} weight="fill" /></span><div><small>Sécurité du compte parent</small><h2 id="parent-password-title">Modifier le mot de passe</h2><p>Confirmez d’abord votre mot de passe actuel.</p></div></div>
           <form className="parent-password-form" onSubmit={submitPassword}>
-            <label><span>Mot de passe actuel</span><span className="parent-password-field"><input type={showCurrentPassword ? "text" : "password"} value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setError(""); }} autoComplete="current-password" placeholder={isDemo ? "Pour la démo : demo2026" : "Votre mot de passe actuel"} autoFocus /><button type="button" onClick={() => setShowCurrentPassword((current) => !current)} aria-label={showCurrentPassword ? "Masquer le mot de passe actuel" : "Afficher le mot de passe actuel"}>{showCurrentPassword ? <EyeSlash size={19} weight="bold" /> : <Eye size={19} weight="bold" />}</button></span>{isDemo && <small>Faux compte : utilisez <strong>demo2026</strong>.</small>}</label>
+            <label><span>Mot de passe actuel</span><span className="parent-password-field"><input type={showCurrentPassword ? "text" : "password"} value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setError(""); }} autoComplete="current-password" placeholder="Votre mot de passe actuel" autoFocus /><button type="button" onClick={() => setShowCurrentPassword((current) => !current)} aria-label={showCurrentPassword ? "Masquer le mot de passe actuel" : "Afficher le mot de passe actuel"}>{showCurrentPassword ? <EyeSlash size={19} weight="bold" /> : <Eye size={19} weight="bold" />}</button></span></label>
             <label><span>Nouveau mot de passe</span><span className="parent-password-field"><input type={showNewPassword ? "text" : "password"} value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setError(""); }} autoComplete="new-password" placeholder="8 caractères minimum" maxLength={128} /><button type="button" onClick={() => setShowNewPassword((current) => !current)} aria-label={showNewPassword ? "Masquer le nouveau mot de passe" : "Afficher le nouveau mot de passe"}>{showNewPassword ? <EyeSlash size={19} weight="bold" /> : <Eye size={19} weight="bold" />}</button></span></label>
             <label><span>Confirmer le nouveau mot de passe</span><input type="password" value={confirmation} onChange={(event) => { setConfirmation(event.target.value); setError(""); }} autoComplete="new-password" placeholder="Retapez le nouveau mot de passe" maxLength={128} /></label>
             <div className="password-security-note"><ShieldCheck size={17} weight="fill" /><span>Le mot de passe est protégé de façon sécurisée et n’est jamais affiché aux enfants.</span></div>
@@ -2352,7 +2044,7 @@ function FamilyInviteErrorModal({ message, onDismiss }) {
   );
 }
 
-function FamilyParentsModal({ family, currentParent, isDemo, onClose, onInvite, onRevoke, onRemove }) {
+function FamilyParentsModal({ family, currentParent, onClose, onInvite, onRevoke, onRemove }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
@@ -2459,21 +2151,20 @@ function FamilyParentsModal({ family, currentParent, isDemo, onClose, onInvite, 
         {invitations.length > 0 && <section className="family-pending-invites" aria-labelledby="pending-family-invites-title"><h3 id="pending-family-invites-title">Invitations en attente</h3>{invitations.map((invitation) => <article key={invitation.id}><span><strong>{invitation.email}</strong><small>Expire le {new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(invitation.expiresAt))}</small></span>{isPrimary && <button type="button" onClick={() => revokeInvitation(invitation.id)} disabled={busyAction === `revoke-${invitation.id}`}><X size={15} weight="bold" /> {busyAction === `revoke-${invitation.id}` ? "Révocation…" : "Révoquer"}</button>}</article>)}</section>}
 
         {error && <p className="family-invite-error" role="alert">{error}</p>}
-        {isDemo && <p className="family-demo-note"><Sparkle size={16} weight="fill" /> Les changements restent dans ce faux compte de démonstration.</p>}
         <button type="button" className="primary-button family-parents-close" onClick={onClose} disabled={Boolean(busyAction)}>Terminer</button>
       </section>
     </div>
   );
 }
 
-function PausedChildScreen({ child, onOpenParent }) {
+function PausedChildScreen({ child, onParentLogin }) {
   return (
     <section className="feature-screen paused-child-screen" aria-labelledby="paused-child-title">
       <span className="paused-lock"><LockKey size={38} weight="fill" /></span>
       <span className="eyebrow">Compte en pause</span>
       <h1 id="paused-child-title">À bientôt, {child.name}</h1>
       <p>Un parent a temporairement mis ce profil en pause.</p>
-      <button className="primary-button" type="button" onClick={onOpenParent}><ShieldCheck size={19} weight="fill" /> Accès parent</button>
+      <button className="primary-button" type="button" onClick={onParentLogin}><ShieldCheck size={19} weight="fill" /> Connexion parent</button>
     </section>
   );
 }
@@ -2531,8 +2222,7 @@ function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
-function ParentGamesScreen({ parent, children, isDemo, onBack }) {
-  const demoContacts = children.map((child) => ({ id: child.id, name: child.name, contactId: child.contactId, role: "child" }));
+function ParentGamesScreen({ parent, onBack }) {
   return (
     <section className="parent-games-screen" aria-labelledby="parent-games-title">
       <header className="parent-messages-header">
@@ -2542,15 +2232,13 @@ function ParentGamesScreen({ parent, children, isDemo, onBack }) {
       </header>
       <div className="parent-games-screen__content">
         <div className="parent-games-intro"><ShieldCheck size={20} weight="fill" /><span><strong>Un espace de jeu privé</strong><small>Jouez avec vos enfants, vos co-parents et vos contacts approuvés.</small></span></div>
-        <ConnectFourGame child={parent} contacts={demoContacts} isDemo={isDemo} />
+        <ConnectFourGame child={parent} />
       </div>
     </section>
   );
 }
 
-function ParentDashboard({ parentName, family, children, child, isDemo, requestStatus, onSelectChild, onAddChild, onEditChild, onMessageChild, onApproveRequest, onDeclineRequest, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onEditSchedule, onExit, onLogout }) {
-  const baseFriendsCount = isDemo ? friends.length : 0;
-  const approvedCount = requestStatus === "approved" ? baseFriendsCount + 1 : baseFriendsCount;
+function ParentDashboard({ parentName, family, children, child, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onEditSchedule, onLogout }) {
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
 
   return (
@@ -2572,7 +2260,7 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
 
         <button type="button" className="parent-messages-entry" onClick={onOpenMessages}>
           <span className="parent-messages-entry__icon"><ChatCircleDots size={24} weight="fill" /></span>
-          <span><strong>Famille et parents</strong><small>Échangez avec vos enfants et les parents de leurs contacts.</small></span>
+          <span><strong>Famille et parents</strong><small>Échangez avec l’autre parent, vos enfants et les parents de leurs contacts.</small></span>
           {unreadMessages > 0 ? <span className="parent-message-count">{unreadMessages}</span> : <CheckCircle size={20} weight="fill" />}
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
@@ -2630,37 +2318,16 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
         </section>
 
         <div className="parent-stats" aria-label="Résumé du compte">
-          <div><UsersThree size={22} weight="fill" /><strong>{approvedCount}</strong><span>amis</span></div>
-          <div className={requestStatus === "pending" ? "has-alert" : ""}><UserPlus size={22} weight="fill" /><strong>{requestStatus === "pending" ? 1 : 0}</strong><span>demande</span></div>
+          <div><UsersThree size={22} weight="fill" /><strong>0</strong><span>amis</span></div>
+          <div><UserPlus size={22} weight="fill" /><strong>0</strong><span>demande</span></div>
           <div><Shield size={22} weight="fill" /><strong>3</strong><span>protections</span></div>
         </div>
 
         <section className="parent-section" aria-labelledby="requests-title">
           <div className="parent-section__title">
             <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Vous décidez qui peut parler à {child.name}.</p></div></div>
-            {requestStatus === "pending" && <span className="status-pill">1 nouvelle</span>}
           </div>
-
-          {requestStatus === "pending" && (
-            <article className="friend-request">
-              <span className="request-avatar" aria-hidden="true">C</span>
-              <div className="request-copy"><strong>Chloé</strong><span>ID {pendingFriend.contactId}</span><small>Invitation QR · Parent : Thomas R.</small></div>
-              <div className="request-actions">
-                <button type="button" className="approve-button" onClick={onApproveRequest}><CheckCircle size={18} weight="fill" /> Accepter</button>
-                <button type="button" className="decline-button" onClick={onDeclineRequest}><X size={17} weight="bold" aria-hidden="true" /> Refuser</button>
-              </div>
-            </article>
-          )}
-
-          {(requestStatus === "approved" || requestStatus === "declined") && (
-            <div className={`request-result request-result--${requestStatus}`} role="status">
-              {requestStatus === "approved" ? <CheckCircle size={22} weight="fill" /> : <X size={20} weight="bold" />}
-              <div><strong>{requestStatus === "approved" ? "Chloé est maintenant approuvée" : "Demande refusée"}</strong><span>{requestStatus === "approved" ? `${child.name} peut désormais discuter avec elle.` : "Chloé n’a pas été ajoutée aux contacts."}</span></div>
-            </div>
-          )}
-          {requestStatus === "none" && (
-            <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>
-          )}
+          <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>
         </section>
 
         <section className="parent-section" aria-labelledby="safety-title">
@@ -2687,18 +2354,16 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
 
         </>}
 
-        <PushNotificationButton isDemo={isDemo} />
-        {child ? <button className="parent-exit" type="button" onClick={onExit}><SignOut size={19} weight="bold" /> Quitter le mode parent</button> : <button className="parent-exit" type="button" onClick={onLogout}><ArrowLeft size={19} weight="bold" /> Revenir à l’accueil</button>}
+        <PushNotificationButton />
       </div>
     </section>
   );
 }
 
-function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onSendMedia, onOpenFamilyConversation, isDemo, initialContactId = "", onContactHandled }) {
+function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onSendMedia, onOpenFamilyConversation, initialContactId = "", onContactHandled }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
-  const [callMode, setCallMode] = useState(null);
   const [isAddingContact, setIsAddingContact] = useState(Boolean(initialContactId));
   const [contactId, setContactId] = useState(initialContactId);
   const [contactFeedback, setContactFeedback] = useState(null);
@@ -2707,7 +2372,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
   const parentMediaInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
-  const { typingName, notifyTyping, stopTyping } = useTypingIndicator(selectedThread?.id, Boolean(selectedThread && !isDemo && selectedThread.serverBacked));
+  const { typingName, notifyTyping, stopTyping } = useTypingIndicator(selectedThread?.id, Boolean(selectedThread?.serverBacked));
 
   const submitContact = async (event) => {
     event.preventDefault();
@@ -2728,7 +2393,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         onContactHandled?.();
         return;
       }
-      if (!isDemo) await api.addContact(normalizedId);
+      await api.addContact(normalizedId);
       setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
       setContactId("");
       if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
@@ -2771,7 +2436,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
     }
     try {
       if (selectedThread.serverBacked) {
-        await onSendMedia?.(selectedThread.id, supportedFiles);
+        await onSendMedia(selectedThread.id, supportedFiles);
       } else {
         const media = supportedFiles.map((file) => {
           const url = URL.createObjectURL(file);
@@ -2782,29 +2447,16 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
       }
       setMediaError("");
     } catch (error) {
-      setMediaError(error.message || "Le média n’a pas pu être envoyé.");
+      setMediaError(error.message || "La photo n’a pas pu être envoyée.");
     }
   };
 
-  const sendParentVoice = (blob, duration) => {
+  const sendParentVoice = async (blob, duration) => {
     if (!selectedThread) return;
-    const url = URL.createObjectURL(blob);
-    parentMediaUrlsRef.current.push(url);
-    const voice = { id: `parent-voice-${Date.now()}`, type: "audio", url, duration, status: "received" };
-    setMediaByThread((current) => ({ ...current, [selectedThread.id]: [...(current[selectedThread.id] ?? []), voice] }));
-    window.setTimeout(() => setMediaByThread((current) => ({
-      ...current,
-      [selectedThread.id]: (current[selectedThread.id] ?? []).map((item) => item.id === voice.id ? { ...item, status: "seen" } : item),
-    })), 1400);
+    const extension = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+    const file = new File([blob], `message-vocal-${duration}s.${extension}`, { type: blob.type || "audio/webm" });
+    await onSendMedia(selectedThread.id, [file]);
   };
-
-  if (selectedThread && callMode === "audio") {
-    return <AudioCallScreen child={{ name: parentName }} conversation={selectedThread} policy={{ allowed: true, reason: "", detail: selectedThread.isFamily ? "Conversation familiale sécurisée." : "Contact adulte vérifié." }} autoReply={{ enabled: false, message: "" }} onClose={() => setCallMode(null)} />;
-  }
-
-  if (selectedThread && callMode === "video") {
-    return <VideoCallScreen child={{ name: parentName }} conversation={selectedThread} policy={{ allowed: true, reason: "", detail: selectedThread.isFamily ? "Conversation familiale sécurisée." : "Contact adulte vérifié." }} autoReply={{ enabled: false, message: "" }} onClose={() => setCallMode(null)} />;
-  }
 
   if (selectedThread) {
     return (
@@ -2812,20 +2464,18 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         <header className="parent-messages-header parent-thread-header">
           <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
-          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : `${selectedThread.relation} · Contact adulte`}</small></div>
-          <button type="button" className="parent-thread-call" onClick={() => setCallMode("audio")} aria-label={`Appeler ${selectedThread.name}`}><Phone size={19} weight="fill" /></button>
-          <button type="button" className="parent-thread-call" onClick={() => setCallMode("video")} aria-label={`Lancer une visio avec ${selectedThread.name}`}><VideoCamera size={20} weight="fill" /></button>
+          <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
         </header>
-        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
+        <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
           <span className="parent-thread-day">Aujourd’hui</span>
-          {selectedThread.messages.map((message) => message.type === "image" || message.type === "video" ? (
-            <ConversationMediaMessage key={message.id} message={message} parent />
-          ) : (
-            <div className={`parent-message-bubble parent-message-bubble--${message.direction}`} key={message.id}>
-              <p>{message.text}</p><span className="parent-message-meta"><time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "seen"} />}</span>
-            </div>
-          ))}
+          {selectedThread.messages.map((message) => message.type === "audio"
+            ? <ConversationVoiceMessage key={message.id} message={message} parent />
+            : message.type === "image" || message.type === "video"
+              ? <ConversationMediaMessage key={message.id} message={message} parent />
+              : <div className={`parent-message-bubble parent-message-bubble--${message.direction}`} key={message.id}>
+                  <p>{message.text}</p><span className="parent-message-meta"><time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "seen"} />}</span>
+                </div>)}
           {(mediaByThread[selectedThread.id] ?? []).map((media) => media.type === "audio"
             ? <VoiceMessage key={media.id} url={media.url} duration={media.duration} status={media.status} parent />
             : <ConversationMediaMessage key={media.id} message={media} parent />)}
@@ -2853,7 +2503,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
       </header>
 
       <div className="parent-messages-content">
-        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez directement à vos enfants ou aux parents de leurs contacts, sans voir leurs discussions entre amis.</p></div></div>
+        <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à l’autre parent de la famille, à vos enfants ou aux parents de leurs contacts, sans voir les discussions entre enfants.</p></div></div>
         <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
@@ -2863,7 +2513,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
               {thread.unread > 0 ? <span className="parent-thread-unread">{thread.unread}</span> : <CaretRight size={18} weight="bold" aria-hidden="true" />}
             </button>
           ))}
-          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
+          {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Invitez un co-parent, écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
         </div>
       </div>
       {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
@@ -3239,7 +2889,6 @@ export function App() {
   const [parentView, setParentView] = useState(null);
   const [children, setChildren] = useState([]);
   const [activeChildId, setActiveChildId] = useState(null);
-  const [requestStatuses, setRequestStatuses] = useState({});
   const [settingsByChild, setSettingsByChild] = useState({});
   const [schedulesByChild, setSchedulesByChild] = useState({});
   const [childModal, setChildModal] = useState(null);
@@ -3256,7 +2905,6 @@ export function App() {
     return /^SC-\d{3}-\d{3}-\d{3}$/.test(value) ? value : "";
   });
   const activeChild = children.find((child) => child.id === activeChildId) ?? children[0] ?? null;
-  const activeRequestStatus = activeChild ? requestStatuses[activeChild.id] ?? "none" : "none";
   const activeSettings = activeChild ? settingsByChild[activeChild.id] ?? defaultSafetySettings : defaultSafetySettings;
   const activeSchedule = activeChild ? schedulesByChild[activeChild.id] ?? defaultCommunicationSchedule : defaultCommunicationSchedule;
   const parentUnreadMessages = parentThreads.reduce((total, thread) => total + thread.unread, 0);
@@ -3312,7 +2960,8 @@ export function App() {
     setIsQrOpen(false);
     setSelectedConversation(null);
     if (session?.role === "parent") {
-      setParentView("access");
+      setSelectedParentThreadId(null);
+      setParentView("messages");
       return;
     }
     clearToken();
@@ -3322,8 +2971,7 @@ export function App() {
 
   useEffect(() => {
     if (!session || !getToken()) return undefined;
-    const demoContacts = session.demo ? [...friends, pendingFriend] : [];
-    const contactIds = [...demoContacts, ...parentThreads].map((contact) => contact.contactId).filter(Boolean);
+    const contactIds = [...parentThreads, ...serverConversations].map((contact) => contact.contactId).filter(Boolean);
     const refreshPresence = async () => {
       try {
         await api.heartbeat();
@@ -3336,12 +2984,11 @@ export function App() {
     refreshPresence();
     const timer = window.setInterval(refreshPresence, 30000);
     return () => window.clearInterval(timer);
-  }, [session, parentThreads]);
+  }, [session, parentThreads, serverConversations]);
 
   const applyFamilyChildren = (familyChildren) => {
     setChildren(familyChildren);
     setActiveChildId(familyChildren[0]?.id ?? null);
-    setRequestStatuses(Object.fromEntries(familyChildren.map((child) => [child.id, "none"])));
     setSettingsByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneSafetySettings(child.settings)])));
     setSchedulesByChild(Object.fromEntries(familyChildren.map((child) => [child.id, cloneCommunicationSchedule(child.schedule)])));
     setParentThreads([]);
@@ -3362,13 +3009,11 @@ export function App() {
 
   const openAuthenticatedSession = async (parent) => {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
-    if (!parent.demo) {
-      applyFamilyChildren([]);
-      const [childrenData, conversationData, familyData] = await Promise.all([api.children(), api.conversations(), api.family()]);
-      applyFamilyChildren(childrenData.children.filter((child) => child.contactId !== demoChildContactId));
-      applyServerConversations({ ...parentWithId, role: "parent" }, conversationData.conversations);
-      setFamily(normalizeFamily(familyData, parentWithId));
-    }
+    applyFamilyChildren([]);
+    const [childrenData, conversationData, familyData] = await Promise.all([api.children(), api.conversations(), api.family()]);
+    applyFamilyChildren(childrenData.children);
+    applyServerConversations({ ...parentWithId, role: "parent" }, conversationData.conversations);
+    setFamily(normalizeFamily(familyData, parentWithId));
     setFamilyOwner(parentWithId);
     setSession({ ...parentWithId, role: "parent" });
     setParentView("dashboard");
@@ -3377,10 +3022,8 @@ export function App() {
 
   const openChildSession = async (child) => {
     applyFamilyChildren([child]);
-    if (!child.demo) {
-      const conversationData = await api.conversations();
-      applyServerConversations({ ...child, role: "child" }, conversationData.conversations);
-    }
+    const conversationData = await api.conversations();
+    applyServerConversations({ ...child, role: "child" }, conversationData.conversations);
     setFamilyOwner({ name: "Compte parent", email: "", contactId: "" });
     setSession({ ...child, role: "child", childId: child.id });
     setActiveChildId(child.id);
@@ -3421,50 +3064,15 @@ export function App() {
     }
   };
 
-  const restoreDemoFamily = () => {
-    setChildren(initialChildren.map((child) => ({ ...child })));
-    setActiveChildId("emma");
-    setRequestStatuses({ emma: "pending" });
-    setSettingsByChild({ emma: cloneSafetySettings() });
-    setSchedulesByChild({ emma: cloneCommunicationSchedule({ ...defaultCommunicationSchedule, calls: { ...defaultCommunicationSchedule.calls, enabled: true, start: "00:00", end: "23:59" }, video: { ...defaultCommunicationSchedule.video, enabled: true, start: "00:00", end: "23:59" } }) });
-    setParentThreads(cloneParentThreads());
-    setServerConversations([]);
-    const demoParent = { id: "demo-parent", name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639" };
-    setFamilyOwner(demoParent);
-    setFamily({
-      id: "demo-family",
-      name: "Famille de Marie",
-      role: "primary",
-      members: [
-        { ...demoParent, role: "primary", isCurrent: true },
-        { id: "demo-coparent", name: "Alex", email: "alex@demo.club", contactId: "SC-193-406-852", role: "coparent", isCurrent: false },
-      ],
-      pendingInvitations: [],
-    });
-  };
-
-  const openDemoAccount = () => {
-    restoreDemoFamily();
-    void openAuthenticatedSession({ id: "demo-parent", name: "Marie", email: "marie@demo.club", contactId: "SC-105-284-639", demo: true });
-  };
-
   const loginChild = async (contactId, password) => {
     try {
       const { account } = await api.login({ contactId, password });
-      if (account.role !== "child" || account.contactId === demoChildContactId) return false;
+      if (account.role !== "child") return false;
       await openChildSession(account);
       return true;
     } catch {
       return false;
     }
-  };
-
-  const openDemoChildAccount = () => {
-    restoreDemoFamily();
-    setSession({ name: "Emma", role: "child", childId: "emma", demo: true });
-    setParentView(null);
-    setSelectedConversation(null);
-    setActiveTab("conversations");
   };
 
   const logoutParent = () => {
@@ -3474,7 +3082,6 @@ export function App() {
     setFamily(null);
     setChildren([]);
     setActiveChildId(null);
-    setRequestStatuses({});
     setSettingsByChild({});
     setSchedulesByChild({});
     setParentThreads([]);
@@ -3512,7 +3119,6 @@ export function App() {
   };
 
   const refreshFamily = async () => {
-    if (session?.demo) return family;
     const familyData = await api.family();
     const normalized = normalizeFamily(familyData, session);
     setFamily(normalized);
@@ -3520,51 +3126,28 @@ export function App() {
   };
 
   const inviteFamilyParent = async (email) => {
-    if (session?.demo) {
-      const id = `demo-invite-${Date.now()}`;
-      const token = `demo_${crypto.randomUUID().replace(/-/g, "")}_${Date.now()}`;
-      const invitation = { id, email, expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(), link: `${window.location.origin}${window.location.pathname}#familyInvite=${token}` };
-      setFamily((current) => ({ ...current, pendingInvitations: [invitation, ...(current?.pendingInvitations ?? [])] }));
-      return { invitation };
-    }
     const result = await api.inviteFamilyParent(email);
     await refreshFamily();
     return result;
   };
 
   const revokeFamilyInvitation = async (invitationId) => {
-    if (session?.demo) {
-      setFamily((current) => ({ ...current, pendingInvitations: (current?.pendingInvitations ?? []).filter((invitation) => invitation.id !== invitationId) }));
-      return;
-    }
     await api.revokeFamilyInvitation(invitationId);
     await refreshFamily();
   };
 
   const removeFamilyParent = async (parentId) => {
-    if (session?.demo) {
-      setFamily((current) => ({ ...current, members: (current?.members ?? []).filter((member) => member.id !== parentId) }));
-      return;
-    }
     await api.removeFamilyParent(parentId);
     await refreshFamily();
   };
 
   const saveAvatar = async (avatar) => {
-    if (session?.demo) {
-      setChildren((current) => current.map((child) => child.id === activeChild.id ? { ...child, avatar, image: null } : child));
-      return;
-    }
     const { child } = await api.updateAvatar(avatar);
     setChildren((current) => current.map((item) => item.id === child.id ? child : item));
     setSession((current) => ({ ...current, ...child, childId: child.id }));
   };
 
   const changeParentPassword = async ({ currentPassword, newPassword }) => {
-    if (session?.demo) {
-      if (currentPassword !== "demo2026") throw new Error("Pour le faux compte, le mot de passe actuel est demo2026.");
-      return;
-    }
     await api.updateParentPassword({ currentPassword, newPassword });
   };
 
@@ -3585,45 +3168,28 @@ export function App() {
       status: childData.status,
     };
 
-    if (session?.demo) {
-      if (childData.id) {
-        setChildren((current) => current.map((item) => item.id === childData.id ? { ...item, ...childData, username: uniqueUsername } : item));
-      } else {
-        const id = `child-${Date.now()}`;
-        const reservedIds = [familyOwner.contactId, ...friends.map((friend) => friend.contactId), pendingFriend.contactId, ...children.map((child) => child.contactId).filter(Boolean)];
-        const createdChild = { ...childData, id, username: uniqueUsername, contactId: childData.contactId ?? createUniqueContactId(reservedIds) };
-        setChildren((current) => [...current, createdChild]);
-        setActiveChildId(id);
-        setRequestStatuses((current) => ({ ...current, [id]: "none" }));
-        setSettingsByChild((current) => ({ ...current, [id]: cloneSafetySettings() }));
-        setSchedulesByChild((current) => ({ ...current, [id]: cloneCommunicationSchedule() }));
-      }
-    } else {
-      const result = childData.id
-        ? await api.updateChild(childData.id, profile)
-        : await api.createChild(profile);
-      const savedChild = result.child;
-      setChildren((current) => childData.id
-        ? current.map((item) => item.id === savedChild.id ? savedChild : item)
-        : [...current, savedChild]);
-      setActiveChildId(savedChild.id);
-      setRequestStatuses((current) => ({ ...current, [savedChild.id]: current[savedChild.id] ?? "none" }));
-      setSettingsByChild((current) => ({ ...current, [savedChild.id]: cloneSafetySettings(savedChild.settings) }));
-      setSchedulesByChild((current) => ({ ...current, [savedChild.id]: cloneCommunicationSchedule(savedChild.schedule) }));
-    }
+    const result = childData.id
+      ? await api.updateChild(childData.id, profile)
+      : await api.createChild(profile);
+    const savedChild = result.child;
+    setChildren((current) => childData.id
+      ? current.map((item) => item.id === savedChild.id ? savedChild : item)
+      : [...current, savedChild]);
+    setActiveChildId(savedChild.id);
+    setSettingsByChild((current) => ({ ...current, [savedChild.id]: cloneSafetySettings(savedChild.settings) }));
+    setSchedulesByChild((current) => ({ ...current, [savedChild.id]: cloneCommunicationSchedule(savedChild.schedule) }));
     setChildModal(null);
   };
 
   const deleteChild = async (childId) => {
     const childToDelete = children.find((child) => child.id === childId);
     if (!childToDelete) throw new Error("Ce profil enfant est introuvable.");
-    if (!session?.demo) await api.deleteChild(childId);
+    await api.deleteChild(childId);
 
     const remainingChildren = children.filter((child) => child.id !== childId);
     const removedThreadIds = parentThreads.filter((thread) => thread.contactId === childToDelete.contactId).map((thread) => thread.id);
     setChildren(remainingChildren);
     setActiveChildId((current) => current === childId ? remainingChildren[0]?.id ?? null : current);
-    setRequestStatuses((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== childId)));
     setSettingsByChild((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== childId)));
     setSchedulesByChild((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== childId)));
     setParentThreads((current) => current.filter((thread) => thread.contactId !== childToDelete.contactId));
@@ -3638,7 +3204,6 @@ export function App() {
     const previousSettings = cloneSafetySettings(settingsByChild[childId]);
     const nextSettings = { ...previousSettings, [key]: !previousSettings[key] };
     setSettingsByChild((current) => ({ ...current, [childId]: nextSettings }));
-    if (session?.demo) return;
     try {
       const { child } = await api.updateChild(childId, { settings: nextSettings });
       setSettingsByChild((current) => ({ ...current, [childId]: cloneSafetySettings(child.settings) }));
@@ -3649,38 +3214,14 @@ export function App() {
 
   const saveChildSchedule = async (childId, schedule) => {
     const nextSchedule = cloneCommunicationSchedule(schedule);
-    if (!session?.demo) {
-      const { child } = await api.updateChild(childId, { schedule: nextSchedule });
-      setSchedulesByChild((current) => ({ ...current, [childId]: cloneCommunicationSchedule(child.schedule) }));
-    } else {
-      setSchedulesByChild((current) => ({ ...current, [childId]: nextSchedule }));
-    }
+    const { child } = await api.updateChild(childId, { schedule: nextSchedule });
+    setSchedulesByChild((current) => ({ ...current, [childId]: cloneCommunicationSchedule(child.schedule) }));
     setScheduleModalChildId(null);
   };
 
   const openFamilyConversation = async (contactId) => {
     const familyChild = children.find((child) => child.contactId === contactId);
     if (!familyChild) throw new Error("Cet enfant n’appartient pas à votre famille.");
-
-    if (session?.demo) {
-      const threadId = `family-${familyChild.id}`;
-      setParentThreads((current) => current.some((thread) => thread.id === threadId) ? current : [{
-        id: threadId,
-        name: familyChild.name,
-        contactId: familyChild.contactId,
-        contactRole: "child",
-        isFamily: true,
-        relation: "Mon enfant",
-        initials: familyChild.name.slice(0, 1).toUpperCase(),
-        preview: "Commencez votre conversation familiale.",
-        time: "Maintenant",
-        unread: 0,
-        messages: [],
-      }, ...current]);
-      setSelectedParentThreadId(threadId);
-      setParentView("messages");
-      return threadId;
-    }
 
     const { conversation } = await api.openFamilyConversation(contactId);
     const conversationData = await api.conversations();
@@ -3697,18 +3238,15 @@ export function App() {
   };
 
   const sendParentMessage = async (threadId, text) => {
-    const result = session?.demo ? null : await api.sendMessage(threadId, text);
-    const messageId = result?.message?.id ?? `parent-message-${Date.now()}`;
+    const result = await api.sendMessage(threadId, text);
+    const messageId = result.message.id;
     setParentThreads((current) => current.map((thread) => thread.id === threadId ? {
       ...thread,
       preview: text,
       time: "À l’instant",
       messages: [...thread.messages, { id: messageId, direction: "sent", type: "text", text, time: "Maintenant", status: "received" }],
     } : thread));
-    if (session?.demo) {
-      window.setTimeout(() => setParentThreads((current) => current.map((thread) => thread.id === threadId ? { ...thread, messages: thread.messages.map((message) => message.id === messageId ? { ...message, status: "seen" } : message) } : thread)), 1400);
-    }
-    return result?.message;
+    return result.message;
   };
 
   const sendParentMedia = async (threadId, files) => {
@@ -3719,7 +3257,7 @@ export function App() {
     const latest = nextMessages[nextMessages.length - 1];
     setParentThreads((current) => current.map((thread) => thread.id === threadId ? {
       ...thread,
-      preview: latest?.type === "video" ? "Vidéo" : "Photo",
+      preview: latest?.type === "video" ? "Vidéo" : latest?.type === "audio" ? "Message vocal" : "Photo",
       time: "À l’instant",
       messages: appendUniqueMessages(thread.messages, nextMessages),
     } : thread));
@@ -3727,7 +3265,6 @@ export function App() {
   };
 
   const sendChildMessage = async (conversationId, text) => {
-    if (session?.demo) return null;
     const { message } = await api.sendMessage(conversationId, text);
     const nextMessage = { id: message.id, direction: "sent", type: "text", text, time: formatServerMessageTime(message.created_at), status: "received" };
     setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
@@ -3751,7 +3288,7 @@ export function App() {
       .map((message) => mapServerMessage(message, session.id, "sent"))
       .filter(Boolean);
     const latest = nextMessages[nextMessages.length - 1];
-    const preview = latest?.type === "video" ? "Vidéo" : "Photo";
+    const preview = latest?.type === "video" ? "Vidéo" : latest?.type === "audio" ? "Message vocal" : "Photo";
     setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
       ...conversation,
       preview,
@@ -3768,7 +3305,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if (!session || session.demo || !getToken()) return undefined;
+    if (!session || !getToken()) return undefined;
     const refreshConversations = async () => {
       try {
         const result = await api.conversations();
@@ -3779,14 +3316,14 @@ export function App() {
     };
     const timer = window.setInterval(refreshConversations, 15000);
     return () => window.clearInterval(timer);
-  }, [session?.id, session?.role, session?.demo]);
+  }, [session?.id, session?.role]);
 
   useEffect(() => {
     if (!session) return;
     const params = new URLSearchParams(window.location.search);
     const notificationType = params.get("notification");
     if (!notificationType) return;
-    let handled = notificationType === "test";
+    let handled = false;
 
     if (notificationType === "message") {
       const conversationId = params.get("conversation");
@@ -3829,16 +3366,13 @@ export function App() {
       return <section className="session-restoring" role="status" aria-live="polite"><span className="session-restoring__spinner" aria-hidden="true" /><strong>Ouverture de votre Clubhouse…</strong><small>Votre connexion est restaurée.</small></section>;
     }
     if (!session) {
-      return <AuthScreen onLogin={loginParent} onRegister={registerParent} onDemo={openDemoAccount} onChildLogin={loginChild} onChildDemo={openDemoChildAccount} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
-    }
-    if (parentView === "access") {
-      return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
+      return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenFamilyConversation={openFamilyConversation} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenFamilyConversation={openFamilyConversation} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
     if (parentView === "games") {
-      return <ParentGamesScreen parent={familyOwner} children={children} isDemo={Boolean(session.demo)} onBack={() => setParentView("dashboard")} />;
+      return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
     }
     if (parentView === "dashboard") {
       return (
@@ -3847,14 +3381,10 @@ export function App() {
           family={family}
           children={children}
           child={activeChild}
-          isDemo={Boolean(session.demo)}
-          requestStatus={activeRequestStatus}
           onSelectChild={setActiveChildId}
           onAddChild={() => setChildModal({ mode: "create" })}
           onEditChild={() => setChildModal({ mode: "edit", childId: activeChild.id })}
           onMessageChild={() => activeChild && void openFamilyConversation(activeChild.contactId)}
-          onApproveRequest={() => activeChild && setRequestStatuses((current) => ({ ...current, [activeChild.id]: "approved" }))}
-          onDeclineRequest={() => activeChild && setRequestStatuses((current) => ({ ...current, [activeChild.id]: "declined" }))}
           settings={activeSettings}
           onToggleSetting={(key) => activeChild && void toggleChildSetting(activeChild.id, key)}
           schedule={activeSchedule}
@@ -3865,7 +3395,6 @@ export function App() {
           onOpenContactIds={() => setIsContactIdsOpen(true)}
           onOpenPassword={() => setIsParentPasswordOpen(true)}
           onEditSchedule={() => activeChild && setScheduleModalChildId(activeChild.id)}
-          onExit={() => setParentView(null)}
           onLogout={logoutParent}
         />
       );
@@ -3874,30 +3403,20 @@ export function App() {
       return <NoChildScreen onOpenParent={() => setParentView("dashboard")} />;
     }
     if (activeChild.status === "paused") {
-      return <PausedChildScreen child={activeChild} onOpenParent={() => setParentView("access")} />;
+      return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
     if (selectedConversation) {
       return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} />;
     }
     if (activeTab === "clubhouse") {
-      const demoAdult = familyOwner.contactId ? [{ id: familyOwner.id ?? "demo-parent", name: familyOwner.name || "Mon parent", contactId: familyOwner.contactId, role: "parent" }] : [];
-      const gameContacts = session?.demo ? [...demoAdult, ...friends.map((friend) => ({ ...friend, role: "child" }))] : [];
-      return <ClubhouseScreen child={activeChild} contacts={gameContacts} isDemo={Boolean(session?.demo)} />;
+      return <ClubhouseScreen child={activeChild} />;
     }
     if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
-    if (activeTab === "profile") return <ProfileScreen child={activeChild} isDemo={Boolean(session?.demo)} onOpenParent={() => setParentView("access")} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onLogout={logoutParent} />;
-    const baseFriends = session?.demo ? friends : [];
-    const approvedFriends = (session?.demo && activeRequestStatus === "approved" ? [...baseFriends, pendingFriend] : baseFriends).map((friend) => ({ ...friend, online: presenceByContactId[friend.contactId] ?? false }));
-    const availableConversations = session?.demo ? approvedFriends.map((friend) => conversations.find((item) => item.id === friend.id) ?? {
-      ...friend,
-      preview: "Vous êtes maintenant amis !",
-      time: "Maintenant",
-      ActivityIcon: Sparkle,
-      received: [`Coucou ${activeChild.name} ! On peut enfin discuter ici.`],
-      sent: "Bienvenue dans mon Clubhouse !",
-    }) : serverConversations;
+    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onLogout={logoutParent} />;
+    const availableConversations = serverConversations.map((conversation) => ({ ...conversation, online: presenceByContactId[conversation.contactId] ?? false }));
+    const approvedFriends = availableConversations.filter((conversation) => !conversation.isFamily && conversation.contactRole !== "parent");
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeRequestStatus, activeSchedule, activeSettings, activeTab, children, family, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
+  }, [activeChild, activeSchedule, activeSettings, activeTab, children, family, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
@@ -3914,13 +3433,13 @@ export function App() {
         {session && !selectedConversation && !parentView && !isAvatarPreferencesOpen && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
         {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
         {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} family={family} children={children} onClose={() => setIsContactIdsOpen(false)} />}
-        {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal isDemo={Boolean(session.demo)} onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}
-        {session?.role === "parent" && isFamilyParentsOpen && family && <FamilyParentsModal family={family} currentParent={session} isDemo={Boolean(session.demo)} onClose={() => setIsFamilyParentsOpen(false)} onInvite={inviteFamilyParent} onRevoke={revokeFamilyInvitation} onRemove={removeFamilyParent} />}
+        {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}
+        {session?.role === "parent" && isFamilyParentsOpen && family && <FamilyParentsModal family={family} currentParent={session} onClose={() => setIsFamilyParentsOpen(false)} onInvite={inviteFamilyParent} onRevoke={revokeFamilyInvitation} onRemove={removeFamilyParent} />}
         {session && childModal && (
           <ChildAccountModal
             key={`${childModal.mode}-${childModal.childId ?? "new"}`}
             child={childModal.mode === "edit" ? children.find((child) => child.id === childModal.childId) : null}
-            canDelete={Boolean(session.demo) || family?.role === "primary"}
+            canDelete={family?.role === "primary"}
             onClose={() => setChildModal(null)}
             onSave={saveChild}
             onDelete={deleteChild}
