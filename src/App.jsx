@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
+  Anchor,
   ArrowLeft,
   Bell,
   Brain,
@@ -12,13 +13,13 @@ import {
   Checks,
   Clock,
   Copy,
-  DotsThree,
   DownloadSimple,
   Eye,
   EyeSlash,
   FlagPennant,
   GameController,
   GearSix,
+  GridFour,
   House,
   IdentificationCard,
   Lightning,
@@ -371,6 +372,261 @@ const mapServerMessage = (message, accountId, directionOverride = null) => {
     status: "received",
   };
 };
+
+const conversationGameOptions = [
+  {
+    id: "connect_four",
+    title: "Puissance 4",
+    description: "Aligne quatre jetons avant ton adversaire.",
+    Icon: GameController,
+  },
+  {
+    id: "tic_tac_toe",
+    title: "Morpion",
+    description: "Aligne trois symboles sur une grille de neuf cases.",
+    Icon: GridFour,
+  },
+  {
+    id: "naval_battle",
+    title: "Bataille navale",
+    description: "Repère la flotte adverse sur une grille 5 × 5.",
+    Icon: Anchor,
+  },
+];
+
+const conversationGameById = Object.fromEntries(
+  conversationGameOptions.map((game) => [game.id, game]),
+);
+
+const normalizeConversationGame = (game) => ({
+  ...game,
+  id: game.id,
+  gameType: game.gameType ?? game.game_type ?? "connect_four",
+  status: game.status ?? "pending",
+  playerOneId: game.playerOneId ?? game.player_one_id,
+  playerTwoId: game.playerTwoId ?? game.player_two_id,
+  playerOneName: game.playerOneName ?? game.player_one_name ?? "",
+  playerTwoName: game.playerTwoName ?? game.player_two_name ?? "",
+  playerOneContactId: game.playerOneContactId ?? game.player_one_contact_id ?? "",
+  playerTwoContactId: game.playerTwoContactId ?? game.player_two_contact_id ?? "",
+  currentPlayerId: game.currentPlayerId ?? game.current_player_id ?? null,
+  winnerId: game.winnerId ?? game.winner_id ?? null,
+  createdAt: game.createdAt ?? game.created_at ?? new Date().toISOString(),
+  updatedAt: game.updatedAt ?? game.updated_at ?? game.createdAt ?? game.created_at ?? new Date().toISOString(),
+});
+
+const isGameWithContact = (game, contactId) => (
+  game.playerOneContactId === contactId || game.playerTwoContactId === contactId
+);
+
+function useConversationGameInvites({ contactId, enabled, inviteGame }) {
+  const [games, setGames] = useState([]);
+  const [actionError, setActionError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+  const actionLockRef = useRef(false);
+
+  useEffect(() => {
+    let isActive = true;
+    setGames([]);
+    setActionError("");
+    if (!enabled || !contactId) return () => { isActive = false; };
+
+    const refresh = async () => {
+      try {
+        const result = await api.games();
+        if (!isActive) return;
+        const nextGames = (result.games ?? [])
+          .map(normalizeConversationGame)
+          .filter((game) => isGameWithContact(game, contactId));
+        setGames(nextGames);
+      } catch {
+        // Messaging remains usable if the game list cannot be refreshed.
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 4000);
+    return () => {
+      isActive = false;
+      window.clearInterval(timer);
+    };
+  }, [contactId, enabled]);
+
+  const sendInvitation = async (gameType) => {
+    if (actionLockRef.current) throw new Error("Une invitation est déjà en cours d’envoi.");
+    if (games.some((game) => game.gameType === gameType && game.status === "pending")) {
+      throw new Error(`Une invitation à ${conversationGameById[gameType]?.title ?? "ce jeu"} est déjà en attente.`);
+    }
+    actionLockRef.current = true;
+    setBusyAction("invite");
+    setActionError("");
+    try {
+      const result = inviteGame
+        ? await inviteGame(contactId, gameType)
+        : await api.inviteGame(contactId, gameType);
+      const game = normalizeConversationGame(result.game ?? result);
+      setGames((current) => [game, ...current.filter((item) => item.id !== game.id)]);
+      return game;
+    } catch (error) {
+      setActionError(error.message);
+      throw error;
+    } finally {
+      actionLockRef.current = false;
+      setBusyAction("");
+    }
+  };
+
+  const respondToInvitation = async (game, action) => {
+    if (actionLockRef.current) return null;
+    actionLockRef.current = true;
+    setBusyAction(`${action}:${game.id}`);
+    setActionError("");
+    try {
+      const result = await api.respondToGame(game.id, action);
+      const updated = normalizeConversationGame(result.game ?? result);
+      setGames((current) => current.map((item) => item.id === updated.id ? updated : item));
+      return updated;
+    } catch (error) {
+      setActionError(error.message);
+      throw error;
+    } finally {
+      actionLockRef.current = false;
+      setBusyAction("");
+    }
+  };
+
+  const visibleGames = useMemo(() => [...games]
+    .sort((first, second) => new Date(first.updatedAt).getTime() - new Date(second.updatedAt).getTime())
+    .slice(-3), [games]);
+
+  return {
+    games: visibleGames,
+    actionError,
+    busyAction,
+    clearActionError: () => setActionError(""),
+    sendInvitation,
+    respondToInvitation,
+  };
+}
+
+function ConversationGameInviteDialog({ contactName, relation, parent = false, onClose, onSend }) {
+  const [selectedGameType, setSelectedGameType] = useState("");
+  const [error, setError] = useState("");
+  const [isSending, setIsSending] = useState(false);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !isSending) onClose();
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isSending, onClose]);
+
+  const submitInvitation = async (event) => {
+    event.preventDefault();
+    if (!selectedGameType || isSending) return;
+    setIsSending(true);
+    setError("");
+    try {
+      await onSend(selectedGameType);
+      onClose();
+    } catch (requestError) {
+      setError(requestError.message || "L’invitation n’a pas pu être envoyée.");
+      setIsSending(false);
+    }
+  };
+
+  return createPortal((
+    <div className="conversation-game-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isSending) onClose();
+    }}>
+      <section className={`conversation-game-dialog ${parent ? "conversation-game-dialog--parent" : ""}`} role="dialog" aria-modal="true" aria-labelledby="conversation-game-title">
+        <button type="button" className="conversation-game-dialog__close" onClick={onClose} disabled={isSending} aria-label="Fermer le choix du jeu"><X size={21} weight="bold" /></button>
+        <div className="conversation-game-dialog__heading">
+          <span><GameController size={30} weight="fill" /></span>
+          <div><small>Invitation privée</small><h2 id="conversation-game-title">Inviter {contactName} à jouer</h2></div>
+        </div>
+        <div className="conversation-game-dialog__target">
+          <ShieldCheck size={19} weight="fill" />
+          <span><strong>{contactName}</strong><small>{relation || "Contact autorisé"} · destinataire verrouillé</small></span>
+          <CheckCircle size={19} weight="fill" />
+        </div>
+        <form onSubmit={submitInvitation}>
+          <fieldset>
+            <legend>Choisis un jeu</legend>
+            <div className="conversation-game-options">
+              {conversationGameOptions.map(({ id, title, description, Icon }) => (
+                <button type="button" key={id} className={selectedGameType === id ? "is-selected" : ""} onClick={() => { setSelectedGameType(id); setError(""); }} aria-pressed={selectedGameType === id}>
+                  <span><Icon size={23} weight="fill" /></span>
+                  <span><strong>{title}</strong><small>{description}</small></span>
+                  <span className="conversation-game-option__check">{selectedGameType === id && <Check size={15} weight="bold" />}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+          {error && <p className="conversation-game-dialog__error" role="alert">{error}</p>}
+          <button type="submit" className="conversation-game-dialog__send" disabled={!selectedGameType || isSending}>
+            <PaperPlaneTilt size={19} weight="fill" />
+            {isSending ? "Envoi de l’invitation…" : "Envoyer l’invitation"}
+          </button>
+        </form>
+        <p className="conversation-game-dialog__privacy"><LockKey size={15} weight="fill" /> La partie reste privée dans Secret Clubhouse.</p>
+      </section>
+    </div>
+  ), document.body);
+}
+
+function ConversationGameInviteCard({ game, contactId, contactName, parent = false, busyAction, onRespond, onOpenGames }) {
+  const [error, setError] = useState("");
+  const gameDetails = conversationGameById[game.gameType] ?? conversationGameById.connect_four;
+  const GameIcon = gameDetails.Icon;
+  const direction = game.playerTwoContactId === contactId ? "sent" : "received";
+  const isReceivedInvitation = game.status === "pending" && direction === "received";
+  const isBusy = busyAction.endsWith(`:${game.id}`);
+  const statusCopy = game.status === "pending"
+    ? direction === "sent"
+      ? "Invitation envoyée · en attente de réponse"
+      : parent ? `${contactName} vous invite à jouer` : `${contactName} t’invite à jouer`
+    : game.status === "active"
+      ? "Partie acceptée · prête à continuer"
+      : game.status === "declined"
+        ? "Invitation refusée"
+        : game.winnerId ? "Partie terminée" : "Match nul";
+
+  const respond = async (action) => {
+    setError("");
+    try {
+      await onRespond(game, action);
+    } catch (requestError) {
+      setError(requestError.message || "Cette invitation n’est plus disponible.");
+    }
+  };
+
+  return (
+    <article className={`conversation-game-card conversation-game-card--${direction} ${parent ? "conversation-game-card--parent" : ""}`}>
+      <span className="conversation-game-card__icon"><GameIcon size={25} weight="fill" /></span>
+      <div className="conversation-game-card__copy">
+        <small>Invitation à jouer</small>
+        <strong>{gameDetails.title}</strong>
+        <span>{statusCopy}</span>
+      </div>
+      {isReceivedInvitation && (
+        <div className="conversation-game-card__actions">
+          <button type="button" className="is-secondary" onClick={() => void respond("decline")} disabled={isBusy}>Refuser</button>
+          <button type="button" onClick={() => void respond("accept")} disabled={isBusy}>{isBusy ? "Réponse…" : "Accepter"}</button>
+        </div>
+      )}
+      {game.status === "active" && <button type="button" className="conversation-game-card__open" onClick={() => onOpenGames?.(game)}><GameController size={17} weight="fill" /> Jouer</button>}
+      <span className="conversation-game-card__meta"><Clock size={12} weight="fill" /> {formatServerMessageTime(game.createdAt)}</span>
+      {error && <p className="conversation-game-card__error" role="alert">{error}</p>}
+    </article>
+  );
+}
 
 const appendUniqueMessages = (currentMessages, incomingMessages) => {
   const existingIds = new Set(currentMessages.map((message) => message.id));
@@ -749,7 +1005,7 @@ function MessageStatus({ status = "received" }) {
 function ConversationMediaMessage({ message, parent = false }) {
   const [mediaUrl, setMediaUrl] = useState(message.url ?? "");
   const [loadError, setLoadError] = useState("");
-  const [isPhotoOpen, setIsPhotoOpen] = useState(false);
+  const [isMediaOpen, setIsMediaOpen] = useState(false);
   const isReceived = message.direction === "received";
   const isVideo = message.type === "video";
 
@@ -779,10 +1035,10 @@ function ConversationMediaMessage({ message, parent = false }) {
   }, [message.id, message.url]);
 
   useEffect(() => {
-    if (!isPhotoOpen) return undefined;
+    if (!isMediaOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
     const closeOnEscape = (event) => {
-      if (event.key === "Escape") setIsPhotoOpen(false);
+      if (event.key === "Escape") setIsMediaOpen(false);
     };
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", closeOnEscape);
@@ -790,7 +1046,7 @@ function ConversationMediaMessage({ message, parent = false }) {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [isPhotoOpen]);
+  }, [isMediaOpen]);
 
   const className = parent
     ? `parent-media-message ${isReceived ? "parent-media-message--received" : ""}`
@@ -802,13 +1058,21 @@ function ConversationMediaMessage({ message, parent = false }) {
     <>
     <figure className={className}>
       {mediaUrl ? (
-        isVideo
-          ? <video src={mediaUrl} controls playsInline aria-label={`${description} : ${message.name || "vidéo"}`} />
-          : (
-            <button type="button" className="media-message__photo-button" onClick={() => setIsPhotoOpen(true)} aria-label="Afficher la photo en plein écran">
+        <div className="media-message__preview">
+          {isVideo
+            ? <video src={mediaUrl} controls playsInline aria-label={`${description} : ${message.name || "vidéo"}`} />
+            : <button type="button" className="media-message__photo-button" onClick={() => setIsMediaOpen(true)} aria-label="Afficher la photo en plein écran">
               <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} />
+            </button>}
+          {isVideo && (
+            <button type="button" className="media-message__action media-message__action--expand" onClick={() => setIsMediaOpen(true)} aria-label="Afficher la vidéo en plein écran" title="Agrandir">
+              <Eye size={20} weight="bold" />
             </button>
-          )
+          )}
+          <a className="media-message__action media-message__action--download" href={mediaUrl} download={message.name || (isVideo ? "video" : "photo")} onClick={(event) => event.stopPropagation()} aria-label={`Enregistrer la ${isVideo ? "vidéo" : "photo"}`} title="Enregistrer">
+            <DownloadSimple size={20} weight="bold" />
+          </a>
+        </div>
       ) : (
         <div className={`${placeholderClassName} ${loadError ? "has-error" : ""}`} role={loadError ? "alert" : "status"}>
           {loadError || `Chargement de la ${isVideo ? "vidéo" : "photo"}…`}
@@ -819,12 +1083,18 @@ function ConversationMediaMessage({ message, parent = false }) {
         {!isReceived && <MessageStatus status={message.status ?? "received"} />}
       </figcaption>
     </figure>
-    {isPhotoOpen && createPortal((
-      <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="Photo en plein écran" onClick={() => setIsPhotoOpen(false)}>
-        <button type="button" className="photo-lightbox__close" onClick={() => setIsPhotoOpen(false)} aria-label="Fermer la photo">
+    {isMediaOpen && createPortal((
+      <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label={`${isVideo ? "Vidéo" : "Photo"} en plein écran`} onClick={() => setIsMediaOpen(false)}>
+        <button type="button" className="photo-lightbox__close" onClick={() => setIsMediaOpen(false)} aria-label={`Fermer la ${isVideo ? "vidéo" : "photo"}`}>
           <X size={28} weight="bold" />
         </button>
-        <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} onClick={(event) => event.stopPropagation()} />
+        <a className="photo-lightbox__download" href={mediaUrl} download={message.name || (isVideo ? "video" : "photo")} onClick={(event) => event.stopPropagation()} aria-label={`Enregistrer la ${isVideo ? "vidéo" : "photo"}`}>
+          <DownloadSimple size={24} weight="bold" />
+          <span>Enregistrer</span>
+        </a>
+        {isVideo
+          ? <video src={mediaUrl} controls autoPlay playsInline aria-label={`${description} : ${message.name || "vidéo"}`} onClick={(event) => event.stopPropagation()} />
+          : <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} onClick={(event) => event.stopPropagation()} />}
       </div>
     ), document.body)}
     </>
@@ -1521,11 +1791,12 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
   );
 }
 
-function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage, onSendMedia }) {
+function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage, onSendMedia, onInviteGame, onOpenGames }) {
   const [draft, setDraft] = useState("");
   const [sentMessages, setSentMessages] = useState([]);
   const [mediaError, setMediaError] = useState("");
   const [messageError, setMessageError] = useState("");
+  const [isGameInviteOpen, setIsGameInviteOpen] = useState(false);
   const mediaInputRef = useRef(null);
   const mediaUrlsRef = useRef([]);
   const messagePolicy = getChannelPolicy(schedule, "messages");
@@ -1533,6 +1804,17 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   const autoReplyIsActive = !messagePolicy.allowed && autoReply.enabled && autoReply.message.trim();
   const nextMessageTime = schedule.messages.start.replace(":", " h ");
   const { typingName, notifyTyping, stopTyping } = useTypingIndicator(conversation.id, Boolean(conversation.serverBacked));
+  const canInviteToGame = Boolean(conversation.contactId && (conversation.serverBacked || onInviteGame));
+  const {
+    games: conversationGames,
+    busyAction: gameBusyAction,
+    sendInvitation: sendGameInvitation,
+    respondToInvitation: respondToGameInvitation,
+  } = useConversationGameInvites({
+    contactId: conversation.contactId,
+    enabled: Boolean(conversation.serverBacked),
+    inviteGame: onInviteGame,
+  });
 
   useEffect(() => () => {
     mediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -1612,9 +1894,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
           <strong>{conversation.name}</strong>
           <span><ShieldCheck size={13} weight="fill" /> {conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
         </div>
-        <button className="icon-button" type="button" aria-label="Plus d’options">
-          <DotsThree size={23} weight="bold" />
-        </button>
+        {canInviteToGame && <button className="chat-game-button" type="button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${conversation.name} à jouer`}><GameController size={20} weight="fill" /><span>Jouer</span></button>}
       </header>
 
       <div className="chat-body" aria-live="polite">
@@ -1635,6 +1915,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
           if (message.type === "audio") return <VoiceMessage key={message.id} url={message.url} duration={message.duration} status={message.status} />;
           return <ConversationMediaMessage key={message.id} message={message} />;
         })}
+        {conversationGames.map((game) => <ConversationGameInviteCard key={game.id} game={game} contactId={conversation.contactId} contactName={conversation.name} busyAction={gameBusyAction} onRespond={respondToGameInvitation} onOpenGames={onOpenGames} />)}
         {autoReplyIsActive && (
           <div className="automatic-reply-group">
             <span><Clock size={13} weight="fill" /> Réponse automatique envoyée</span>
@@ -1659,6 +1940,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         <VoiceRecorder disabled={!messagePolicy.allowed} onSend={sendVoiceMessage} />
         <button type="submit" className="send-button" aria-label="Envoyer le message" disabled={!messagePolicy.allowed}><PaperPlaneTilt size={21} weight="fill" /></button>
       </form>
+      {isGameInviteOpen && <ConversationGameInviteDialog contactName={conversation.name} relation={conversation.isFamily ? "Membre de ta famille" : "Contact approuvé"} onClose={() => setIsGameInviteOpen(false)} onSend={sendGameInvitation} />}
     </section>
   );
 }
@@ -2272,38 +2554,90 @@ function ParentGamesScreen({ parent, onBack }) {
   );
 }
 
-function ParentDashboard({ parentName, family, children, child, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onEditSchedule, onLogout }) {
+function ParentModeNavigation({ active, unreadMessages = 0, onHome, onManagement, onConversations }) {
+  const items = [
+    { id: "home", label: "Accueil", Icon: House, onClick: onHome },
+    { id: "management", label: "Gestion", Icon: GearSix, onClick: onManagement },
+    { id: "conversations", label: "Conversations", Icon: ChatCircleDots, onClick: onConversations, badge: unreadMessages },
+  ];
+
+  return (
+    <nav className="parent-mode-navigation" aria-label="Navigation du mode parent">
+      {items.map(({ id, label, Icon, onClick, badge }) => (
+        <button type="button" key={id} className={active === id ? "is-active" : ""} onClick={onClick} aria-current={active === id ? "page" : undefined}>
+          <span><Icon size={20} weight={active === id ? "fill" : "bold"} />{badge > 0 && <em>{badge}</em>}</span>
+          <strong>{label}</strong>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onEditSchedule, onLogout }) {
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
+  const isHome = activeSection === "home";
 
   return (
     <section className="parent-dashboard" aria-labelledby="parent-dashboard-title">
       <header className="parent-topbar">
         <div>
           <span className="parent-topbar__eyebrow"><ShieldCheck size={15} weight="fill" /> Mode parent</span>
-          <h1 id="parent-dashboard-title">Bonjour, {parentName}</h1>
+          <h1 id="parent-dashboard-title">{isHome ? `Bonjour, ${parentName}` : "Gestion de la famille"}</h1>
         </div>
         <div className="parent-topbar__actions">
-          <button type="button" className="parent-message-button" onClick={onOpenMessages} aria-label={`Ouvrir la messagerie parentale${unreadMessages ? `, ${unreadMessages} messages non lus` : ""}`}><ChatCircleDots size={21} weight="fill" />{unreadMessages > 0 && <span>{unreadMessages}</span>}</button>
           <span className="parent-avatar" aria-label={`Profil de ${parentName}`} role="img"><UserCircle size={30} weight="fill" /></span>
           <button type="button" className="parent-logout-button" onClick={onLogout}><SignOut size={19} weight="bold" /><span>Déconnexion</span></button>
         </div>
       </header>
+      <div className={`parent-content parent-content--${activeSection}`}>
+        {isHome && <>
+        {!child && (
+          <section className="empty-family-card" aria-labelledby="empty-family-title">
+            <span><UserPlus size={34} weight="fill" /></span>
+            <div><span>Première étape</span><h2 id="empty-family-title">Ajoutez votre premier enfant</h2><p>Créez un identifiant privé adapté aux 6–13 ans. Aucun numéro de téléphone ne sera demandé.</p></div>
+            <button className="primary-button" type="button" onClick={onAddChild}><Plus size={18} weight="bold" /> Créer un profil enfant</button>
+          </section>
+        )}
 
-      <div className="parent-content">
-        <ChildProfilesPanel children={children} activeChildId={child?.id} onSelectChild={onSelectChild} onAddChild={onAddChild} />
+        {child && <>
+        <section className={`child-overview ${child.status === "paused" ? "is-paused" : ""}`} aria-label={`Compte enfant de ${child.name}`}>
+          <Avatar person={child} size="parent-child" />
+          <div><span>Profil sélectionné</span><strong>{child.name}</strong><small>@{child.username} · ID {child.contactId} · {child.age} ans · {child.status === "active" ? "Compte actif" : "Compte en pause"}</small></div>
+          <div className="child-overview__actions">
+            <button type="button" className="child-message-action" onClick={onMessageChild} aria-label={`Écrire à ${child.name}`} title={`Écrire à ${child.name}`}><ChatCircleDots size={20} weight="fill" /></button>
+            <button type="button" className="child-edit-button" onClick={onEditChild} aria-label={`Modifier le profil de ${child.name}`} title="Modifier le profil"><PencilSimple size={19} weight="bold" /></button>
+          </div>
+        </section>
 
-        <button type="button" className="parent-messages-entry" onClick={onOpenMessages}>
-          <span className="parent-messages-entry__icon"><ChatCircleDots size={24} weight="fill" /></span>
-          <span><strong>Famille et parents</strong><small>Échangez avec l’autre parent, vos enfants et les parents de leurs contacts.</small></span>
-          {unreadMessages > 0 ? <span className="parent-message-count">{unreadMessages}</span> : <CheckCircle size={20} weight="fill" />}
-          <CaretRight size={18} weight="bold" aria-hidden="true" />
-        </button>
+        <div className="parent-stats" aria-label="Résumé du compte">
+          <div><UsersThree size={22} weight="fill" /><strong>0</strong><span>amis</span></div>
+          <div><UserPlus size={22} weight="fill" /><strong>0</strong><span>demande</span></div>
+          <div><Shield size={22} weight="fill" /><strong>3</strong><span>protections</span></div>
+        </div>
+        </>}
 
         <button type="button" className="parent-games-entry" onClick={onOpenGames}>
           <span className="parent-games-entry__icon"><GameController size={24} weight="fill" /></span>
           <span><strong>Jeux multijoueurs</strong><small>Invitez un proche à Puissance 4, au Morpion ou à la Bataille navale.</small></span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
+
+        {child && <section className="parent-section parent-activity" aria-labelledby="activity-title">
+          <div className="parent-section__title">
+            <div><span className="section-icon section-icon--sun"><Bell size={19} weight="fill" /></span><div><h2 id="activity-title">Activité récente</h2><p>Un résumé qui respecte ses conversations.</p></div></div>
+          </div>
+          <div className="activity-row"><CheckCircle size={19} weight="fill" /><span><strong>Aucun signalement</strong><small>Ces 7 derniers jours</small></span></div>
+          <div className="privacy-note"><LockKey size={16} weight="fill" /> Le contenu des messages reste privé. Vous voyez uniquement les alertes de sécurité.</div>
+        </section>}
+        </>}
+
+        {!isHome && <>
+        <div className="parent-section-intro">
+          <span><GearSix size={22} weight="fill" /></span>
+          <div><strong>Tout gérer au même endroit</strong><small>Profils, contacts, sécurité et compte parent.</small></div>
+        </div>
+
+        <ChildProfilesPanel children={children} activeChildId={child?.id} onSelectChild={onSelectChild} onAddChild={onAddChild} />
 
         <button type="button" className="family-parents-entry" onClick={onOpenFamilyParents}>
           <span><UsersThree size={23} weight="fill" /></span>
@@ -2333,30 +2667,14 @@ function ParentDashboard({ parentName, family, children, child, onSelectChild, o
         </a>
 
         {!child && (
-          <section className="empty-family-card" aria-labelledby="empty-family-title">
+          <section className="empty-family-card" aria-labelledby="empty-family-management-title">
             <span><UserPlus size={34} weight="fill" /></span>
-            <div><span>Première étape</span><h2 id="empty-family-title">Ajoutez votre premier enfant</h2><p>Créez un identifiant privé adapté aux 6–13 ans. Aucun numéro de téléphone ne sera demandé.</p></div>
+            <div><span>Première étape</span><h2 id="empty-family-management-title">Ajoutez votre premier enfant</h2><p>Créez un identifiant privé adapté aux 6–13 ans. Aucun numéro de téléphone ne sera demandé.</p></div>
             <button className="primary-button" type="button" onClick={onAddChild}><Plus size={18} weight="bold" /> Créer un profil enfant</button>
           </section>
         )}
 
         {child && <>
-
-        <section className={`child-overview ${child.status === "paused" ? "is-paused" : ""}`} aria-label={`Compte enfant de ${child.name}`}>
-          <Avatar person={child} size="parent-child" />
-          <div><span>Profil sélectionné</span><strong>{child.name}</strong><small>@{child.username} · ID {child.contactId} · {child.age} ans · {child.status === "active" ? "Compte actif" : "Compte en pause"}</small></div>
-          <div className="child-overview__actions">
-            <button type="button" className="child-message-action" onClick={onMessageChild} aria-label={`Écrire à ${child.name}`} title={`Écrire à ${child.name}`}><ChatCircleDots size={20} weight="fill" /></button>
-            <button type="button" className="child-edit-button" onClick={onEditChild} aria-label={`Modifier le profil de ${child.name}`} title="Modifier le profil"><PencilSimple size={19} weight="bold" /></button>
-          </div>
-        </section>
-
-        <div className="parent-stats" aria-label="Résumé du compte">
-          <div><UsersThree size={22} weight="fill" /><strong>0</strong><span>amis</span></div>
-          <div><UserPlus size={22} weight="fill" /><strong>0</strong><span>demande</span></div>
-          <div><Shield size={22} weight="fill" /><strong>3</strong><span>protections</span></div>
-        </div>
-
         <section className="parent-section" aria-labelledby="requests-title">
           <div className="parent-section__title">
             <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Vous décidez qui peut parler à {child.name}.</p></div></div>
@@ -2378,26 +2696,27 @@ function ParentDashboard({ parentName, family, children, child, onSelectChild, o
           </div>
         </section>
 
-        <section className="parent-section parent-activity" aria-labelledby="activity-title">
-          <div className="parent-section__title">
-            <div><span className="section-icon section-icon--sun"><Bell size={19} weight="fill" /></span><div><h2 id="activity-title">Activité récente</h2><p>Un résumé qui respecte ses conversations.</p></div></div>
-          </div>
-          <div className="activity-row"><CheckCircle size={19} weight="fill" /><span><strong>Aucun signalement</strong><small>Ces 7 derniers jours</small></span></div>
-          <div className="privacy-note"><LockKey size={16} weight="fill" /> Le contenu des messages reste privé. Vous voyez uniquement les alertes de sécurité.</div>
-        </section>
-
         </>}
 
         <PushNotificationButton />
+        </>}
       </div>
+      <ParentModeNavigation
+        active={activeSection}
+        unreadMessages={unreadMessages}
+        onHome={() => onChangeSection("home")}
+        onManagement={() => onChangeSection("management")}
+        onConversations={onOpenMessages}
+      />
     </section>
   );
 }
 
-function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onSendMedia, onOpenFamilyConversation, conversationSyncError = "", onRetryConversationSync, initialContactId = "", onContactHandled }) {
+function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onHome, onManagement, onSend, onSendMedia, onInviteGame, onOpenGames, onOpenFamilyConversation, conversationSyncError = "", onRetryConversationSync, initialContactId = "", onContactHandled }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
+  const [isGameInviteOpen, setIsGameInviteOpen] = useState(false);
   const [isAddingContact, setIsAddingContact] = useState(Boolean(initialContactId));
   const [contactId, setContactId] = useState(initialContactId);
   const [contactFeedback, setContactFeedback] = useState(null);
@@ -2407,6 +2726,19 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const { typingName, notifyTyping, stopTyping } = useTypingIndicator(selectedThread?.id, Boolean(selectedThread?.serverBacked));
+  const canInviteToGame = Boolean(selectedThread?.contactId && (selectedThread.serverBacked || onInviteGame));
+  const {
+    games: conversationGames,
+    busyAction: gameBusyAction,
+    sendInvitation: sendGameInvitation,
+    respondToInvitation: respondToGameInvitation,
+  } = useConversationGameInvites({
+    contactId: selectedThread?.contactId ?? "",
+    enabled: Boolean(selectedThread?.serverBacked),
+    inviteGame: onInviteGame,
+  });
+
+  useEffect(() => setIsGameInviteOpen(false), [selectedThreadId]);
 
   const submitContact = async (event) => {
     event.preventDefault();
@@ -2499,6 +2831,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
           <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
           <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
+          {canInviteToGame && <button type="button" className="parent-thread-game-button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${selectedThread.name} à jouer`}><GameController size={19} weight="fill" /><span>Jouer</span></button>}
         </header>
         <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
@@ -2513,6 +2846,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
           {(mediaByThread[selectedThread.id] ?? []).map((media) => media.type === "audio"
             ? <VoiceMessage key={media.id} url={media.url} duration={media.duration} status={media.status} parent />
             : <ConversationMediaMessage key={media.id} message={media} parent />)}
+          {conversationGames.map((game) => <ConversationGameInviteCard key={game.id} game={game} contactId={selectedThread.contactId} contactName={selectedThread.name} parent busyAction={gameBusyAction} onRespond={respondToGameInvitation} onOpenGames={onOpenGames} />)}
           <TypingIndicator name={typingName} />
         </div>
         {messageError && <div className="parent-media-error" role="alert">{messageError}</div>}
@@ -2524,6 +2858,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
           <VoiceRecorder onSend={sendParentVoice} parent />
           <button type="submit" disabled={!draft.trim()} aria-label="Envoyer le message"><PaperPlaneTilt size={21} weight="fill" /></button>
         </form>
+        {isGameInviteOpen && <ConversationGameInviteDialog contactName={selectedThread.name} relation={selectedThread.isFamily ? "Votre enfant" : selectedThread.isHouseholdParent ? "Parent de votre famille" : "Contact adulte autorisé"} parent onClose={() => setIsGameInviteOpen(false)} onSend={sendGameInvitation} />}
       </section>
     );
   }
@@ -2531,11 +2866,10 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
   return (
     <section className="parent-messages-screen" aria-labelledby="parent-messages-title">
       <header className="parent-messages-header">
-        <button type="button" className="parent-back-button" onClick={onBack} aria-label="Retour au tableau de bord parent"><ArrowLeft size={22} weight="bold" /></button>
+        <span className="parent-messages-header__shield"><ShieldCheck size={22} weight="fill" /></span>
         <div><span>Mode parent</span><h1 id="parent-messages-title">Messagerie parentale</h1></div>
         <span className="parent-avatar" aria-label={`Profil de ${parentName}`} role="img"><UserCircle size={28} weight="fill" /></span>
       </header>
-
       <div className="parent-messages-content">
         <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à l’autre parent de la famille, à vos enfants ou aux parents de leurs contacts, sans voir les discussions entre enfants.</p></div></div>
         {conversationSyncError && <div className="family-conversation-warning" role="alert"><Shield size={18} weight="fill" /><span>{conversationSyncError}</span><button type="button" onClick={onRetryConversationSync}>Réessayer</button></div>}
@@ -2551,6 +2885,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
           {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Invitez un co-parent, écrivez à l’un de vos enfants ou ajoutez le parent d’un contact.</span></div>}
         </div>
       </div>
+      <ParentModeNavigation active="conversations" unreadMessages={threads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onManagement={onManagement} onConversations={() => {}} />
       {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
         <section className="add-contact-modal" role="dialog" aria-modal="true" aria-labelledby="add-contact-title" onMouseDown={(event) => event.stopPropagation()}>
           <span className="add-contact-icon"><UserPlus size={27} weight="fill" /></span>
@@ -3423,7 +3758,7 @@ export function App() {
       }
     } else if (notificationType === "contact-request" && session.role === "parent") {
       setSelectedParentThreadId(null);
-      setParentView("dashboard");
+      setParentView("management");
       handled = true;
     } else if (notificationType === "game") {
       if (session.role === "parent") setParentView("games");
@@ -3450,14 +3785,16 @@ export function App() {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenFamilyConversation={openFamilyConversation} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
     }
-    if (parentView === "dashboard") {
+    if (parentView === "dashboard" || parentView === "management") {
       return (
         <ParentDashboard
+          activeSection={parentView === "management" ? "management" : "home"}
+          onChangeSection={(section) => setParentView(section === "management" ? "management" : "dashboard")}
           parentName={familyOwner.name}
           family={family}
           children={children}
@@ -3487,7 +3824,7 @@ export function App() {
       return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
     if (selectedConversation) {
-      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} />;
     }
     if (activeTab === "clubhouse") {
       return <ClubhouseScreen child={activeChild} />;
