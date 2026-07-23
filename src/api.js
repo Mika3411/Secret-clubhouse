@@ -50,7 +50,7 @@ export const api = {
   pushPublicKey: () => request("/push/public-key"),
   subscribePush: (subscription) => request("/push/subscribe", { method: "POST", body: JSON.stringify({ subscription }) }),
   unsubscribePush: (endpoint) => request("/push/subscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) }),
-  testPush: (endpoint) => request("/push/test", { method: "POST", body: JSON.stringify({ endpoint }) }),
+  testPush: (endpoint, requestId, mode = "encrypted") => request("/push/test", { method: "POST", body: JSON.stringify({ endpoint, requestId, mode }) }),
   saveNativePushToken: (token, platform) => request("/push/native-token", { method: "POST", body: JSON.stringify({ token, platform }) }),
   conversations: () => request("/conversations"),
   openFamilyConversation: (contactId) => request("/family-conversations", { method: "POST", body: JSON.stringify({ contactId }) }),

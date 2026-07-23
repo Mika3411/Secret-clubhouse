@@ -865,14 +865,46 @@ app.post("/api/push/native-token", requireAuth, async (req, res) => {
   res.status(204).end();
 });
 
-async function deliverWebPush(rows, payload) {
+const readPushHeader = (headers, name) => {
+  const value = headers?.[name];
+  return Array.isArray(value) ? value.join(",") : value || null;
+};
+
+const describePushAttempt = (row, response, error = null) => {
+  const endpoint = row.subscription?.endpoint || "";
+  let endpointHost = "invalid";
+  try {
+    endpointHost = new URL(endpoint).hostname;
+  } catch {}
+  const headers = response?.headers ?? error?.headers;
+  return {
+    subscriptionId: row.id,
+    endpointHost,
+    endpointHash: crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 12),
+    statusCode: response?.statusCode ?? error?.statusCode ?? null,
+    providerStatus: readPushHeader(headers, "x-wns-status") ?? readPushHeader(headers, "x-wns-notificationstatus"),
+    messageId: readPushHeader(headers, "x-wns-msg-id"),
+    debugTrace: readPushHeader(headers, "x-wns-debug-trace"),
+    correlationVector: readPushHeader(headers, "ms-cv"),
+    error: error?.message ?? null,
+  };
+};
+
+async function deliverWebPush(rows, payload, diagnostics = null, { ttl = 3600 } = {}) {
   if (!pushEnabled) return 0;
   const results = await Promise.all(rows.map(async (row) => {
     try {
-      await webpush.sendNotification(row.subscription, JSON.stringify(payload), { TTL: 3600, urgency: "high" });
-      return true;
+      const wirePayload = payload === null ? undefined : JSON.stringify(payload);
+      const response = await webpush.sendNotification(row.subscription, wirePayload, { TTL: ttl, urgency: "high" });
+      const diagnostic = describePushAttempt(row, response);
+      diagnostics?.push(diagnostic);
+      if (diagnostics) console.info("Diagnostic transport Web Push", diagnostic);
+      return !["dropped", "channelthrottled"].includes(diagnostic.providerStatus?.toLowerCase());
     }
     catch (error) {
+      const diagnostic = describePushAttempt(row, null, error);
+      diagnostics?.push(diagnostic);
+      if (diagnostics) console.info("Diagnostic transport Web Push", diagnostic);
       if (error.statusCode === 404 || error.statusCode === 410) await pool.query("delete from push_subscriptions where id=$1", [row.id]);
       else console.error("Échec push", error.statusCode || error.message);
       return false;
@@ -895,17 +927,28 @@ async function notifyConversation(conversationId, senderId, payload) {
 
 app.post("/api/push/test", requireAuth, async (req, res) => {
   const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint.trim() : "";
+  const requestId = typeof req.body?.requestId === "string" ? req.body.requestId.trim() : "";
+  const mode = req.body?.mode === "payloadless" ? "payloadless" : "encrypted";
   if (!endpoint.startsWith("https://") || endpoint.length > 2048) return res.status(400).json({ error: "Abonnement de test invalide." });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return res.status(400).json({ error: "Identifiant de test invalide." });
   const subscriptions = await pool.query("select id,subscription from push_subscriptions where account_id=$1 and endpoint=$2", [req.auth.sub, endpoint]);
-  const accepted = await deliverWebPush(subscriptions.rows, {
+  const diagnostics = [];
+  const encryptedPayload = {
     title: "Secret Clubhouse est prêt",
     body: "Votre notification de test a été envoyée.",
     notificationType: "test",
     tag: "secret-clubhouse-test",
     url: "/?notification=test",
-  });
+    requestId,
+  };
+  const accepted = await deliverWebPush(subscriptions.rows, mode === "payloadless" ? null : encryptedPayload, diagnostics, { ttl: mode === "payloadless" ? 0 : 30 });
   if (!accepted) return res.status(409).json({ error: "Cet Edge n’a pas accepté la notification de test." });
-  res.json({ accepted });
+  res.json({
+    accepted: true,
+    mode,
+    transportStatus: diagnostics[0]?.statusCode ?? null,
+    providerStatus: diagnostics[0]?.providerStatus ?? null,
+  });
 });
 
 app.post("/api/family-conversations", requireAuth, async (req, res) => {

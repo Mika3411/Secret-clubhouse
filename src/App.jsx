@@ -878,6 +878,43 @@ function TypingIndicator({ name }) {
   return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
 }
 
+const PUSH_WORKER_VERSION = "2026-07-23.1";
+
+const sendWorkerCommand = (worker, message, timeout = 1000) => new Promise((resolve) => {
+  if (!worker) {
+    resolve(null);
+    return;
+  }
+  const channel = new MessageChannel();
+  let settled = false;
+  const finish = (value) => {
+    if (settled) return;
+    settled = true;
+    window.clearTimeout(timer);
+    channel.port1.close();
+    resolve(value);
+  };
+  const timer = window.setTimeout(() => finish(null), timeout);
+  channel.port1.onmessage = (event) => finish(event.data);
+  try {
+    worker.postMessage(message, [channel.port2]);
+  } catch {
+    finish(null);
+  }
+});
+
+const waitForCurrentPushWorker = async (registration) => {
+  await registration.update().catch(() => {});
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    const worker = registration.active;
+    const response = await sendWorkerCommand(worker, { type: "secret-clubhouse:get-worker-version" }, 500);
+    if (response?.workerVersion === PUSH_WORKER_VERSION) return worker;
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+  throw new Error("La mise à jour des notifications Edge n’est pas encore active. Actualisez la page puis recommencez.");
+};
+
 function PushNotificationButton({ isDemo = false }) {
   const native = Capacitor.isNativePlatform();
   const isWindowsWeb = !native && /Windows/i.test(navigator.userAgent);
@@ -893,8 +930,11 @@ function PushNotificationButton({ isDemo = false }) {
       PushNotifications.checkPermissions().then(({ receive }) => setStatus(receive === "granted" ? "enabled" : receive === "denied" ? "denied" : "disabled"));
       return;
     }
-    navigator.serviceWorker.register("/sw.js")
-      .then((registration) => registration.pushManager.getSubscription())
+    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+      .then(async (registration) => {
+        await registration.update().catch(() => {});
+        return registration.pushManager.getSubscription();
+      })
       .then(async (subscription) => {
         if (subscription && !isDemo) await api.subscribePush(subscription.toJSON());
         const demoEnabled = isDemo && sessionStorage.getItem("secret-clubhouse-demo-push") === "enabled";
@@ -959,6 +999,7 @@ function PushNotificationButton({ isDemo = false }) {
         throw new Error("Les notifications ne sont pas autorisées dans ce navigateur.");
       }
       const registration = await navigator.serviceWorker.ready;
+      const pushWorker = isDemo ? null : await waitForCurrentPushWorker(registration);
       if (isDemo) {
         const tag = "secret-clubhouse-demo-test";
         const previousNotifications = await registration.getNotifications({ tag });
@@ -979,8 +1020,84 @@ function PushNotificationButton({ isDemo = false }) {
           setStatus("disabled");
           throw new Error("Cet Edge n’est plus abonné. Réactivez les notifications puis recommencez.");
         }
-        const result = await api.testPush(subscription.endpoint);
-        if (!result?.accepted) throw new Error("Le service de notification n’a pas accepté le test pour cet Edge.");
+        const waitForPushDiagnostic = ({ requestId, acceptParseError = false }) => {
+          let cancel = () => {};
+          let startTimeout = () => {};
+          const promise = new Promise((resolve) => {
+            let settled = false;
+            let timer = null;
+            const finish = (value) => {
+              if (settled) return;
+              settled = true;
+              cancel();
+              resolve(value);
+            };
+            const onMessage = (event) => {
+              const message = event.data;
+              if (message?.type !== "secret-clubhouse:push-diagnostic" || message.stage === "received") return;
+              const matchesRequest = message.requestId === requestId;
+              const matchesUncorrelatedParseError = acceptParseError && message.stage === "parse-error" && message.requestId === null && message.hasPayload === true;
+              if (!matchesRequest && !matchesUncorrelatedParseError) return;
+              finish(message);
+            };
+            cancel = () => {
+              if (timer) window.clearTimeout(timer);
+              navigator.serviceWorker.removeEventListener("message", onMessage);
+            };
+            startTimeout = () => {
+              if (!settled && !timer) timer = window.setTimeout(() => finish(null), 15000);
+            };
+            navigator.serviceWorker.addEventListener("message", onMessage);
+          });
+          return { promise, cancel, startTimeout };
+        };
+        const describeDiagnosticError = (diagnostic) => diagnostic?.stage === "parse-error"
+          ? "Edge a reçu le test, mais n’a pas pu lire son contenu chiffré."
+          : `Edge a reçu le test, mais Windows n’a pas pu créer la notification${diagnostic?.errorMessage ? ` : ${diagnostic.errorMessage}` : "."}`;
+
+        const requestId = crypto.randomUUID();
+        const encryptedWaiter = waitForPushDiagnostic({ requestId, acceptParseError: true });
+        let encryptedResult;
+        try {
+          encryptedResult = await api.testPush(subscription.endpoint, requestId, "encrypted");
+          if (!encryptedResult?.accepted) throw new Error("Le service de notification n’a pas accepté le test pour cet Edge.");
+          encryptedWaiter.startTimeout();
+          const encryptedDiagnostic = await encryptedWaiter.promise;
+          if (encryptedDiagnostic?.stage === "shown") {
+            setFeedback(`Notification créée par Edge (service worker ${encryptedDiagnostic.workerVersion}). Vérifiez la bannière ou le centre de notifications.`);
+            return;
+          }
+          if (encryptedDiagnostic) throw new Error(describeDiagnosticError(encryptedDiagnostic));
+        } finally {
+          encryptedWaiter.cancel();
+        }
+
+        const payloadlessRequestId = crypto.randomUUID();
+        const payloadlessWaiter = waitForPushDiagnostic({ requestId: payloadlessRequestId });
+        let payloadlessResult;
+        try {
+          const preparation = await sendWorkerCommand(pushWorker, {
+            type: "secret-clubhouse:prepare-payloadless-test",
+            requestId: payloadlessRequestId,
+          });
+          if (!preparation?.prepared) throw new Error("Edge n’a pas pu préparer le diagnostic du canal Windows.");
+          payloadlessResult = await api.testPush(subscription.endpoint, payloadlessRequestId, "payloadless");
+          if (!payloadlessResult?.accepted) throw new Error("Le canal de diagnostic Edge n’a pas accepté le second test.");
+          payloadlessWaiter.startTimeout();
+          const payloadlessDiagnostic = await payloadlessWaiter.promise;
+          if (payloadlessDiagnostic?.stage === "shown") {
+            throw new Error("Le canal atteint Edge sans contenu, mais le message chiffré n’arrive pas. Réactivez les notifications pour renouveler ses clés.");
+          }
+          if (payloadlessDiagnostic) throw new Error(describeDiagnosticError(payloadlessDiagnostic));
+        } finally {
+          payloadlessWaiter.cancel();
+          await sendWorkerCommand(pushWorker, {
+            type: "secret-clubhouse:cancel-payloadless-test",
+            requestId: payloadlessRequestId,
+          });
+        }
+        const transport = encryptedResult?.transportStatus ? ` (HTTP ${encryptedResult.transportStatus})` : "";
+        throw new Error(`Le service Push accepte le test${transport}, mais le canal Windows d’Edge ne le reçoit pas.`);
       }
       setFeedback(isDemo
         ? "Notification persistante créée dans Edge. Vérifiez la bannière ou le centre de notifications."
