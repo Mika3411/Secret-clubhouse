@@ -4764,16 +4764,31 @@ input:focus-visible {
 .avatar-choice__sample--blond { background: #e8b94f; }
 .avatar-choice__sample--ginger { background: #bd5b35; }
 .avatar-choice__sample--violet { background: #6650c7; }
+.avatar-choice--hairColor .avatar-choice__sample--chestnut { background: #8b4a38; }
+.avatar-choice--hairColor .avatar-choice__sample--pink { background: #d86f9d; }
+.avatar-choice--hairColor .avatar-choice__sample--blue { background: #436fc4; }
+.avatar-choice--hairColor .avatar-choice__sample--teal { background: #278f8a; }
+.avatar-choice--hairColor .avatar-choice__sample--silver { background: #aaa9bc; }
 .avatar-choice--skin .avatar-choice__sample--light { background: #f9d8c2; }
+.avatar-choice--skin .avatar-choice__sample--porcelain { background: #f4cdb5; }
 .avatar-choice--skin .avatar-choice__sample--warm { background: #eeb992; }
+.avatar-choice--skin .avatar-choice__sample--peach { background: #dfa47d; }
 .avatar-choice--skin .avatar-choice__sample--tan { background: #c98960; }
+.avatar-choice--skin .avatar-choice__sample--olive { background: #b87955; }
+.avatar-choice--skin .avatar-choice__sample--caramel { background: #a96d48; }
 .avatar-choice--skin .avatar-choice__sample--brown { background: #925a3b; }
 .avatar-choice--skin .avatar-choice__sample--deep { background: #5c382c; }
+.avatar-choice--skin .avatar-choice__sample--ebony { background: #4d3028; }
 .avatar-choice--outfit .avatar-choice__sample--mint { background: #69e4c3; }
 .avatar-choice--outfit .avatar-choice__sample--violet { background: #8c75e7; }
 .avatar-choice--outfit .avatar-choice__sample--coral { background: #ff8d83; }
 .avatar-choice--outfit .avatar-choice__sample--sun { background: #f5c451; }
 .avatar-choice--outfit .avatar-choice__sample--blue { background: #63b7e8; }
+.avatar-choice--outfit .avatar-choice__sample--rose { background: #e783ae; }
+.avatar-choice--outfit .avatar-choice__sample--teal { background: #42bdb2; }
+.avatar-choice--outfit .avatar-choice__sample--navy { background: #45478f; }
+.avatar-choice--outfit .avatar-choice__sample--lilac { background: #b99ae9; }
+.avatar-choice--outfit .avatar-choice__sample--orange { background: #ee9854; }
 .avatar-maker-save {
   display: flex;
   width: 100%;

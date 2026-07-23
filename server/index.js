@@ -70,11 +70,11 @@ const signSession = (account) => jwt.sign({ sub: account.id, role: account.role 
 const childColors = new Set(["mint", "violet", "sun", "coral"]);
 const childStatuses = new Set(["active", "paused"]);
 const avatarOptions = {
-  hair: new Set(["short", "bob", "curly", "spiky", "bun"]),
-  hairColor: new Set(["brown", "black", "blond", "ginger", "violet"]),
-  face: new Set(["smile", "happy", "calm", "freckles"]),
-  skin: new Set(["light", "warm", "tan", "brown", "deep"]),
-  outfit: new Set(["mint", "violet", "coral", "sun", "blue"]),
+  hair: new Set(["short", "bob", "curly", "spiky", "bun", "long", "braids", "afro", "ponytail", "waves"]),
+  hairColor: new Set(["brown", "black", "blond", "ginger", "violet", "chestnut", "pink", "blue", "teal", "silver"]),
+  face: new Set(["smile", "happy", "calm", "freckles", "wink", "laugh", "surprised", "shy", "star", "confident"]),
+  skin: new Set(["light", "porcelain", "warm", "peach", "tan", "olive", "caramel", "brown", "deep", "ebony"]),
+  outfit: new Set(["mint", "violet", "coral", "sun", "blue", "rose", "teal", "navy", "lilac", "orange"]),
 };
 const defaultAvatarConfig = { hair: "bob", hairColor: "brown", face: "smile", skin: "warm", outfit: "mint" };
 
