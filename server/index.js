@@ -1,19 +1,144 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import crypto from "node:crypto";
 import express from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import multer from "multer";
 import webpush from "web-push";
 import { initializeDatabase, pool } from "./db.js";
+import {
+  clearSuccessfulLogin,
+  createLoginScopeKeys,
+  getActiveLoginBlock,
+  loginRetryAfterSeconds,
+  pruneLoginRateLimits,
+  recordLoginFailure,
+} from "./login-protection.js";
+import { evaluateChildPolicy } from "./parental-policy.js";
+import { writeSecurityEvent } from "./security-log.js";
+import {
+  assertActiveNotificationConsent,
+  getNotificationConsent,
+  recordRegistrationLegalEvents,
+  setGuardianNotificationConsent,
+  setSubjectNotificationConsent,
+  validateRegistrationLegalEvidence,
+} from "./legal-compliance.js";
+import {
+  createPrivacyRequest,
+  createReadablePrivacyExport,
+  listPrivacyRequests,
+  privacyRequestTypes,
+  resolvePrivacySubject,
+  serializePrivacyRequest,
+} from "./privacy-service.js";
+import {
+  createNativePushService,
+  createOpaqueCallActionToken,
+  hashCallActionToken,
+  normalizeNativeTokenRegistration,
+} from "./native-push.js";
+import { PublicHttpError, safeHttpErrorResponse } from "./http-errors.js";
+import { privacySafeNotificationPayload } from "./notification-privacy.js";
+import {
+  authenticateSessionRequest,
+  createAuthSession,
+  logoutAuthSession,
+  setSessionCookie,
+} from "./auth-sessions.js";
+import { getContentCipher } from "./content-encryption.js";
+import {
+  decryptMessageContent,
+  encryptMessageContent,
+} from "./message-content.js";
+import { migrateLegacyMessageContent } from "./message-encryption-migration.js";
+import { decryptCallSignal, encryptCallSignal } from "./call-signal-content.js";
+import { migrateLegacyCallSignals } from "./call-signal-encryption-migration.js";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret) throw new Error("JWT_SECRET est requis");
+const parentalTimeZone = process.env.PARENTAL_TIME_ZONE || "Europe/Paris";
+const callTimeoutSeconds = Math.max(20, Math.min(120, Number(process.env.RTC_CALL_TIMEOUT_SECONDS) || 45));
+const webPushTimeoutMs = Math.max(2_000, Math.min(15_000, Number(process.env.WEB_PUSH_TIMEOUT_MS) || 6_000));
+const neutralCallReply = String(process.env.RTC_NEUTRAL_DECLINE_MESSAGE || "Je ne peux pas répondre pour le moment.").trim().slice(0, 240);
+const privacyContactEmail = String(process.env.PRIVACY_CONTACT_EMAIL || "contact@secret-clubhouse.fr").trim().toLowerCase();
+const privacyAdminToken = String(process.env.PRIVACY_ADMIN_TOKEN || "");
+const invalidLoginPasswordHash = "$2b$12$YoNVhfH0Ezc9Sc/m1jloOu2rXeLxQwenmlqLzPmOOqpV4ztVtWWju";
 let pushEnabled = false;
 let vapidPublicKey = "";
+let nativePushService = null;
+
+function parseRtcIceServers() {
+  if (process.env.RTC_ICE_SERVERS_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.RTC_ICE_SERVERS_JSON);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch (error) {
+      console.warn(`Configuration RTC_ICE_SERVERS_JSON ignorée : ${error.message}.`);
+    }
+  }
+
+  const stunUrls = String(process.env.RTC_STUN_URLS || "stun:stun.cloudflare.com:3478")
+    .split(",")
+    .map((url) => url.trim())
+    .filter((url) => url.startsWith("stun:") || url.startsWith("stuns:"));
+  const turnUrls = String(process.env.RTC_TURN_URLS || "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter((url) => url.startsWith("turn:") || url.startsWith("turns:"));
+  const iceServers = stunUrls.length ? [{ urls: stunUrls }] : [];
+  if (turnUrls.length && process.env.RTC_TURN_USERNAME && process.env.RTC_TURN_CREDENTIAL) {
+    iceServers.push({
+      urls: turnUrls,
+      username: process.env.RTC_TURN_USERNAME,
+      credential: process.env.RTC_TURN_CREDENTIAL,
+    });
+  }
+  return iceServers;
+}
+
+const fallbackRtcIceServers = parseRtcIceServers();
+let managedTurnCache = null;
+
+async function getRtcIceServers() {
+  const keyId = process.env.RTC_TURN_KEY_ID;
+  const apiToken = process.env.RTC_TURN_API_TOKEN;
+  if (!keyId || !apiToken) return fallbackRtcIceServers;
+  if (managedTurnCache?.expiresAt > Date.now()) return managedTurnCache.iceServers;
+
+  try {
+    const response = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ttl: 3600 }),
+      },
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (!Array.isArray(payload.iceServers) || !payload.iceServers.length) throw new Error("réponse ICE vide");
+    managedTurnCache = {
+      iceServers: payload.iceServers,
+      expiresAt: Date.now() + 55 * 60 * 1000,
+    };
+    return managedTurnCache.iceServers;
+  } catch (error) {
+    console.warn(`Identifiants TURN temporaires indisponibles, repli STUN/TURN statique : ${error.message}.`);
+    managedTurnCache = {
+      iceServers: fallbackRtcIceServers,
+      expiresAt: Date.now() + 60 * 1000,
+    };
+    return managedTurnCache.iceServers;
+  }
+}
 
 async function initializeWebPush() {
   let keys = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY
@@ -46,8 +171,14 @@ async function initializeWebPush() {
 }
 
 app.disable("x-powered-by");
-app.use((_req, res, next) => {
+app.set("trust proxy", 1);
+app.use((req, res, next) => {
+  const suppliedRequestId = String(req.get("X-Request-ID") || "");
+  req.requestId = /^[A-Za-z0-9_-]{8,80}$/.test(suppliedRequestId)
+    ? suppliedRequestId
+    : crypto.randomUUID();
   res.set({
+    "X-Request-ID": req.requestId,
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "X-Frame-Options": "DENY",
@@ -57,6 +188,10 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
+app.use("/api/auth", (_req, res, next) => {
+  res.set({ "Cache-Control": "no-store", Pragma: "no-cache" });
+  next();
+});
 
 const legacyReservedContactId = "SC-482-917-305";
 const makeContactId = () => {
@@ -66,7 +201,40 @@ const makeContactId = () => {
   } while (contactId === legacyReservedContactId);
   return contactId;
 };
-const signSession = (account) => jwt.sign({ sub: account.id, role: account.role }, jwtSecret, { expiresIn: "7d", issuer: "secret-clubhouse" });
+const nativeSessionClientHeader = "x-secret-clubhouse-client";
+const isNativeSessionClient = (req) => String(req.get(nativeSessionClientHeader) || "").toLowerCase() === "native";
+
+async function createSessionForRequest(executor, req, accountId) {
+  return createAuthSession(executor, {
+    accountId,
+    clientType: isNativeSessionClient(req) ? "native" : "web",
+  });
+}
+
+function attachSessionToResponse(req, res, createdSession) {
+  if (isNativeSessionClient(req)) return createdSession.token;
+  setSessionCookie(res, createdSession.token, {
+    production: process.env.NODE_ENV === "production",
+    ttlSeconds: createdSession.ttlSeconds,
+  });
+  return null;
+}
+
+function authenticatedPayload(req, res, createdSession, payload) {
+  const nativeToken = attachSessionToResponse(req, res, createdSession);
+  return {
+    ...payload,
+    ...(nativeToken ? { token: nativeToken } : {}),
+  };
+}
+function sendLoginRateLimit(res, blockedUntil) {
+  const retryAfter = loginRetryAfterSeconds(blockedUntil);
+  res.set({
+    "Cache-Control": "no-store",
+    "Retry-After": String(retryAfter),
+  });
+  return res.status(429).json({ error: "Trop de tentatives. Réessayez plus tard." });
+}
 const childColors = new Set(["mint", "violet", "sun", "coral"]);
 const childStatuses = new Set(["active", "paused"]);
 const avatarOptions = {
@@ -91,7 +259,7 @@ const defaultCommunicationSchedule = {
   messages: { enabled: true, start: "07:30", end: "20:30" },
   calls: { enabled: true, start: "08:00", end: "19:30" },
   video: { enabled: false, start: "09:00", end: "18:30" },
-  autoReply: { enabled: true, message: "Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés." },
+  autoReply: { enabled: true, message: "Je ne peux pas répondre pour le moment." },
 };
 
 const normalizeUsername = (value) => String(value ?? "")
@@ -110,9 +278,37 @@ const hashInvitationToken = (token) => crypto.createHash("sha256").update(token)
 const makeInvitationToken = () => crypto.randomBytes(32).toString("base64url");
 
 function httpError(statusCode, message) {
-  const error = new Error(message);
-  error.statusCode = statusCode;
-  return error;
+  if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+    return new PublicHttpError(statusCode, message);
+  }
+  const internalError = new Error(message);
+  internalError.statusCode = statusCode;
+  return internalError;
+}
+
+async function insertEncryptedAutomaticMessage(executor, conversationId, senderId, body) {
+  const id = crypto.randomUUID();
+  const encrypted = encryptMessageContent({
+    id,
+    conversationId,
+    senderId,
+    body,
+  });
+  await executor.query(
+    `insert into messages(
+       id,conversation_id,sender_id,body_ciphertext,
+       content_encryption_version,content_encryption_key_id,message_kind
+     ) values($1,$2,$3,$4,$5,$6,'automatic')`,
+    [
+      id,
+      conversationId,
+      senderId,
+      encrypted.bodyCiphertext,
+      encrypted.encryptionVersion,
+      encrypted.encryptionKeyId,
+    ],
+  );
+  return id;
 }
 
 async function getParentFamilyMembership(parentId, executor = pool) {
@@ -404,19 +600,139 @@ function normalizeChildProfile(body, current = null) {
   };
 }
 
-function requireAuth(req, res, next) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ error: "Authentification requise." });
+const parentalPolicyColumns = "account.id,account.display_name,account.status,account.safety_settings,account.communication_schedule";
+
+function normalizePolicyChild(child) {
+  return {
+    ...child,
+    safety_settings: { ...defaultSafetySettings, ...(child.safety_settings ?? {}) },
+    communication_schedule: normalizeSchedule({}, child.communication_schedule),
+  };
+}
+
+function assertChildPolicies(children, options = {}) {
+  for (const rawChild of children) {
+    const decision = evaluateChildPolicy(normalizePolicyChild(rawChild), {
+      ...options,
+      timeZone: parentalTimeZone,
+    });
+    if (!decision.allowed) throw httpError(403, decision.reason);
+  }
+}
+
+async function getChildPoliciesForAccounts(accountIds, executor = pool, lock = false) {
+  const uniqueIds = [...new Set(accountIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  const result = await executor.query(
+    `select ${parentalPolicyColumns}
+     from accounts account
+     where account.role='child' and account.id=any($1::uuid[])
+     order by account.id
+     ${lock ? "for no key update of account" : ""}`,
+    [uniqueIds],
+  );
+  return result.rows;
+}
+
+async function getConversationChildPolicies(conversationId, executor = pool, lock = false) {
+  const result = await executor.query(
+    `select ${parentalPolicyColumns}
+     from conversation_members member
+     join accounts account on account.id=member.account_id and account.role='child'
+     where member.conversation_id=$1
+     order by account.id
+     ${lock ? "for no key update of account" : ""}`,
+    [conversationId],
+  );
+  return result.rows;
+}
+
+async function assertAccountsActive(accountIds, executor = pool, lock = false) {
+  const children = await getChildPoliciesForAccounts(accountIds, executor, lock);
+  assertChildPolicies(children);
+}
+
+async function assertConversationPolicy(conversationId, options = {}, executor = pool, lock = false) {
+  const children = await getConversationChildPolicies(conversationId, executor, lock);
+  assertChildPolicies(children, options);
+  return children;
+}
+
+async function requireActiveChild(req, res, next) {
+  if (req.auth.role !== "child") return next();
   try {
-    req.auth = jwt.verify(token, jwtSecret, { issuer: "secret-clubhouse" });
-    next();
-  } catch {
-    res.status(401).json({ error: "Session invalide ou expirée." });
+    await assertAccountsActive([req.auth.sub]);
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+const restrictionAllowedPaths = new Set([
+  "/api/auth/logout",
+  "/api/me",
+  "/api/privacy/requests",
+  "/api/privacy/export",
+  "/api/privacy/contact",
+]);
+
+async function requireAuth(req, res, next) {
+  try {
+    const session = await authenticateSessionRequest(pool, req, {
+      production: process.env.NODE_ENV === "production",
+      expectedClientType: isNativeSessionClient(req) ? "native" : "web",
+    });
+    if (!session) return res.status(401).json({ error: "Session invalide ou expirée." });
+    if (session.transport === "cookie" && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+      const fetchSite = String(req.get("Sec-Fetch-Site") || "").toLowerCase();
+      const origin = String(req.get("Origin") || "");
+      const expectedOrigin = `${req.protocol}://${req.get("host")}`;
+      if (fetchSite === "cross-site" || (origin && origin !== expectedOrigin)) {
+        return res.status(403).json({ error: "Requête intersite refusée." });
+      }
+    }
+    req.auth = {
+      sub: session.accountId,
+      role: session.role,
+      sessionId: session.id,
+      sessionTransport: session.transport,
+    };
+    const accountResult = await pool.query(
+      "select processing_restricted_at,processing_restriction_reason from accounts where id=$1",
+      [req.auth.sub],
+    );
+    const account = accountResult.rows[0];
+    if (!account) return res.status(401).json({ error: "Ce compte n’existe plus." });
+    req.privacyRestriction = account.processing_restricted_at ? {
+      appliedAt: account.processing_restricted_at,
+      reason: account.processing_restriction_reason,
+    } : null;
+    const isAllowedDuringRestriction = restrictionAllowedPaths.has(req.path)
+      || req.path.startsWith("/api/privacy/")
+      || (req.method === "DELETE" && ["/api/account", "/api/family"].includes(req.path));
+    if (req.privacyRestriction && !isAllowedDuringRestriction) {
+      return res.status(423).json({
+        error: "Le traitement de ce compte est limité. Seuls vos droits, l’export et la suppression restent disponibles.",
+        processingRestricted: true,
+        restriction: req.privacyRestriction,
+      });
+    }
+    return next();
+  } catch (error) {
+    return next(error);
   }
 }
 
 async function serializeAccount(account) {
-  const serialized = { id: account.id, role: account.role, name: account.display_name, email: account.email, contactId: account.contact_id };
+  const serialized = {
+    id: account.id,
+    role: account.role,
+    name: account.display_name,
+    email: account.email,
+    contactId: account.contact_id,
+    processingRestrictedAt: account.processing_restricted_at ?? null,
+    processingRestrictionReason: account.processing_restriction_reason ?? null,
+  };
   if (account.role !== "child") return serialized;
   return {
     ...serialized,
@@ -432,9 +748,94 @@ async function serializeAccount(account) {
   };
 }
 
+function privacyAdminAuthorized(req) {
+  if (!privacyAdminToken) return false;
+  const provided = String(req.get("X-Privacy-Admin-Token") || "");
+  if (!provided || provided.length !== privacyAdminToken.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(privacyAdminToken));
+}
+
+async function verifyParentPassword(executor, parentId, password) {
+  const result = await executor.query(
+    "select password_hash from accounts where id=$1 and role='parent' for update",
+    [parentId],
+  );
+  return Boolean(result.rows[0] && await bcrypt.compare(String(password || ""), result.rows[0].password_hash));
+}
+
+async function recordCompletedErasure(executor, {
+  requesterId,
+  subjectId,
+  familyId,
+  accountIds,
+  details,
+}) {
+  const accounts = await executor.query(
+    `select id,role,display_name,email,contact_id
+     from accounts
+     where id=any($1::uuid[])`,
+    [accountIds],
+  );
+  const requester = accounts.rows.find((account) => account.id === requesterId);
+  const subject = accounts.rows.find((account) => account.id === subjectId) ?? requester ?? accounts.rows[0];
+  if (!subject) throw httpError(404, "Compte à supprimer introuvable.");
+
+  const backupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const response = "Les données actives ont été supprimées. Les sauvegardes arrivent à expiration sous sept jours et toute restauration doit réappliquer cette suppression avant remise en service.";
+  const requestResult = await executor.query(
+    `insert into privacy_requests(
+       requester_account_id,subject_account_id,family_id,
+       requester_email,requester_contact_id,subject_display_name,subject_role,
+       request_type,status,details,response_text,response_actor,
+       responded_at,completed_at,backup_expires_at
+     ) values($1,$2,$3,$4,$5,$6,$7,'erasure','completed',$8,$9,'automatique',now(),now(),$10)
+     returning id`,
+    [
+      requesterId,
+      subjectId,
+      familyId,
+      requester?.email ?? null,
+      requester?.contact_id ?? null,
+      subject.display_name,
+      subject.role,
+      details,
+      response,
+      backupExpiresAt,
+    ],
+  );
+  await executor.query(
+    `insert into privacy_request_events(request_id,actor_type,event_type,note)
+     values
+       ($1,'requester','submitted',$2),
+       ($1,'system','acknowledged','Demande traitée immédiatement.'),
+       ($1,'system','completed',$3)`,
+    [requestResult.rows[0].id, details, response],
+  );
+  await executor.query(
+    `insert into erasure_tombstones(privacy_request_id,family_id,account_ids,backup_expires_at)
+     values($1,$2,$3::uuid[],$4)`,
+    [requestResult.rows[0].id, familyId, accountIds, backupExpiresAt],
+  );
+  await executor.query(
+    "delete from legal_events where subject_account_id=any($1::uuid[]) or actor_account_id=any($1::uuid[])",
+    [accountIds],
+  );
+  return requestResult.rows[0].id;
+}
+
 app.get("/api/health", async (_req, res) => {
   await pool.query("select 1");
   res.json({ ok: true });
+});
+
+app.get("/api/privacy/contact", (_req, res) => {
+  res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" });
+  res.json({
+    controller: "Secret Clubhouse",
+    email: privacyContactEmail,
+    responseDeadline: "un mois",
+    childFriendlyNotice: "Un enfant peut exercer ses droits lui-même ou demander l’aide de son parent.",
+  });
 });
 
 app.post("/api/auth/register", async (req, res) => {
@@ -444,6 +845,8 @@ app.post("/api/auth/register", async (req, res) => {
   if (displayName.length < 2 || !isValidEmail(normalizedEmail) || typeof password !== "string" || password.length < 8 || password.length > 128) {
     return res.status(400).json({ error: "Nom, e-mail et mot de passe de 8 caractères minimum requis." });
   }
+  const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal);
+  if (!legalEvidence.valid) return res.status(400).json({ error: legalEvidence.error });
 
   const passwordHash = await bcrypt.hash(password, 12);
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -463,9 +866,14 @@ app.post("/api/auth/register", async (req, res) => {
         "insert into family_memberships(family_id,parent_id,role) values($1,$2,'primary')",
         [familyResult.rows[0].id, account.id],
       );
+      await recordRegistrationLegalEvents(client, account.id, legalEvidence.value);
+      const createdSession = await createSessionForRequest(client, req, account.id);
       await client.query("commit");
       const family = await serializeFamilyForParent(account.id);
-      return res.status(201).json({ token: signSession(account), account: await serializeAccount(account), family });
+      return res.status(201).json(authenticatedPayload(req, res, createdSession, {
+        account: await serializeAccount(account),
+        family,
+      }));
     } catch (error) {
       await client.query("rollback");
       if (error.code === "23505" && error.constraint === "accounts_contact_id_key") continue;
@@ -488,6 +896,8 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
   if (!invitationTokenPattern.test(token) || displayName.length < 2 || typeof password !== "string" || password.length < 8 || password.length > 128) {
     return res.status(400).json({ error: "Invitation, nom et mot de passe de 8 caractères minimum requis." });
   }
+  const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal);
+  if (!legalEvidence.valid) return res.status(400).json({ error: legalEvidence.error });
 
   const passwordHash = await bcrypt.hash(password, 12);
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -519,10 +929,15 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
         [account.id, invitation.id],
       );
       if (!accepted.rowCount) throw httpError(410, "Cette invitation n’est plus disponible.");
+      await recordRegistrationLegalEvents(client, account.id, legalEvidence.value);
       await provisionHouseholdParentConversations(client, account.id);
+      const createdSession = await createSessionForRequest(client, req, account.id);
       await client.query("commit");
       const family = await serializeFamilyForParent(account.id);
-      return res.status(201).json({ token: signSession(account), account: await serializeAccount(account), family });
+      return res.status(201).json(authenticatedPayload(req, res, createdSession, {
+        account: await serializeAccount(account),
+        family,
+      }));
     } catch (error) {
       await client.query("rollback");
       if (error.code === "23505" && error.constraint === "accounts_contact_id_key") continue;
@@ -539,21 +954,403 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   const { email, contactId, password } = req.body ?? {};
+  res.set("Cache-Control", "no-store");
+  const normalizedEmail = normalizeEmail(email);
   const normalizedContactId = String(contactId ?? "").trim().toUpperCase();
-  const result = email
-    ? await pool.query("select * from accounts where role='parent' and email=$1", [String(email).trim().toLowerCase()])
+  const loginScopeKeys = createLoginScopeKeys({
+    email: normalizedEmail,
+    contactId: normalizedContactId,
+    clientAddress: req.ip || req.socket?.remoteAddress,
+    secret: jwtSecret,
+  });
+  const existingBlock = await getActiveLoginBlock(pool, loginScopeKeys);
+  if (existingBlock) {
+    await writeSecurityEvent(pool, {
+      eventType: "auth.login",
+      outcome: "blocked",
+      ...loginScopeKeys,
+    });
+    return sendLoginRateLimit(res, existingBlock);
+  }
+
+  const result = normalizedEmail
+    ? await pool.query("select * from accounts where role='parent' and email=$1", [normalizedEmail])
     : normalizedContactId === legacyReservedContactId
       ? { rows: [] }
       : await pool.query("select * from accounts where role='child' and contact_id=$1", [normalizedContactId]);
   const account = result.rows[0];
-  if (!account || !await bcrypt.compare(String(password ?? ""), account.password_hash)) return res.status(401).json({ error: "Identifiants incorrects." });
-  res.json({ token: signSession(account), account: await serializeAccount(account) });
+  const submittedPassword = typeof password === "string" && password.length <= 128 ? password : "";
+  const passwordMatches = await bcrypt.compare(submittedPassword, account?.password_hash ?? invalidLoginPasswordHash);
+  if (!account || !passwordMatches) {
+    const newBlock = await recordLoginFailure(pool, loginScopeKeys);
+    await writeSecurityEvent(pool, {
+      accountId: account?.id ?? null,
+      eventType: "auth.login",
+      outcome: newBlock ? "blocked" : "failure",
+      ...loginScopeKeys,
+    });
+    if (newBlock) return sendLoginRateLimit(res, newBlock);
+    return res.status(401).json({ error: "Identifiants incorrects." });
+  }
+  await clearSuccessfulLogin(pool, loginScopeKeys);
+  await pool.query("update accounts set last_activity_at=now() where id=$1", [account.id]);
+  await writeSecurityEvent(pool, {
+    accountId: account.id,
+    eventType: "auth.login",
+    outcome: "success",
+    ...loginScopeKeys,
+  });
+  const createdSession = await createSessionForRequest(pool, req, account.id);
+  return res.json(authenticatedPayload(req, res, createdSession, {
+    account: await serializeAccount(account),
+  }));
+});
+
+app.post("/api/auth/logout", requireAuth, async (req, res) => {
+  await logoutAuthSession(pool, req, res, {
+    production: process.env.NODE_ENV === "production",
+    expectedClientType: isNativeSessionClient(req) ? "native" : "web",
+    reason: "logout",
+  });
+  res.set("Cache-Control", "no-store");
+  res.status(204).end();
 });
 
 app.get("/api/me", requireAuth, async (req, res) => {
   const result = await pool.query("select * from accounts where id=$1", [req.auth.sub]);
   if (!result.rows[0]) return res.status(404).json({ error: "Compte introuvable." });
   res.json({ account: await serializeAccount(result.rows[0]) });
+});
+
+app.get("/api/privacy/requests", requireAuth, async (req, res) => {
+  res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" });
+  res.json({
+    requests: await listPrivacyRequests(pool, req.auth.sub),
+    contactEmail: privacyContactEmail,
+  });
+});
+
+app.post("/api/privacy/requests", requireAuth, async (req, res) => {
+  const requestType = String(req.body?.type ?? "");
+  const subjectId = req.body?.subjectId ? String(req.body.subjectId) : req.auth.sub;
+  const details = String(req.body?.details ?? "").trim();
+  if (!privacyRequestTypes.has(requestType)) {
+    return res.status(400).json({ error: "Type de demande invalide." });
+  }
+  if (!uuidPattern.test(subjectId)) return res.status(400).json({ error: "Personne concernée invalide." });
+  if (details.length < 10 || details.length > 2000) {
+    return res.status(400).json({ error: "Décrivez votre demande en 10 à 2 000 caractères." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const request = await createPrivacyRequest(client, {
+      requesterId: req.auth.sub,
+      subjectId,
+      requestType,
+      details,
+    });
+    if (!request) throw httpError(403, "Vous ne pouvez pas exercer de droits pour ce compte.");
+    await client.query("commit");
+    res.status(201).json({
+      request: serializePrivacyRequest(request),
+      acknowledgement: "Votre demande est enregistrée. Une réponse vous sera apportée sous un mois.",
+    });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/privacy/export", requireAuth, async (req, res) => {
+  const subjectId = req.query.subjectId ? String(req.query.subjectId) : req.auth.sub;
+  if (!uuidPattern.test(subjectId)) return res.status(400).json({ error: "Personne concernée invalide." });
+  const exportData = await createReadablePrivacyExport(pool, {
+    requesterId: req.auth.sub,
+    subjectId,
+    controllerEmail: privacyContactEmail,
+  });
+  if (!exportData) return res.status(403).json({ error: "Vous ne pouvez pas exporter les données de ce compte." });
+  res.set({
+    "Cache-Control": "no-store, max-age=0",
+    Pragma: "no-cache",
+    "Content-Disposition": `attachment; filename="secret-clubhouse-donnees-${subjectId}.json"`,
+  });
+  return res.json(exportData);
+});
+
+app.get("/api/privacy/admin/requests", async (req, res) => {
+  if (!privacyAdminAuthorized(req)) {
+    return res.status(privacyAdminToken ? 401 : 503).json({
+      error: privacyAdminToken ? "Accès au registre refusé." : "Le canal de traitement RGPD n’est pas configuré.",
+    });
+  }
+  const result = await pool.query(
+    `select request.*,
+       coalesce(json_agg(
+         json_build_object(
+           'actorType',event.actor_type,
+           'eventType',event.event_type,
+           'note',event.note,
+           'createdAt',event.created_at
+         ) order by event.created_at
+       ) filter (where event.id is not null),'[]'::json) as events
+     from privacy_requests request
+     left join privacy_request_events event on event.request_id=request.id
+     group by request.id
+     order by
+       case when request.status in ('submitted','in_review') then request.due_at end asc nulls last,
+       request.created_at desc`,
+  );
+  res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" });
+  return res.json({
+    requests: result.rows.map((row) => ({ ...serializePrivacyRequest(row), events: row.events })),
+    overdueCount: result.rows.filter((row) => serializePrivacyRequest(row).overdue).length,
+    contactEmail: privacyContactEmail,
+  });
+});
+
+app.patch("/api/privacy/admin/requests/:id", async (req, res) => {
+  if (!privacyAdminAuthorized(req)) {
+    return res.status(privacyAdminToken ? 401 : 503).json({
+      error: privacyAdminToken ? "Accès au registre refusé." : "Le canal de traitement RGPD n’est pas configuré.",
+    });
+  }
+  if (!uuidPattern.test(req.params.id)) return res.status(400).json({ error: "Demande invalide." });
+  const status = String(req.body?.status ?? "");
+  const allowedStatuses = new Set(["in_review", "completed", "rejected", "cancelled"]);
+  if (!allowedStatuses.has(status)) return res.status(400).json({ error: "Statut invalide." });
+  const responseText = String(req.body?.response ?? "").trim();
+  if (["completed", "rejected"].includes(status) && responseText.length < 10) {
+    return res.status(400).json({ error: "Une réponse motivée est requise pour clôturer la demande." });
+  }
+  const applyRestriction = req.body?.applyRestriction === true;
+  const liftRestriction = req.body?.liftRestriction === true;
+  const executeErasure = req.body?.executeErasure === true;
+  if (applyRestriction && liftRestriction) {
+    return res.status(400).json({ error: "La limitation ne peut pas être appliquée et levée simultanément." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const existingResult = await client.query(
+      "select * from privacy_requests where id=$1 for update",
+      [req.params.id],
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) throw httpError(404, "Demande introuvable.");
+    if (["completed", "rejected", "cancelled"].includes(existing.status)) {
+      throw httpError(409, "Cette demande est déjà clôturée.");
+    }
+    if (applyRestriction && !["restriction", "objection"].includes(existing.request_type)) {
+      throw httpError(400, "La limitation ne peut être appliquée que pour une demande de limitation ou d’opposition.");
+    }
+    if ((applyRestriction || liftRestriction) && !existing.subject_account_id) {
+      throw httpError(409, "Le compte concerné n’est plus actif.");
+    }
+    if (executeErasure && (existing.request_type !== "erasure" || existing.subject_role !== "child")) {
+      throw httpError(400, "L’effacement administratif direct est réservé au profil enfant concerné par cette demande.");
+    }
+    if (executeErasure && status !== "completed") {
+      throw httpError(400, "L’effacement administratif doit clôturer la demande.");
+    }
+    if (status === "completed" && existing.request_type === "erasure" && existing.subject_account_id && !executeErasure) {
+      throw httpError(409, "Le compte est encore actif. Exécutez l’effacement du profil enfant ou utilisez la suppression protégée du compte parent avant de clôturer.");
+    }
+
+    if (executeErasure) {
+      const subjectResult = await client.query(
+        "select id from accounts where id=$1 and role='child' for update",
+        [existing.subject_account_id],
+      );
+      if (!subjectResult.rows[0]) throw httpError(409, "Le profil enfant n’est plus actif.");
+      const backupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await client.query(
+        `insert into erasure_tombstones(privacy_request_id,family_id,account_ids,backup_expires_at)
+         values($1,$2,array[$3]::uuid[],$4)`,
+        [existing.id, existing.family_id, existing.subject_account_id, backupExpiresAt],
+      );
+      await client.query(
+        "delete from legal_events where subject_account_id=$1 or actor_account_id=$1",
+        [existing.subject_account_id],
+      );
+      await client.query(
+        "delete from conversations where id in (select conversation_id from conversation_members where account_id=$1)",
+        [existing.subject_account_id],
+      );
+      await client.query("delete from accounts where id=$1", [existing.subject_account_id]);
+      await client.query(
+        "update privacy_requests set backup_expires_at=$2 where id=$1",
+        [existing.id, backupExpiresAt],
+      );
+    }
+
+    if (applyRestriction) {
+      await client.query(
+        `update accounts
+         set processing_restricted_at=coalesce(processing_restricted_at,now()),
+             processing_restriction_reason=$2
+         where id=$1`,
+        [existing.subject_account_id, responseText || existing.details],
+      );
+      await client.query(
+        `update privacy_requests set restriction_applied_at=coalesce(restriction_applied_at,now()) where id=$1`,
+        [existing.id],
+      );
+      await client.query(
+        `insert into privacy_request_events(request_id,actor_type,event_type,note)
+         values($1,'controller','restriction_applied',$2)`,
+        [existing.id, responseText || "Limitation appliquée."],
+      );
+    }
+    if (liftRestriction) {
+      await client.query(
+        `update accounts
+         set processing_restricted_at=null,processing_restriction_reason=null
+         where id=$1`,
+        [existing.subject_account_id],
+      );
+      await client.query(
+        `update privacy_requests set restriction_lifted_at=now() where id=$1`,
+        [existing.id],
+      );
+      await client.query(
+        `insert into privacy_request_events(request_id,actor_type,event_type,note)
+         values($1,'controller','restriction_lifted',$2)`,
+        [existing.id, responseText || "Limitation levée."],
+      );
+    }
+
+    const updatedResult = await client.query(
+      `update privacy_requests
+       set status=$2,
+           response_text=case when $3='' then response_text else $3 end,
+           response_actor='responsable RGPD',
+           responded_at=case when $2 in ('completed','rejected') then now() else responded_at end,
+           completed_at=case when $2='completed' then now() else completed_at end
+       where id=$1
+       returning *`,
+      [existing.id, status, responseText],
+    );
+    await client.query(
+      `insert into privacy_request_events(request_id,actor_type,event_type,note)
+       values($1,'controller',$2,$3)`,
+      [existing.id, status, responseText || null],
+    );
+    await client.query("commit");
+    return res.json({ request: serializePrivacyRequest(updatedResult.rows[0]) });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/account", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Cette action est réservée au compte parent." });
+  if (String(req.body?.confirmation ?? "") !== "SUPPRIMER MON COMPTE") {
+    return res.status(400).json({ error: "Recopiez exactement « SUPPRIMER MON COMPTE »." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    if (!await verifyParentPassword(client, req.auth.sub, req.body?.currentPassword)) {
+      throw httpError(401, "Le mot de passe actuel est incorrect.");
+    }
+    const membershipResult = await client.query(
+      `select membership.family_id,membership.role,
+        (select count(*) from family_memberships other where other.family_id=membership.family_id) as parent_count,
+        (select count(*) from family_children child where child.family_id=membership.family_id) as child_count
+       from family_memberships membership
+       where membership.parent_id=$1
+       for update`,
+      [req.auth.sub],
+    );
+    const membership = membershipResult.rows[0];
+    if (!membership) throw httpError(404, "Famille introuvable.");
+    if (membership.role === "primary" && (Number(membership.parent_count) > 1 || Number(membership.child_count) > 0)) {
+      throw httpError(409, "Le parent principal doit supprimer toute la famille, ou retirer d’abord les autres profils.");
+    }
+
+    await recordCompletedErasure(client, {
+      requesterId: req.auth.sub,
+      subjectId: req.auth.sub,
+      familyId: membership.family_id,
+      accountIds: [req.auth.sub],
+      details: "Suppression définitive du compte parent demandée depuis l’espace protégé.",
+    });
+    await client.query(
+      "delete from conversations where id in (select conversation_id from conversation_members where account_id=$1)",
+      [req.auth.sub],
+    );
+    await client.query("delete from accounts where id=$1", [req.auth.sub]);
+    if (membership.role === "primary") {
+      await client.query("delete from families where id=$1", [membership.family_id]);
+    }
+    await client.query("commit");
+    return res.status(204).end();
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/family", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Cette action est réservée au compte parent." });
+  if (String(req.body?.confirmation ?? "") !== "SUPPRIMER MA FAMILLE") {
+    return res.status(400).json({ error: "Recopiez exactement « SUPPRIMER MA FAMILLE »." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    if (!await verifyParentPassword(client, req.auth.sub, req.body?.currentPassword)) {
+      throw httpError(401, "Le mot de passe actuel est incorrect.");
+    }
+    const familyResult = await client.query(
+      `select family.id
+       from families family
+       join family_memberships membership on membership.family_id=family.id
+       where membership.parent_id=$1 and membership.role='primary'
+       for update of family`,
+      [req.auth.sub],
+    );
+    const family = familyResult.rows[0];
+    if (!family) throw httpError(403, "Seul le parent principal peut supprimer définitivement la famille.");
+    const accountsResult = await client.query(
+      `select parent_id as id from family_memberships where family_id=$1
+       union
+       select child_id from family_children where family_id=$1`,
+      [family.id],
+    );
+    const accountIds = accountsResult.rows.map((row) => row.id);
+    await recordCompletedErasure(client, {
+      requesterId: req.auth.sub,
+      subjectId: req.auth.sub,
+      familyId: family.id,
+      accountIds,
+      details: "Suppression définitive de la famille et de tous ses profils demandée depuis l’espace protégé.",
+    });
+    await client.query(
+      "delete from conversations where id in (select conversation_id from conversation_members where account_id=any($1::uuid[]))",
+      [accountIds],
+    );
+    await client.query("delete from families where id=$1", [family.id]);
+    await client.query("delete from accounts where id=any($1::uuid[])", [accountIds]);
+    await client.query("commit");
+    return res.status(204).end();
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.patch("/api/account/password", requireAuth, async (req, res) => {
@@ -863,8 +1660,12 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
   if (normalized.error) return res.status(400).json({ error: normalized.error });
   const { profile } = normalized;
   const passwordHash = profile.password ? await bcrypt.hash(profile.password, 12) : existing.password_hash;
+  const client = await pool.connect();
+  let updatedChild = null;
+  let terminatedCalls = [];
   try {
-    const result = await pool.query(
+    await client.query("begin");
+    const result = await client.query(
       `update accounts set password_hash=$1,display_name=$2,age=$3,username=$4,avatar_color=$5,status=$6,
        safety_settings=$7::jsonb,communication_schedule=$8::jsonb
        where id=$9 and role='child' and exists(
@@ -885,21 +1686,185 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
         req.auth.sub,
       ],
     );
-    res.json({ child: await serializeAccount(result.rows[0]) });
+    updatedChild = result.rows[0];
+    if (!updatedChild) throw httpError(404, "Profil enfant introuvable dans votre famille.");
+    if (profile.status === "paused") {
+      const callsResult = await client.query(
+        `update call_sessions
+         set status=case when status='ringing' then 'cancelled' else 'ended' end,
+             ended_at=coalesce(ended_at,now()),
+             updated_at=now()
+         where $1 in (caller_id,callee_id)
+           and status in ('ringing','accepted')
+         returning id,conversation_id,caller_id,callee_id,call_type,status,
+           expires_at,answered_at,ended_at,updated_at`,
+        [req.params.id],
+      );
+      terminatedCalls = callsResult.rows;
+      await client.query(
+        `delete from call_signals signal
+         using call_sessions call
+         where signal.call_id=call.id
+           and $1 in (call.caller_id,call.callee_id)`,
+        [req.params.id],
+      );
+      await client.query("delete from presence where account_id=$1", [req.params.id]);
+      await client.query("delete from typing_states where account_id=$1", [req.params.id]);
+    }
+    await client.query("commit");
   } catch (error) {
+    await client.query("rollback").catch(() => undefined);
     if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo est déjà utilisé dans votre famille." });
     throw error;
+  } finally {
+    client.release();
   }
+  await Promise.allSettled(terminatedCalls.map((call) => notifyNativeCallState(call)));
+  res.json({ child: await serializeAccount(updatedChild) });
 });
 
-app.patch("/api/account/avatar", requireAuth, async (req, res) => {
+app.patch("/api/account/avatar", requireAuth, requireActiveChild, async (req, res) => {
   if (req.auth.role !== "child") return res.status(403).json({ error: "L’avatar appartient au profil enfant." });
   const currentResult = await pool.query("select * from accounts where id=$1 and role='child'", [req.auth.sub]);
   const current = currentResult.rows[0];
   if (!current) return res.status(404).json({ error: "Profil enfant introuvable." });
   const avatar = normalizeAvatarConfig(req.body?.avatar, current.avatar_config);
-  const result = await pool.query("update accounts set avatar_config=$1::jsonb where id=$2 returning *", [JSON.stringify(avatar), req.auth.sub]);
+  const result = await pool.query("update accounts set avatar_config=$1::jsonb where id=$2 and role='child' and status='active' returning *", [JSON.stringify(avatar), req.auth.sub]);
+  if (!result.rowCount) return res.status(403).json({ error: "Ce profil enfant est en pause." });
   res.json({ child: await serializeAccount(result.rows[0]) });
+});
+
+function previousIsoDate(value) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function calculateClubhouseStreak(activityDates, today) {
+  const activeDates = new Set(activityDates);
+  let cursor = activeDates.has(today) ? today : previousIsoDate(today);
+  let streak = 0;
+  while (activeDates.has(cursor)) {
+    streak += 1;
+    cursor = previousIsoDate(cursor);
+  }
+  return streak;
+}
+
+async function serializeClubhouseState(childId, executor = pool) {
+  const [catalogResult, progressResult, dailyResult, todayResult] = await Promise.all([
+    executor.query(
+      "select id,reward from clubhouse_activities where active=true order by id",
+    ),
+    executor.query(
+      `select activity_id,first_completed_at,last_completed_at,completion_count,awarded_stars
+       from clubhouse_activity_progress
+       where child_id=$1
+       order by first_completed_at`,
+      [childId],
+    ),
+    executor.query(
+      `select activity_date::text as activity_date
+       from clubhouse_daily_activity
+       where child_id=$1
+       order by activity_date desc`,
+      [childId],
+    ),
+    executor.query(
+      "select (now() at time zone $1)::date::text as today",
+      [parentalTimeZone],
+    ),
+  ]);
+  const catalog = catalogResult.rows.map((activity) => ({
+    activityId: activity.id,
+    reward: Number(activity.reward),
+  }));
+  const progress = progressResult.rows.map((activity) => ({
+    activityId: activity.activity_id,
+    firstCompletedAt: activity.first_completed_at,
+    lastCompletedAt: activity.last_completed_at,
+    completionCount: Number(activity.completion_count),
+    awardedStars: Number(activity.awarded_stars),
+  }));
+  const activityDates = dailyResult.rows.map((row) => row.activity_date);
+  const stars = progress.reduce((total, activity) => total + activity.awardedStars, 0);
+  return {
+    stars,
+    streak: calculateClubhouseStreak(activityDates, todayResult.rows[0].today),
+    completedCount: progress.length,
+    totalActivities: catalog.length,
+    completedActivities: progress.map((activity) => activity.activityId),
+    catalog,
+    progress,
+  };
+}
+
+app.get("/api/clubhouse", requireAuth, requireActiveChild, async (req, res) => {
+  if (req.auth.role !== "child") return res.status(403).json({ error: "La progression Clubhouse appartient au profil enfant." });
+  res.json({ clubhouse: await serializeClubhouseState(req.auth.sub) });
+});
+
+app.post("/api/clubhouse/activities/:activityId/complete", requireAuth, requireActiveChild, async (req, res) => {
+  if (req.auth.role !== "child") return res.status(403).json({ error: "Seul un enfant peut terminer une activité." });
+  const activityId = String(req.params.activityId ?? "").trim();
+  if (!/^[a-z0-9-]{3,64}$/.test(activityId)) return res.status(400).json({ error: "Activité invalide." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const childResult = await client.query(
+      "select id from accounts where id=$1 and role='child' and status='active' for update",
+      [req.auth.sub],
+    );
+    if (!childResult.rowCount) throw httpError(403, "Ce profil enfant est en pause.");
+    const activityResult = await client.query(
+      "select id,reward from clubhouse_activities where id=$1 and active=true for share",
+      [activityId],
+    );
+    const activity = activityResult.rows[0];
+    if (!activity) throw httpError(404, "Cette activité Clubhouse n’existe pas.");
+
+    const existingResult = await client.query(
+      `select activity_id
+       from clubhouse_activity_progress
+       where child_id=$1 and activity_id=$2
+       for update`,
+      [req.auth.sub, activityId],
+    );
+    const rewardEarned = !existingResult.rowCount;
+    if (rewardEarned) {
+      await client.query(
+        `insert into clubhouse_activity_progress(child_id,activity_id,awarded_stars)
+         values($1,$2,$3)`,
+        [req.auth.sub, activityId, Number(activity.reward)],
+      );
+    } else {
+      await client.query(
+        `update clubhouse_activity_progress
+         set last_completed_at=now(),completion_count=completion_count+1
+         where child_id=$1 and activity_id=$2`,
+        [req.auth.sub, activityId],
+      );
+    }
+    await client.query(
+      `insert into clubhouse_daily_activity(child_id,activity_date)
+       values($1,(now() at time zone $2)::date)
+       on conflict(child_id,activity_date) do nothing`,
+      [req.auth.sub, parentalTimeZone],
+    );
+    const clubhouse = await serializeClubhouseState(req.auth.sub, client);
+    await client.query("commit");
+    res.json({
+      rewardEarned,
+      reward: rewardEarned ? Number(activity.reward) : 0,
+      clubhouse,
+    });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.delete("/api/children/:id", requireAuth, async (req, res) => {
@@ -930,6 +1895,13 @@ app.delete("/api/children/:id", requireAuth, async (req, res) => {
       throw httpError(404, "Profil enfant introuvable dans votre famille.");
     }
 
+    await recordCompletedErasure(client, {
+      requesterId: req.auth.sub,
+      subjectId: req.params.id,
+      familyId: membership.family_id,
+      accountIds: [req.params.id],
+      details: "Suppression définitive du profil enfant demandée par le parent principal.",
+    });
     await client.query(
       "delete from conversations where id in (select conversation_id from conversation_members where account_id=$1)",
       [req.params.id],
@@ -945,16 +1917,134 @@ app.delete("/api/children/:id", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/presence/heartbeat", requireAuth, async (req, res) => {
-  await pool.query("insert into presence(account_id,last_seen) values($1,now()) on conflict(account_id) do update set last_seen=excluded.last_seen", [req.auth.sub]);
+app.post("/api/presence/heartbeat", requireAuth, requireActiveChild, async (req, res) => {
+  const result = await pool.query(
+    `with active_account as (
+       update accounts
+       set last_activity_at=now()
+       where id=$1 and (role<>'child' or status='active')
+       returning id
+     )
+     insert into presence(account_id,last_seen,expires_at)
+     select id,now(),now()+interval '24 hours' from active_account
+     on conflict(account_id) do update
+       set last_seen=excluded.last_seen,expires_at=excluded.expires_at`,
+    [req.auth.sub],
+  );
+  if (!result.rowCount) return res.status(403).json({ error: "Ce profil enfant est en pause." });
   res.status(204).end();
 });
 
-app.get("/api/presence", requireAuth, async (req, res) => {
+app.get("/api/presence", requireAuth, requireActiveChild, async (req, res) => {
   const contactIds = String(req.query.contactIds ?? "").split(",").map((value) => value.trim()).filter((value) => /^SC-\d{3}-\d{3}-\d{3}$/.test(value)).slice(0, 100);
   if (!contactIds.length) return res.json({ presence: {} });
-  const result = await pool.query("select a.contact_id, p.last_seen > now() - interval '75 seconds' as online from accounts a left join presence p on p.account_id=a.id where a.contact_id=any($1::text[])", [contactIds]);
+  const result = await pool.query(
+    `with requester_families as (
+       select family_id from family_memberships where parent_id=$2
+       union
+       select family_id from family_children where child_id=$2
+     ),
+     authorized_accounts as (
+       select $2::uuid as account_id
+       union
+       select case
+         when relationship.account_one_id=$2 then relationship.account_two_id
+         else relationship.account_one_id
+       end
+       from contact_relationships relationship
+       where relationship.account_one_id=$2 or relationship.account_two_id=$2
+       union
+       select membership.parent_id
+       from family_memberships membership
+       join requester_families using(family_id)
+       union
+       select child.child_id
+       from family_children child
+       join requester_families using(family_id)
+     )
+     select account.contact_id,presence.last_seen > now() - interval '75 seconds' as online
+     from accounts account
+     join authorized_accounts authorized on authorized.account_id=account.id
+     left join presence on presence.account_id=account.id
+     where account.contact_id=any($1::text[])`,
+    [contactIds, req.auth.sub],
+  );
   res.json({ presence: Object.fromEntries(result.rows.map((row) => [row.contact_id, Boolean(row.online)])) });
+});
+
+app.get("/api/privacy/notification-consent", requireAuth, async (req, res) => {
+  const consent = await getNotificationConsent(pool, req.auth.sub);
+  if (!consent) return res.status(404).json({ error: "Compte introuvable." });
+  res.json({ consent });
+});
+
+app.put("/api/privacy/notification-consent", requireAuth, requireActiveChild, async (req, res) => {
+  if (typeof req.body?.agreed !== "boolean") {
+    return res.status(400).json({ error: "Choisissez d’accepter ou de refuser les notifications." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const consent = await setSubjectNotificationConsent(client, {
+      subjectAccountId: req.auth.sub,
+      agreed: req.body.agreed,
+    });
+    await client.query("commit");
+    res.json({ consent });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/children/:id/privacy/notification-consent", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
+  const authorized = await pool.query(
+    `select child.id
+     from accounts child
+     join family_children family_child on family_child.child_id=child.id
+     join family_memberships membership on membership.family_id=family_child.family_id
+     where membership.parent_id=$1 and child.id=$2 and child.role='child'`,
+    [req.auth.sub, req.params.id],
+  );
+  if (!authorized.rowCount) return res.status(404).json({ error: "Profil enfant introuvable dans votre famille." });
+  const consent = await getNotificationConsent(pool, req.params.id);
+  res.json({ consent });
+});
+
+app.put("/api/children/:id/privacy/notification-consent", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
+  if (typeof req.body?.agreed !== "boolean") {
+    return res.status(400).json({ error: "Choisissez d’accepter ou de refuser les notifications." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const authorized = await client.query(
+      `select child.id
+       from accounts child
+       join family_children family_child on family_child.child_id=child.id
+       join family_memberships membership on membership.family_id=family_child.family_id
+       where membership.parent_id=$1 and child.id=$2 and child.role='child'
+       for update of child`,
+      [req.auth.sub, req.params.id],
+    );
+    if (!authorized.rowCount) throw httpError(404, "Profil enfant introuvable dans votre famille.");
+    const consent = await setGuardianNotificationConsent(client, {
+      subjectAccountId: req.params.id,
+      guardianAccountId: req.auth.sub,
+      agreed: req.body.agreed,
+    });
+    await client.query("commit");
+    res.json({ consent });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.get("/api/push/public-key", requireAuth, (_req, res) => {
@@ -962,10 +2052,20 @@ app.get("/api/push/public-key", requireAuth, (_req, res) => {
   res.json({ publicKey: vapidPublicKey });
 });
 
-app.post("/api/push/subscribe", requireAuth, async (req, res) => {
+app.post("/api/push/subscribe", requireAuth, requireActiveChild, async (req, res) => {
   const subscription = req.body?.subscription;
   if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: "Abonnement push invalide." });
-  await pool.query("insert into push_subscriptions(account_id,endpoint,subscription) values($1,$2,$3::jsonb) on conflict(endpoint) do update set account_id=excluded.account_id, subscription=excluded.subscription", [req.auth.sub, subscription.endpoint, JSON.stringify(subscription)]);
+  await assertActiveNotificationConsent(pool, req.auth.sub);
+  await pool.query(
+    `insert into push_subscriptions(account_id,endpoint,subscription,updated_at,expires_at)
+     values($1,$2,$3::jsonb,now(),now()+interval '180 days')
+     on conflict(endpoint) do update
+       set account_id=excluded.account_id,
+           subscription=excluded.subscription,
+           updated_at=excluded.updated_at,
+           expires_at=excluded.expires_at`,
+    [req.auth.sub, subscription.endpoint, JSON.stringify(subscription)],
+  );
   res.status(204).end();
 });
 
@@ -974,18 +2074,119 @@ app.delete("/api/push/subscribe", requireAuth, async (req, res) => {
   res.status(204).end();
 });
 
-app.post("/api/push/native-token", requireAuth, async (req, res) => {
-  const { token, platform } = req.body ?? {};
-  if (typeof token !== "string" || token.length < 20 || !["ios", "android"].includes(platform)) return res.status(400).json({ error: "Jeton mobile invalide." });
-  await pool.query("insert into native_push_tokens(account_id,platform,token) values($1,$2,$3) on conflict(token) do update set account_id=excluded.account_id,platform=excluded.platform,updated_at=now()", [req.auth.sub, platform, token]);
-  res.status(204).end();
+app.post("/api/push/native-token", requireAuth, requireActiveChild, async (req, res) => {
+  let registration;
+  try {
+    registration = normalizeNativeTokenRegistration(req.body, process.env);
+  } catch {
+    return res.status(400).json({ error: "Inscription de notification mobile invalide." });
+  }
+  await assertActiveNotificationConsent(pool, req.auth.sub);
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await client.query(
+      "select pg_advisory_xact_lock(hashtext($1),hashtext($2))",
+      [req.auth.sub, registration.deviceId],
+    );
+    await client.query(
+      `delete from native_push_tokens
+       where account_id=$1 and device_id=$2 and token_kind=$3 and token<>$4`,
+      [req.auth.sub, registration.deviceId, registration.tokenKind, registration.token],
+    );
+    await client.query(
+      `insert into native_push_tokens(
+         account_id,platform,device_id,token_kind,token,environment,topic,
+         enabled,created_at,updated_at,expires_at,last_failure_at,last_error_code
+       )
+       values($1,$2,$3,$4,$5,$6,$7,true,now(),now(),now()+interval '180 days',null,null)
+       on conflict(token) do update
+         set account_id=excluded.account_id,
+             platform=excluded.platform,
+             device_id=excluded.device_id,
+             token_kind=excluded.token_kind,
+             environment=excluded.environment,
+             topic=excluded.topic,
+             enabled=true,
+             last_success_at=null,
+             updated_at=now(),
+             expires_at=now()+interval '180 days',
+             last_failure_at=null,
+             last_error_code=null`,
+      [
+        req.auth.sub,
+        registration.platform,
+        registration.deviceId,
+        registration.tokenKind,
+        registration.token,
+        registration.environment,
+        registration.topic,
+      ],
+    );
+    await client.query("commit");
+    return res.status(204).end();
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/push/native-token", requireAuth, async (req, res) => {
+  const deviceId = String(req.query.deviceId ?? "").trim();
+  if (!/^[A-Za-z0-9._:-]{8,200}$/.test(deviceId)) return res.status(400).json({ error: "Identifiant d’installation invalide." });
+  const result = await pool.query(
+    `select token_kind
+     from native_push_tokens
+     where account_id=$1 and device_id=$2 and enabled=true and expires_at>now()
+     order by token_kind`,
+    [req.auth.sub, deviceId],
+  );
+  res.json({
+    registered: result.rowCount > 0,
+    tokenKinds: result.rows.map((row) => row.token_kind),
+  });
+});
+
+app.delete("/api/push/native-token", requireAuth, async (req, res) => {
+  const deviceId = String(req.body?.deviceId ?? "").trim();
+  const token = String(req.body?.token ?? "").trim();
+  if (!deviceId && !token) return res.status(400).json({ error: "Installation ou jeton mobile requis." });
+  if (deviceId && !/^[A-Za-z0-9._:-]{8,200}$/.test(deviceId)) return res.status(400).json({ error: "Identifiant d’installation invalide." });
+  if (token && (token.length < 20 || token.length > 4096 || /\s/.test(token))) return res.status(400).json({ error: "Jeton mobile invalide." });
+  const result = deviceId
+    ? await pool.query(
+        "delete from native_push_tokens where account_id=$1 and device_id=$2 returning id",
+        [req.auth.sub, deviceId],
+      )
+    : await pool.query(
+        "delete from native_push_tokens where account_id=$1 and token=$2 returning id",
+        [req.auth.sub, token],
+      );
+  res.json({ removed: result.rowCount });
 });
 
 async function deliverWebPush(rows, payload) {
   if (!pushEnabled) return 0;
+  const {
+    callActionToken: _callActionToken,
+    callActionUrl: _callActionUrl,
+    respondUrl: _respondUrl,
+    acceptUrl: _acceptUrl,
+    declineUrl: _declineUrl,
+    hangupUrl: _hangupUrl,
+    statusUrl: _statusUrl,
+    ...webPayload
+  } = payload;
   const results = await Promise.all(rows.map(async (row) => {
     try {
-      await webpush.sendNotification(row.subscription, JSON.stringify(payload), { TTL: 3600, urgency: "high" });
+      const ttl = payload.notificationType === "incoming-call" ? callTimeoutSeconds : 3600;
+      await webpush.sendNotification(row.subscription, JSON.stringify(webPayload), {
+        TTL: ttl,
+        urgency: "high",
+        timeout: webPushTimeoutMs,
+      });
       return true;
     }
     catch (error) {
@@ -997,16 +2198,67 @@ async function deliverWebPush(rows, payload) {
   return results.filter(Boolean).length;
 }
 
+async function notifyNativeAccounts(accountIds, payload) {
+  if (!nativePushService || !accountIds.length) return 0;
+  return nativePushService.deliverToAccounts(
+    accountIds,
+    privacySafeNotificationPayload(payload),
+  );
+}
+
+async function settleNotificationDeliveries(deliveries) {
+  const results = await Promise.allSettled(deliveries);
+  let delivered = 0;
+  for (const result of results) {
+    if (result.status === "fulfilled") delivered += Number(result.value) || 0;
+    else console.error("Échec d’un canal de notification", result.reason?.message || result.reason);
+  }
+  return delivered;
+}
+
 async function notifyAccounts(accountIds, payload) {
-  if (!pushEnabled || !accountIds.length) return 0;
-  const result = await pool.query("select id,subscription from push_subscriptions where account_id=any($1::uuid[])", [accountIds]);
-  return deliverWebPush(result.rows, payload);
+  const uniqueIds = [...new Set(accountIds.filter(Boolean))];
+  if (!uniqueIds.length) return 0;
+  const safePayload = privacySafeNotificationPayload(payload);
+  const webDelivery = pushEnabled
+    ? pool.query(
+        `select subscription.id,subscription.subscription
+         from push_subscriptions subscription
+         join accounts account on account.id=subscription.account_id
+         join account_consent_preferences consent
+           on consent.subject_account_id=account.id and consent.purpose='notifications'
+         where subscription.account_id=any($1::uuid[]) and subscription.expires_at>now()
+           and consent.subject_agreed_at is not null
+           and (account.role<>'child' or account.age>=15 or consent.guardian_agreed_at is not null)`,
+        [uniqueIds],
+      ).then((result) => deliverWebPush(result.rows, safePayload))
+    : Promise.resolve(0);
+  return settleNotificationDeliveries([
+    webDelivery,
+    notifyNativeAccounts(uniqueIds, safePayload),
+  ]);
 }
 
 async function notifyConversation(conversationId, senderId, payload) {
-  if (!pushEnabled) return 0;
-  const result = await pool.query("select ps.id,ps.subscription from push_subscriptions ps join conversation_members cm on cm.account_id=ps.account_id where cm.conversation_id=$1 and cm.account_id<>$2", [conversationId, senderId]);
-  return deliverWebPush(result.rows, payload);
+  const safePayload = privacySafeNotificationPayload(payload);
+  const webDelivery = pushEnabled
+    ? pool.query(
+        `select subscription.id,subscription.subscription
+         from push_subscriptions subscription
+         join conversation_members member on member.account_id=subscription.account_id
+         join accounts account on account.id=subscription.account_id
+         join account_consent_preferences consent
+           on consent.subject_account_id=account.id and consent.purpose='notifications'
+         where member.conversation_id=$1 and member.account_id<>$2 and subscription.expires_at>now()
+           and consent.subject_agreed_at is not null
+           and (account.role<>'child' or account.age>=15 or consent.guardian_agreed_at is not null)`,
+        [conversationId, senderId],
+      ).then((result) => deliverWebPush(result.rows, safePayload))
+    : Promise.resolve(0);
+  const nativeDelivery = nativePushService
+    ? nativePushService.deliverToConversation(conversationId, senderId, safePayload)
+    : Promise.resolve(0);
+  return settleNotificationDeliveries([webDelivery, nativeDelivery]);
 }
 
 app.post("/api/family-conversations", requireAuth, async (req, res) => {
@@ -1164,18 +2416,63 @@ async function ensureHouseholdParentConversations(accountId) {
   }
 }
 
-app.get("/api/conversations", requireAuth, async (req, res) => {
+app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) => {
   await ensureFamilyConversations(req.auth.sub);
   if (req.auth.role === "parent") await ensureHouseholdParentConversations(req.auth.sub);
+  await pool.query(
+    `update message_receipts receipt
+     set received_at=coalesce(receipt.received_at,now())
+     from messages message
+     where receipt.message_id=message.id
+       and receipt.recipient_id=$1
+       and receipt.received_at is null`,
+    [req.auth.sub],
+  );
   const result = await pool.query(`
     select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
+      a.status as contact_status, a.communication_schedule,
+      (
+        select count(*)::int
+        from message_receipts unread_receipt
+        join messages unread_message on unread_message.id=unread_receipt.message_id
+        where unread_receipt.recipient_id=$1
+          and unread_receipt.seen_at is null
+          and unread_message.conversation_id=c.id
+      ) as unread_count,
       exists(
         select 1 from family_parent_conversations family_parent
         where family_parent.conversation_id=c.id and family_parent.family_id in (
           select family_id from family_memberships where parent_id=$1
         )
       ) as is_family_member,
-      coalesce(json_agg(json_build_object('id',m.id,'senderId',m.sender_id,'text',m.body,'mediaName',m.media_name,'mediaType',m.media_type,'createdAt',m.created_at) order by m.created_at) filter (where m.id is not null),'[]') as messages
+      coalesce(json_agg(json_build_object(
+        'id',m.id,
+        'conversationId',m.conversation_id,
+        'senderId',m.sender_id,
+        'text',m.body,
+        'mediaName',m.media_name,
+        'mediaType',m.media_type,
+        'bodyCiphertext',m.body_ciphertext,
+        'mediaNameCiphertext',m.media_name_ciphertext,
+        'mediaTypeCiphertext',m.media_type_ciphertext,
+        'contentEncryptionVersion',m.content_encryption_version,
+        'contentEncryptionKeyId',m.content_encryption_key_id,
+        'messageKind',m.message_kind,
+        'createdAt',m.created_at,
+        'deliveryStatus',case
+          when m.sender_id<>$1 then null
+          else coalesce((
+            select case
+              when count(*)=0 then 'sent'
+              when bool_and(receipt.seen_at is not null) then 'seen'
+              when bool_and(receipt.received_at is not null) then 'received'
+              else 'sent'
+            end
+            from message_receipts receipt
+            where receipt.message_id=m.id
+          ),'sent')
+        end
+      ) order by m.created_at) filter (where m.id is not null),'[]') as messages
     from conversation_members mine
     join conversations c on c.id=mine.conversation_id
     join conversation_members other on other.conversation_id=c.id and other.account_id<>mine.account_id
@@ -1193,51 +2490,562 @@ app.get("/api/conversations", requireAuth, async (req, res) => {
       )
     group by c.id,a.id
     order by max(m.created_at) desc nulls last`, [req.auth.sub]);
-  res.json({ conversations: result.rows });
+  const conversations = result.rows.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map((message) => {
+      const content = decryptMessageContent(message);
+      const {
+        bodyCiphertext: _bodyCiphertext,
+        mediaNameCiphertext: _mediaNameCiphertext,
+        mediaTypeCiphertext: _mediaTypeCiphertext,
+        contentEncryptionVersion: _contentEncryptionVersion,
+        contentEncryptionKeyId: _contentEncryptionKeyId,
+        ...publicMessage
+      } = message;
+      return {
+        ...publicMessage,
+        text: content.body,
+        mediaName: content.mediaName,
+        mediaType: content.mediaType,
+      };
+    }),
+  }));
+  res.json({ conversations });
+});
+
+app.post("/api/conversations/:id/read", requireAuth, requireActiveChild, async (req, res) => {
+  if (!await isConversationMember(req.auth.sub, req.params.id)) {
+    return res.status(403).json({ error: "Conversation non autorisée." });
+  }
+  const result = await pool.query(
+    `update message_receipts receipt
+     set received_at=coalesce(receipt.received_at,now()),
+         seen_at=coalesce(receipt.seen_at,now())
+     from messages message
+     where receipt.message_id=message.id
+       and receipt.recipient_id=$1
+       and message.conversation_id=$2
+       and receipt.seen_at is null`,
+    [req.auth.sub, req.params.id],
+  );
+  res.json({ seenCount: result.rowCount });
+});
+
+const serializeContactRequest = (row) => ({
+  id: row.id,
+  direction: row.direction,
+  kind: row.requester_role === "child" && row.target_role === "child" ? "child_friend" : "adult_contact",
+  status: row.status,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  resolvedAt: row.resolved_at,
+  conversationId: row.conversation_id,
+  canRespond: Boolean(row.can_respond),
+  requester: {
+    id: row.requester_id,
+    name: row.requester_name,
+    contactId: row.requester_contact_id,
+    role: row.requester_role,
+    age: row.requester_age === null ? null : Number(row.requester_age),
+  },
+  target: {
+    id: row.target_account_id,
+    name: row.target_name,
+    contactId: row.target_contact_id,
+    role: row.target_role,
+    age: row.target_age === null ? null : Number(row.target_age),
+  },
+  requestedBy: {
+    id: row.requested_by_parent_id,
+    name: row.requested_by_name,
+  },
+});
+
+async function getVisibleContactRequests(parentId, executor = pool) {
+  const membership = await getParentFamilyMembership(parentId, executor);
+  if (!membership) throw httpError(404, "Ce compte parent n’est rattaché à aucune famille.");
+  const result = await executor.query(
+    `with managed_accounts as (
+       select parent_id as account_id from family_memberships where family_id=$2
+       union
+       select child_id as account_id from family_children where family_id=$2
+     )
+     select request.*,requester.display_name as requester_name,requester.contact_id as requester_contact_id,
+       requester.role as requester_role,requester.age as requester_age,
+       target.display_name as target_name,target.contact_id as target_contact_id,
+       target.role as target_role,target.age as target_age,
+       requested_by.display_name as requested_by_name,
+       case when request.target_account_id in (select account_id from managed_accounts) then 'incoming' else 'outgoing' end as direction,
+       (
+         request.status='pending'
+         and (
+           request.target_account_id=$1
+           or exists(
+             select 1 from family_children target_child
+             join family_memberships responder on responder.family_id=target_child.family_id
+             where target_child.child_id=request.target_account_id and responder.parent_id=$1
+           )
+         )
+       ) as can_respond
+     from contact_requests request
+     join accounts requester on requester.id=request.requester_id
+     join accounts target on target.id=request.target_account_id
+     join accounts requested_by on requested_by.id=request.requested_by_parent_id
+     where request.requester_id in (select account_id from managed_accounts)
+       or request.target_account_id in (select account_id from managed_accounts)
+     order by (request.status='pending') desc,request.updated_at desc,request.created_at desc`,
+    [parentId, membership.family_id],
+  );
+  return result.rows.map(serializeContactRequest);
+}
+
+async function getVisibleContactRelationships(parentId, executor = pool) {
+  const membership = await getParentFamilyMembership(parentId, executor);
+  if (!membership) throw httpError(404, "Ce compte parent n’est rattaché à aucune famille.");
+  const result = await executor.query(
+    `with managed_accounts as (
+       select parent_id as account_id from family_memberships where family_id=$1
+       union
+       select child_id as account_id from family_children where family_id=$1
+     )
+     select relationship.conversation_id,relationship.created_at,
+       mine.id as account_id,mine.display_name as account_name,mine.contact_id as account_contact_id,mine.role as account_role,
+       contact.id as contact_id,contact.display_name as contact_name,contact.contact_id as contact_contact_id,contact.role as contact_role
+     from contact_relationships relationship
+     join accounts mine on mine.id=case
+       when relationship.account_one_id in (select account_id from managed_accounts) then relationship.account_one_id
+       else relationship.account_two_id
+     end
+     join accounts contact on contact.id=case when mine.id=relationship.account_one_id then relationship.account_two_id else relationship.account_one_id end
+     where relationship.account_one_id in (select account_id from managed_accounts)
+       or relationship.account_two_id in (select account_id from managed_accounts)
+     order by relationship.created_at desc`,
+    [membership.family_id],
+  );
+  return result.rows.map((row) => ({
+    conversationId: row.conversation_id,
+    createdAt: row.created_at,
+    account: { id: row.account_id, name: row.account_name, contactId: row.account_contact_id, role: row.account_role },
+    contact: { id: row.contact_id, name: row.contact_name, contactId: row.contact_contact_id, role: row.contact_role },
+  }));
+}
+
+app.get("/api/contact-requests", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
+  await repairFamilyChildrenForAccount(req.auth.sub);
+  const [requests, contacts] = await Promise.all([
+    getVisibleContactRequests(req.auth.sub),
+    getVisibleContactRelationships(req.auth.sub),
+  ]);
+  res.json({ requests, contacts });
 });
 
 app.post("/api/contact-requests", requireAuth, async (req, res) => {
   if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut ajouter un contact." });
   const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
+  const requesterContactId = String(req.body?.requesterContactId ?? "").trim().toUpperCase();
   if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId)) return res.status(400).json({ error: "Saisissez un identifiant au format SC-123-456-789." });
-  const requesterMembership = await getParentFamilyMembership(req.auth.sub);
-  if (!requesterMembership) return res.status(404).json({ error: "Ce compte parent n’est rattaché à aucune famille." });
-  const targetResult = contactId === legacyReservedContactId
-    ? { rows: [] }
-    : await pool.query(
-      `select target.id,target.role,target.display_name,
+  if (requesterContactId && !/^SC-\d{3}-\d{3}-\d{3}$/.test(requesterContactId)) {
+    return res.status(400).json({ error: "Le profil demandeur est invalide." });
+  }
+  if (contactId === legacyReservedContactId) return res.status(404).json({ error: "Aucun compte ne correspond à cet identifiant." });
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await repairFamilyChildrenForAccount(req.auth.sub, client);
+    const requesterMembership = await getParentFamilyMembership(req.auth.sub, client);
+    if (!requesterMembership) throw httpError(404, "Ce compte parent n’est rattaché à aucune famille.");
+    const requesterResult = await client.query(
+      `select account.id,account.role,account.display_name,account.contact_id,account.status
+       from accounts account
+       where account.contact_id=coalesce(nullif($2,''),(select contact_id from accounts where id=$1))
+         and (
+           account.id=$1
+           or exists(
+             select 1 from family_children child
+             where child.family_id=$3 and child.child_id=account.id
+           )
+         )
+       for share of account`,
+      [req.auth.sub, requesterContactId, requesterMembership.family_id],
+    );
+    const requester = requesterResult.rows[0];
+    if (!requester) throw httpError(403, "Choisissez votre compte parent ou un enfant de votre famille.");
+    const targetResult = await client.query(
+      `select target.id,target.role,target.display_name,target.contact_id,target.status,
         child_family.family_id as child_family_id,child_primary.parent_id as child_primary_parent_id,
         parent_membership.family_id as parent_family_id
        from accounts target
        left join family_children child_family on child_family.child_id=target.id and target.role='child'
        left join family_memberships child_primary on child_primary.family_id=child_family.family_id and child_primary.role='primary'
        left join family_memberships parent_membership on parent_membership.parent_id=target.id and target.role='parent'
-       where target.contact_id=$1`,
+       where target.contact_id=$1
+       for share of target`,
       [contactId],
     );
-  const target = targetResult.rows[0];
-  if (!target) return res.status(404).json({ error: "Aucun compte ne correspond à cet identifiant." });
-  const targetFamilyId = target.role === "child" ? target.child_family_id : target.parent_family_id;
-  if (targetFamilyId === requesterMembership.family_id) {
-    return res.status(400).json({ error: "Cet identifiant appartient déjà à votre famille." });
-  }
-  const recipientParentId = target.role === "child" ? target.child_primary_parent_id : target.id;
-  if (!recipientParentId) return res.status(409).json({ error: "La famille de ce contact n’a pas de parent principal disponible." });
-  try {
-    const result = await pool.query(`insert into contact_requests(requester_id,target_account_id,recipient_parent_id)
-      values($1,$2,$3) returning id,status,created_at`, [req.auth.sub, target.id, recipientParentId]);
-    await notifyAccounts([recipientParentId], {
-      title: "Nouvelle demande de contact",
-      body: "Une demande attend votre approbation dans l’espace parent.",
-      notificationType: "contact-request",
-      tag: `contact-request-${result.rows[0].id}`,
-      url: "/?notification=contact-request",
+    const target = targetResult.rows[0];
+    if (!target) throw httpError(404, "Aucun compte ne correspond à cet identifiant.");
+    if (target.id === requester.id) throw httpError(400, "Vous ne pouvez pas vous ajouter vous-même.");
+    const targetFamilyId = target.role === "child" ? target.child_family_id : target.parent_family_id;
+    if (targetFamilyId === requesterMembership.family_id) throw httpError(400, "Cet identifiant appartient déjà à votre famille.");
+    if (requester.role !== target.role) {
+      throw httpError(400, requester.role === "child"
+        ? "Un profil enfant peut uniquement ajouter un autre enfant."
+        : "Pour ajouter un enfant, choisissez d’abord le profil enfant concerné.");
+    }
+    if ((requester.role === "child" && requester.status !== "active") || (target.role === "child" && target.status !== "active")) {
+      throw httpError(409, "Un des profils enfants est actuellement en pause.");
+    }
+    const recipientParentId = target.role === "child" ? target.child_primary_parent_id : target.id;
+    if (!recipientParentId) throw httpError(409, "La famille de ce contact n’a pas de parent principal disponible.");
+    const pair = [requester.id, target.id].sort();
+    const existingRelationship = await client.query(
+      "select 1 from contact_relationships where account_one_id=$1 and account_two_id=$2",
+      pair,
+    );
+    if (existingRelationship.rowCount) throw httpError(409, "Ce contact est déjà approuvé.");
+    const existingPending = await client.query(
+      `select 1 from contact_requests
+       where status='pending'
+         and least(requester_id,target_account_id)=least($1::uuid,$2::uuid)
+         and greatest(requester_id,target_account_id)=greatest($1::uuid,$2::uuid)`,
+      [requester.id, target.id],
+    );
+    if (existingPending.rowCount) throw httpError(409, "Une demande est déjà en attente entre ces contacts.");
+    const result = await client.query(
+      `insert into contact_requests(requester_id,requested_by_parent_id,target_account_id,recipient_parent_id)
+       values($1,$2,$3,$4) returning id,status,created_at,updated_at`,
+      [requester.id, req.auth.sub, target.id, recipientParentId],
+    );
+    await client.query("commit");
+    try {
+      const recipientIds = target.role === "child"
+        ? (await pool.query("select parent_id from family_memberships where family_id=$1", [targetFamilyId])).rows.map((row) => row.parent_id)
+        : [target.id];
+      await notifyAccounts(recipientIds, {
+        title: "Nouvelle demande de contact",
+        body: `${requester.display_name} attend votre approbation dans l’espace parent.`,
+        notificationType: "contact-request",
+        tag: `contact-request-${result.rows[0].id}`,
+        url: "/?notification=contact-request",
+      });
+    } catch (notificationError) {
+      console.error("Échec de notification de demande de contact", notificationError);
+    }
+    res.status(201).json({
+      request: {
+        id: result.rows[0].id,
+        status: result.rows[0].status,
+        createdAt: result.rows[0].created_at,
+        updatedAt: result.rows[0].updated_at,
+      },
+      requester: { name: requester.display_name, contactId: requester.contact_id, role: requester.role },
+      contact: { name: target.display_name, contactId, role: target.role },
     });
-    res.status(201).json({ request: result.rows[0], contact: { name: target.display_name, contactId } });
   } catch (error) {
-    if (error.code === "23505") return res.status(409).json({ error: "Une demande existe déjà pour ce contact." });
+    await client.query("rollback");
+    if (error.code === "23505") return res.status(409).json({ error: "Une demande est déjà en attente entre ces contacts." });
     throw error;
+  } finally {
+    client.release();
   }
+});
+
+async function ensureApprovedContactConversation(firstAccountId, secondAccountId, conversationKind, approvedRequestId, executor) {
+  const pair = [firstAccountId, secondAccountId].sort();
+  await executor.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", pair);
+  const existingRelationship = await executor.query(
+    `select conversation_id
+     from contact_relationships
+     where account_one_id=$1 and account_two_id=$2
+     for update`,
+    pair,
+  );
+  if (existingRelationship.rowCount) return existingRelationship.rows[0].conversation_id;
+
+  const existingConversation = await executor.query(
+    `select conversation.id
+     from conversations conversation
+     where conversation.kind=$3
+       and exists(
+         select 1 from conversation_members member
+         where member.conversation_id=conversation.id and member.account_id=$1
+       )
+       and exists(
+         select 1 from conversation_members member
+         where member.conversation_id=conversation.id and member.account_id=$2
+       )
+       and (
+         select count(*) from conversation_members member
+         where member.conversation_id=conversation.id
+       )=2
+     order by conversation.created_at
+     limit 1
+     for update of conversation`,
+    [pair[0], pair[1], conversationKind],
+  );
+  let conversationId = existingConversation.rows[0]?.id;
+  if (!conversationId) {
+    const conversation = await executor.query(
+      "insert into conversations(kind) values($1) returning id",
+      [conversationKind],
+    );
+    conversationId = conversation.rows[0].id;
+    await executor.query(
+      `insert into conversation_members(conversation_id,account_id)
+       values($1,$2),($1,$3)`,
+      [conversationId, pair[0], pair[1]],
+    );
+  }
+  await executor.query(
+    `insert into contact_relationships(account_one_id,account_two_id,conversation_id,approved_request_id)
+     values($1,$2,$3,$4)
+     on conflict(account_one_id,account_two_id) do nothing`,
+    [pair[0], pair[1], conversationId, approvedRequestId],
+  );
+  const confirmedRelationship = await executor.query(
+    `select conversation_id
+     from contact_relationships
+     where account_one_id=$1 and account_two_id=$2`,
+    pair,
+  );
+  if (!confirmedRelationship.rowCount) throw httpError(409, "La relation de contact n’a pas pu être créée.");
+  return confirmedRelationship.rows[0].conversation_id;
+}
+
+app.patch("/api/contact-requests/:requestId", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
+  if (!uuidPattern.test(req.params.requestId)) return res.status(404).json({ error: "Demande introuvable." });
+  const rawAction = String(req.body?.action ?? "").trim().toLowerCase();
+  const action = rawAction === "approve" ? "accept" : rawAction;
+  if (!["accept", "decline"].includes(action)) {
+    return res.status(400).json({ error: "Choisissez d’accepter ou de refuser la demande." });
+  }
+
+  const client = await pool.connect();
+  const notifications = [];
+  let responsePayload = null;
+  try {
+    await client.query("begin");
+    await repairFamilyChildrenForAccount(req.auth.sub, client);
+    const responderMembership = await getParentFamilyMembership(req.auth.sub, client);
+    if (!responderMembership) throw httpError(404, "Demande introuvable.");
+
+    const requestResult = await client.query(
+      `select request.*,
+        requester.display_name as requester_name,requester.contact_id as requester_contact_id,
+        requester.role as requester_role,requester.status as requester_status,
+        target.display_name as target_name,target.contact_id as target_contact_id,
+        target.role as target_role,target.status as target_status,
+        requester_child.family_id as requester_child_family_id,
+        requester_parent.family_id as requester_parent_family_id,
+        target_child.family_id as target_child_family_id,
+        target_parent.family_id as target_parent_family_id,
+        requested_by.family_id as requested_by_family_id
+       from contact_requests request
+       join accounts requester on requester.id=request.requester_id
+       join accounts target on target.id=request.target_account_id
+       left join family_children requester_child on requester_child.child_id=requester.id and requester.role='child'
+       left join family_memberships requester_parent on requester_parent.parent_id=requester.id and requester.role='parent'
+       left join family_children target_child on target_child.child_id=target.id and target.role='child'
+       left join family_memberships target_parent on target_parent.parent_id=target.id and target.role='parent'
+       left join family_memberships requested_by on requested_by.parent_id=request.requested_by_parent_id
+       where request.id=$1
+       for update of request`,
+      [req.params.requestId],
+    );
+    const contactRequest = requestResult.rows[0];
+    if (!contactRequest) throw httpError(404, "Demande introuvable.");
+
+    const lockedAccounts = await client.query(
+      `select id,status
+       from accounts
+       where id=any($1::uuid[])
+       order by id
+       for share`,
+      [[contactRequest.requester_id, contactRequest.target_account_id].sort()],
+    );
+    if (lockedAccounts.rowCount !== 2) throw httpError(404, "Demande introuvable.");
+    const childAccountIds = [
+      contactRequest.requester_role === "child" ? contactRequest.requester_id : null,
+      contactRequest.target_role === "child" ? contactRequest.target_account_id : null,
+    ].filter(Boolean).sort();
+    const parentAccountIds = [...new Set([
+      req.auth.sub,
+      contactRequest.requested_by_parent_id,
+      contactRequest.requester_role === "parent" ? contactRequest.requester_id : null,
+      contactRequest.target_role === "parent" ? contactRequest.target_account_id : null,
+    ].filter(Boolean))].sort();
+    const [lockedChildFamilies, lockedParentMemberships] = await Promise.all([
+      client.query(
+        `select child_id,family_id
+         from family_children
+         where child_id=any($1::uuid[])
+         order by child_id
+         for share`,
+        [childAccountIds],
+      ),
+      client.query(
+        `select parent_id,family_id
+         from family_memberships
+         where parent_id=any($1::uuid[])
+         order by parent_id
+         for share`,
+        [parentAccountIds],
+      ),
+    ]);
+    const accountStatusById = new Map(lockedAccounts.rows.map((account) => [account.id, account.status]));
+    const childFamilyById = new Map(lockedChildFamilies.rows.map((membership) => [membership.child_id, membership.family_id]));
+    const parentFamilyById = new Map(lockedParentMemberships.rows.map((membership) => [membership.parent_id, membership.family_id]));
+    contactRequest.requester_status = accountStatusById.get(contactRequest.requester_id);
+    contactRequest.target_status = accountStatusById.get(contactRequest.target_account_id);
+    contactRequest.requester_child_family_id = childFamilyById.get(contactRequest.requester_id) ?? null;
+    contactRequest.target_child_family_id = childFamilyById.get(contactRequest.target_account_id) ?? null;
+    contactRequest.requester_parent_family_id = parentFamilyById.get(contactRequest.requester_id) ?? null;
+    contactRequest.target_parent_family_id = parentFamilyById.get(contactRequest.target_account_id) ?? null;
+    contactRequest.requested_by_family_id = parentFamilyById.get(contactRequest.requested_by_parent_id) ?? null;
+    const lockedResponderFamilyId = parentFamilyById.get(req.auth.sub);
+    const targetFamilyId = contactRequest.target_role === "child"
+      ? contactRequest.target_child_family_id
+      : contactRequest.target_parent_family_id;
+    const canRespond = Boolean(lockedResponderFamilyId) && (
+      (contactRequest.target_role === "parent" && contactRequest.target_account_id === req.auth.sub)
+      || (contactRequest.target_role === "child" && targetFamilyId === lockedResponderFamilyId)
+    );
+    if (!canRespond) throw httpError(404, "Demande introuvable.");
+
+    const desiredStatus = action === "accept" ? "approved" : "declined";
+    if (contactRequest.status !== "pending") {
+      if (contactRequest.status !== desiredStatus) {
+        throw httpError(409, "Cette demande a déjà reçu une autre réponse.");
+      }
+      await client.query("commit");
+      return res.json({
+        request: {
+          id: contactRequest.id,
+          status: contactRequest.status,
+          conversationId: contactRequest.conversation_id,
+          resolvedAt: contactRequest.resolved_at,
+        },
+      });
+    }
+
+    if (action === "decline") {
+      const declined = await client.query(
+        `update contact_requests
+         set status='declined',conversation_id=null,resolved_by=$2,resolved_at=now(),updated_at=now()
+         where id=$1
+         returning id,status,conversation_id,resolved_at,updated_at`,
+        [contactRequest.id, req.auth.sub],
+      );
+      responsePayload = declined.rows[0];
+      notifications.push({
+        accountIds: [...new Set([contactRequest.requester_id, contactRequest.requested_by_parent_id])],
+        title: "Demande de contact refusée",
+        body: `${contactRequest.target_name} n’a pas accepté la demande de contact.`,
+      });
+    } else {
+      if (contactRequest.requester_role !== contactRequest.target_role) {
+        throw httpError(409, "Cette ancienne demande doit être recréée depuis le profil concerné.");
+      }
+      if (
+        (contactRequest.requester_role === "child" && contactRequest.requester_status !== "active")
+        || (contactRequest.target_role === "child" && contactRequest.target_status !== "active")
+      ) {
+        throw httpError(409, "Un des profils enfants est actuellement en pause.");
+      }
+
+      const requesterFamilyId = contactRequest.requester_role === "child"
+        ? contactRequest.requester_child_family_id
+        : contactRequest.requester_parent_family_id;
+      if (!requesterFamilyId || !targetFamilyId || requesterFamilyId === targetFamilyId) {
+        throw httpError(409, "La situation familiale de cette demande a changé.");
+      }
+      if (contactRequest.requested_by_family_id !== requesterFamilyId) {
+        throw httpError(409, "Le parent à l’origine de cette demande n’est plus autorisé.");
+      }
+      if (contactRequest.requester_role === "parent" && contactRequest.requested_by_parent_id !== contactRequest.requester_id) {
+        throw httpError(409, "Cette demande adulte doit être recréée par son auteur.");
+      }
+
+      const conversationKind = contactRequest.requester_role === "child" ? "child" : "parent";
+      const conversationId = await ensureApprovedContactConversation(
+        contactRequest.requester_id,
+        contactRequest.target_account_id,
+        conversationKind,
+        contactRequest.id,
+        client,
+      );
+      const parentConversationId = contactRequest.requester_role === "child"
+        ? await ensureApprovedContactConversation(
+            contactRequest.requested_by_parent_id,
+            req.auth.sub,
+            "parent",
+            null,
+            client,
+          )
+        : conversationId;
+
+      const approved = await client.query(
+        `update contact_requests
+         set status='approved',conversation_id=$2,resolved_by=$3,resolved_at=now(),updated_at=now()
+         where id=$1
+         returning id,status,conversation_id,resolved_at,updated_at`,
+        [contactRequest.id, conversationId, req.auth.sub],
+      );
+      responsePayload = approved.rows[0];
+      notifications.push({
+        accountIds: [contactRequest.requester_id],
+        title: "Contact approuvé",
+        body: `${contactRequest.target_name} a accepté la demande. La conversation est disponible.`,
+        conversationId,
+      });
+      if (contactRequest.requester_role === "child") {
+        notifications.push({
+          accountIds: [contactRequest.requested_by_parent_id],
+          title: "Demande de contact approuvée",
+          body: `La demande pour ${contactRequest.target_name} est acceptée. Vous pouvez échanger avec le parent qui l’a approuvée.`,
+          conversationId: parentConversationId,
+        });
+      }
+    }
+
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  for (const notification of notifications) {
+    try {
+      await notifyAccounts(notification.accountIds.filter((accountId) => accountId !== req.auth.sub), {
+        title: notification.title,
+        body: notification.body,
+        notificationType: notification.conversationId ? "message" : "contact-request",
+        conversationId: notification.conversationId,
+        tag: notification.conversationId
+          ? `conversation-${notification.conversationId}`
+          : `contact-request-${responsePayload.id}`,
+        url: notification.conversationId
+          ? `/?notification=message&conversation=${encodeURIComponent(notification.conversationId)}`
+          : "/?notification=contact-request",
+      });
+    } catch (notificationError) {
+      console.error("Échec de notification de réponse à une demande de contact", notificationError);
+    }
+  }
+  return res.json({
+    request: {
+      id: responsePayload.id,
+      status: responsePayload.status,
+      conversationId: responsePayload.conversation_id,
+      resolvedAt: responsePayload.resolved_at,
+      updatedAt: responsePayload.updated_at,
+    },
+  });
 });
 
 const emptyConnectFourBoard = () => Array(42).fill(0);
@@ -1435,8 +3243,9 @@ const gameSelect = `select g.*, p1.display_name as player_one_name, p1.contact_i
   from game_sessions g join accounts p1 on p1.id=g.player_one_id join accounts p2 on p2.id=g.player_two_id`;
 
 const currentGameRelationship = `(
-  exists(select 1 from conversation_members mine join conversation_members other using(conversation_id)
-    where mine.account_id=g.player_one_id and other.account_id=g.player_two_id)
+  exists(select 1 from contact_relationships relationship
+    where relationship.account_one_id=least(g.player_one_id,g.player_two_id)
+      and relationship.account_two_id=greatest(g.player_one_id,g.player_two_id))
   or exists(select 1 from family_memberships parent join family_children child using(family_id)
     where (parent.parent_id=g.player_one_id and child.child_id=g.player_two_id)
       or (parent.parent_id=g.player_two_id and child.child_id=g.player_one_id))
@@ -1448,8 +3257,9 @@ const currentGameRelationship = `(
 
 async function canPlayTogether(accountId, opponentId, executor = pool) {
   const result = await executor.query(`select 1 where
-    exists(select 1 from conversation_members mine join conversation_members other using(conversation_id)
-      where mine.account_id=$1 and other.account_id=$2)
+    exists(select 1 from contact_relationships relationship
+      where relationship.account_one_id=least($1::uuid,$2::uuid)
+        and relationship.account_two_id=greatest($1::uuid,$2::uuid))
     or exists(select 1 from family_memberships parent join family_children child using(family_id)
       where (parent.parent_id=$1 and child.child_id=$2) or (parent.parent_id=$2 and child.child_id=$1))
     or exists(select 1 from family_memberships mine join family_memberships other using(family_id)
@@ -1459,11 +3269,12 @@ async function canPlayTogether(accountId, opponentId, executor = pool) {
   return Boolean(result.rowCount);
 }
 
-app.get("/api/game-contacts", requireAuth, async (req, res) => {
+app.get("/api/game-contacts", requireAuth, requireActiveChild, async (req, res) => {
   const result = await pool.query(`select distinct account.id,account.role,account.display_name,account.contact_id
     from accounts account where account.id<>$1 and (
-      exists(select 1 from conversation_members mine join conversation_members other using(conversation_id)
-        where mine.account_id=$1 and other.account_id=account.id)
+      exists(select 1 from contact_relationships relationship
+        where relationship.account_one_id=least($1::uuid,account.id)
+          and relationship.account_two_id=greatest($1::uuid,account.id))
       or exists(select 1 from family_memberships parent join family_children child using(family_id)
         where (parent.parent_id=$1 and child.child_id=account.id) or (parent.parent_id=account.id and child.child_id=$1))
       or exists(select 1 from family_memberships mine join family_memberships other using(family_id)
@@ -1474,7 +3285,7 @@ app.get("/api/game-contacts", requireAuth, async (req, res) => {
   res.json({ contacts: result.rows.map((row) => ({ id: row.id, role: row.role, name: row.display_name, contactId: row.contact_id })) });
 });
 
-app.get("/api/games", requireAuth, async (req, res) => {
+app.get("/api/games", requireAuth, requireActiveChild, async (req, res) => {
   const participantFilter = "(g.player_one_id=$1 or g.player_two_id=$1)";
   const [openGames, recentGames] = await Promise.all([
     pool.query(
@@ -1491,23 +3302,40 @@ app.get("/api/games", requireAuth, async (req, res) => {
   res.json({ games: [...openGames.rows, ...recentGames.rows].map((game) => serializeGameForViewer(game, req.auth.sub)) });
 });
 
-app.post("/api/games", requireAuth, async (req, res) => {
+app.post("/api/games", requireAuth, requireActiveChild, async (req, res) => {
   const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
   const gameType = String(req.body?.gameType ?? "connect_four").trim().toLowerCase();
   if (!supportedGameTypes.has(gameType)) return res.status(400).json({ error: "Type de jeu invalide." });
-  const opponentResult = await pool.query("select id,role from accounts where contact_id=$1", [contactId]);
-  const opponent = opponentResult.rows[0];
-  if (!opponent || opponent.id === req.auth.sub) return res.status(404).json({ error: "Contact introuvable." });
-  if (!await canPlayTogether(req.auth.sub, opponent.id)) return res.status(403).json({ error: "Ce contact doit appartenir à votre famille ou être approuvé avant de jouer." });
-  const result = await pool.query(`insert into game_sessions(game_type,player_one_id,player_two_id,invited_by,board)
-    values($1,$2,$3,$2,$4::jsonb) returning id`, [gameType, req.auth.sub, opponent.id, JSON.stringify(emptyBoardForGame(gameType))]);
-  const game = await pool.query(`${gameSelect} where g.id=$1`, [result.rows[0].id]);
-  const inviter = await pool.query("select display_name from accounts where id=$1", [req.auth.sub]);
+  const client = await pool.connect();
+  let opponent;
+  let game;
+  let inviterName = "Un ami";
+  try {
+    await client.query("begin");
+    const opponentResult = await client.query("select id,role from accounts where contact_id=$1", [contactId]);
+    opponent = opponentResult.rows[0];
+    if (!opponent || opponent.id === req.auth.sub) throw httpError(404, "Contact introuvable.");
+    await assertAccountsActive([req.auth.sub, opponent.id], client, true);
+    if (!await canPlayTogether(req.auth.sub, opponent.id, client)) {
+      throw httpError(403, "Ce contact doit appartenir à votre famille ou être approuvé avant de jouer.");
+    }
+    const result = await client.query(`insert into game_sessions(game_type,player_one_id,player_two_id,invited_by,board)
+      values($1,$2,$3,$2,$4::jsonb) returning id`, [gameType, req.auth.sub, opponent.id, JSON.stringify(emptyBoardForGame(gameType))]);
+    game = await client.query(`${gameSelect} where g.id=$1`, [result.rows[0].id]);
+    const inviter = await client.query("select display_name from accounts where id=$1", [req.auth.sub]);
+    inviterName = inviter.rows[0]?.display_name || "Un ami";
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
   await notifyAccounts([opponent.id], {
     title: "Invitation à jouer",
-    body: `${inviter.rows[0]?.display_name || "Un ami"} t’invite pour une partie de ${gameNames[gameType]}.`,
+    body: `${inviterName} t’invite pour une partie de ${gameNames[gameType]}.`,
     notificationType: "game",
-    tag: `game-${result.rows[0].id}`,
+    tag: `game-${game.rows[0].id}`,
     url: "/?notification=game",
   });
   res.status(201).json({ game: serializeGameForViewer(game.rows[0], req.auth.sub) });
@@ -1527,6 +3355,9 @@ app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
     if (!game || game.status !== "pending") {
       await client.query("rollback");
       return res.status(409).json({ error: "Cette invitation n’est plus disponible." });
+    }
+    if (action === "accept") {
+      await assertAccountsActive([game.player_one_id, game.player_two_id], client, true);
     }
     if (!await canPlayTogether(game.player_one_id, game.player_two_id, client)) {
       await client.query("rollback");
@@ -1561,6 +3392,7 @@ app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
     const game = result.rows[0];
     if (!game || ![game.player_one_id, game.player_two_id].includes(req.auth.sub)) { await client.query("rollback"); return res.status(404).json({ error: "Partie introuvable." }); }
     if (game.status !== "active" || game.current_player_id !== req.auth.sub) { await client.query("rollback"); return res.status(409).json({ error: "Ce n’est pas votre tour." }); }
+    await assertAccountsActive([game.player_one_id, game.player_two_id], client, true);
     if (!await canPlayTogether(game.player_one_id, game.player_two_id, client)) {
       await client.query("rollback");
       return res.status(403).json({ error: "Cette partie n’est plus autorisée." });
@@ -1658,8 +3490,8 @@ app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
   }
 });
 
-async function isConversationMember(accountId, conversationId) {
-  const result = await pool.query(
+async function isConversationMember(accountId, conversationId, executor = pool) {
+  const result = await executor.query(
     `select 1 from conversation_members member
      where member.account_id=$1 and member.conversation_id=$2
        and (
@@ -1676,7 +3508,708 @@ async function isConversationMember(accountId, conversationId) {
   return result.rowCount === 1;
 }
 
-app.get("/api/conversations/:id/typing", requireAuth, async (req, res) => {
+const callSelect = `
+  select call.*,
+    caller.display_name as caller_name,caller.contact_id as caller_contact_id,caller.role as caller_role,
+    callee.display_name as callee_name,callee.contact_id as callee_contact_id,callee.role as callee_role
+  from call_sessions call
+  join accounts caller on caller.id=call.caller_id
+  join accounts callee on callee.id=call.callee_id`;
+
+const terminalCallStatuses = new Set(["declined", "cancelled", "ended", "missed"]);
+
+function serializeCall(call, viewerId) {
+  const outgoing = call.caller_id === viewerId;
+  return {
+    id: call.id,
+    conversationId: call.conversation_id,
+    callType: call.call_type,
+    status: call.status,
+    direction: outgoing ? "outgoing" : "incoming",
+    peer: {
+      name: outgoing ? call.callee_name : call.caller_name,
+      contactId: outgoing ? call.callee_contact_id : call.caller_contact_id,
+      role: outgoing ? call.callee_role : call.caller_role,
+    },
+    expiresAt: call.expires_at,
+    answeredAt: call.answered_at,
+    endedAt: call.ended_at,
+    createdAt: call.created_at,
+    updatedAt: call.updated_at,
+  };
+}
+
+function requestPublicOrigin(req) {
+  const configuredOrigin = String(process.env.PUBLIC_APP_URL || process.env.RENDER_EXTERNAL_URL || "").trim();
+  if (process.env.NODE_ENV === "production" && !configuredOrigin) {
+    throw httpError(503, "PUBLIC_APP_URL doit être configurée en production.");
+  }
+  const candidate = configuredOrigin || `${req.protocol}://${req.get("host")}`;
+  try {
+    const url = new URL(candidate);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("protocole invalide");
+    if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+      throw new Error("HTTPS requis");
+    }
+    return url.origin;
+  } catch {
+    throw httpError(503, "L’URL publique du service n’est pas configurée.");
+  }
+}
+
+function nativeCallActionUrls(req, callId) {
+  const origin = requestPublicOrigin(req);
+  const encodedCallId = encodeURIComponent(callId);
+  const respondUrl = `${origin}/api/native/calls/${encodedCallId}/respond`;
+  return {
+    callActionUrl: respondUrl,
+    respondUrl,
+    acceptUrl: `${respondUrl}/accept`,
+    declineUrl: `${respondUrl}/decline`,
+    hangupUrl: `${respondUrl}/hangup`,
+    statusUrl: `${origin}/api/native/calls/${encodedCallId}/status`,
+  };
+}
+
+function readNativeCallActionToken(req) {
+  const token = String(
+    req.get("x-call-action-token")
+    || req.body?.actionToken
+    || "",
+  ).trim();
+  return /^nca_[A-Za-z0-9_-]{40,100}$/.test(token) ? token : "";
+}
+
+function serializeNativeCallStatus(call) {
+  return {
+    id: call.id,
+    conversationId: call.conversation_id,
+    callType: call.call_type,
+    status: call.status,
+    expiresAt: call.expires_at,
+    answeredAt: call.answered_at,
+    endedAt: call.ended_at,
+    updatedAt: call.updated_at,
+  };
+}
+
+async function notifyNativeCallState(call) {
+  if (!call) return 0;
+  return notifyNativeAccounts([call.caller_id, call.callee_id], {
+    notificationType: "call-state",
+    callId: call.id,
+    conversationId: call.conversation_id,
+    callType: call.call_type,
+    status: call.status,
+    expiresAt: new Date(call.expires_at).toISOString(),
+  });
+}
+
+async function expireStaleCalls(executor = pool) {
+  const result = await executor.query(
+    `update call_sessions
+     set status='missed',ended_at=coalesce(ended_at,now()),updated_at=now()
+     where status='ringing' and expires_at<=now()
+     returning id,conversation_id,caller_id,callee_id,call_type,status,expires_at,answered_at,ended_at,updated_at`,
+  );
+  if (executor === pool) {
+    await Promise.allSettled(result.rows.map((call) => notifyNativeCallState(call)));
+  }
+  return result.rows;
+}
+
+async function getCallRow(callId, executor = pool, lock = false) {
+  const result = await executor.query(
+    `${callSelect} where call.id=$1 ${lock ? "for update of call" : ""}`,
+    [callId],
+  );
+  return result.rows[0] ?? null;
+}
+
+function callPolicyForAccount(account, channel) {
+  if (account.role !== "child") return { allowed: true };
+  return evaluateChildPolicy(normalizePolicyChild(account), {
+    channel,
+    timeZone: parentalTimeZone,
+  });
+}
+
+function validateCallSignal(signalType, payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  if (JSON.stringify(payload).length > 262144) return false;
+  if (signalType === "offer" || signalType === "answer") {
+    return payload.type === signalType
+      && typeof payload.sdp === "string"
+      && payload.sdp.length > 0
+      && payload.sdp.length <= 200000;
+  }
+  return signalType === "ice"
+    && typeof payload.candidate === "string"
+    && payload.candidate.length > 0
+    && payload.candidate.length <= 8192;
+}
+
+app.get("/api/calls", requireAuth, requireActiveChild, async (req, res) => {
+  await expireStaleCalls();
+  const result = await pool.query(
+    `${callSelect}
+     where $1 in (call.caller_id,call.callee_id)
+       and (
+         call.status in ('ringing','accepted')
+         or call.updated_at>now()-interval '2 minutes'
+       )
+     order by call.updated_at desc
+     limit 20`,
+    [req.auth.sub],
+  );
+  res.json({
+    calls: result.rows.map((call) => serializeCall(call, req.auth.sub)),
+    iceServers: await getRtcIceServers(),
+    callTimeoutSeconds,
+  });
+});
+
+app.post("/api/conversations/:id/calls", requireAuth, requireActiveChild, async (req, res) => {
+  const callType = String(req.body?.callType ?? "");
+  if (!["audio", "video"].includes(callType)) return res.status(400).json({ error: "Type d’appel invalide." });
+  if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
+
+  const client = await pool.connect();
+  let createdCall = null;
+  let callActionToken = "";
+  let actionUrls = null;
+  let expiredCalls = [];
+  try {
+    await client.query("begin");
+    expiredCalls = await expireStaleCalls(client);
+    const participantsResult = await client.query(
+      `select account.id,account.role,account.display_name,account.contact_id,account.status,
+        account.safety_settings,account.communication_schedule
+       from conversation_members member
+       join accounts account on account.id=member.account_id
+       where member.conversation_id=$1
+       order by account.id
+       for no key update of account`,
+      [req.params.id],
+    );
+    if (participantsResult.rowCount !== 2) throw httpError(409, "Cette conversation ne permet pas un appel privé à deux.");
+    const caller = participantsResult.rows.find((account) => account.id === req.auth.sub);
+    const callee = participantsResult.rows.find((account) => account.id !== req.auth.sub);
+    if (!caller || !callee) throw httpError(403, "Conversation non autorisée.");
+
+    const channel = callType === "video" ? "video" : "calls";
+    const callerPolicy = callPolicyForAccount(caller, channel);
+    if (!callerPolicy.allowed) throw httpError(403, callerPolicy.reason);
+    const calleePolicy = callPolicyForAccount(callee, channel);
+    if (!calleePolicy.allowed) {
+      const schedule = normalizePolicyChild(callee).communication_schedule;
+      const shouldReply = schedule.autoReply?.enabled !== false && Boolean(neutralCallReply);
+      if (shouldReply) {
+        await insertEncryptedAutomaticMessage(
+          client,
+          req.params.id,
+          callee.id,
+          neutralCallReply,
+        );
+      }
+      await client.query("commit");
+      await Promise.allSettled(expiredCalls.map((expiredCall) => notifyNativeCallState(expiredCall)));
+      if (shouldReply) {
+        await notifyAccounts([caller.id], {
+          title: callee.display_name,
+          body: neutralCallReply,
+          notificationType: "message",
+          conversationId: req.params.id,
+          tag: `conversation-${req.params.id}`,
+          url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}`,
+        });
+      }
+      return res.status(409).json({ error: calleePolicy.reason, autoReplySent: shouldReply });
+    }
+
+    const participantIds = [caller.id, callee.id].sort();
+    await client.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", participantIds);
+    const openCall = await client.query(
+      `select id from call_sessions
+       where status in ('ringing','accepted')
+         and (caller_id=any($1::uuid[]) or callee_id=any($1::uuid[]))
+       limit 1`,
+      [participantIds],
+    );
+    if (openCall.rowCount) throw httpError(409, "Un appel est déjà en cours pour l’un des participants.");
+
+    const inserted = await client.query(
+      `insert into call_sessions(conversation_id,caller_id,callee_id,call_type,expires_at)
+       values($1,$2,$3,$4,now()+$5*interval '1 second')
+       returning id`,
+      [req.params.id, caller.id, callee.id, callType, callTimeoutSeconds],
+    );
+    createdCall = await getCallRow(inserted.rows[0].id, client);
+    callActionToken = createOpaqueCallActionToken();
+    actionUrls = nativeCallActionUrls(req, createdCall.id);
+    await client.query(
+      `insert into native_call_action_tokens(
+         call_id,account_id,token_hash,expires_at,control_expires_at
+       )
+       values($1,$2,$3,$4,now()+interval '2 hours')`,
+      [
+        createdCall.id,
+        callee.id,
+        hashCallActionToken(callActionToken),
+        createdCall.expires_at,
+      ],
+    );
+    await client.query("commit");
+
+    await Promise.allSettled(expiredCalls.map((expiredCall) => notifyNativeCallState(expiredCall)));
+    await notifyAccounts([callee.id], {
+      title: `${caller.display_name} vous appelle`,
+      body: callType === "video" ? "Appel vidéo entrant" : "Appel audio entrant",
+      notificationType: "incoming-call",
+      conversationId: req.params.id,
+      callId: createdCall.id,
+      callType,
+      callerName: caller.display_name,
+      expiresAt: new Date(createdCall.expires_at).toISOString(),
+      callActionToken,
+      ...actionUrls,
+      tag: `call-${createdCall.id}`,
+      url: `/?notification=call&call=${encodeURIComponent(createdCall.id)}`,
+    });
+    return res.status(201).json({
+      call: serializeCall(createdCall, req.auth.sub),
+      iceServers: await getRtcIceServers(),
+      callTimeoutSeconds,
+    });
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/native/calls/:callId/status", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  if (!uuidPattern.test(req.params.callId)) return res.status(404).json({ error: "Appel introuvable." });
+  const actionToken = readNativeCallActionToken(req);
+  if (!actionToken) return res.status(401).json({ error: "Jeton d’action requis." });
+  await expireStaleCalls();
+  const result = await pool.query(
+    `select call.id,call.conversation_id,call.caller_id,call.callee_id,call.call_type,
+       call.status,call.expires_at,call.answered_at,call.ended_at,call.updated_at,
+       action.control_expires_at
+     from native_call_action_tokens action
+     join call_sessions call on call.id=action.call_id
+     where action.call_id=$1 and action.token_hash=$2`,
+    [req.params.callId, hashCallActionToken(actionToken)],
+  );
+  const call = result.rows[0];
+  if (!call) return res.status(404).json({ error: "Appel introuvable." });
+  if (new Date(call.control_expires_at).getTime() <= Date.now()) {
+    return res.status(410).json({ error: "Le contrôle natif de cet appel a expiré." });
+  }
+  res.json({ call: serializeNativeCallStatus(call), serverTime: new Date().toISOString() });
+});
+
+async function respondToNativeCall(req, res) {
+  res.set("Cache-Control", "no-store");
+  const action = String(req.params.nativeAction || req.body?.action || "").trim();
+  if (!["accept", "decline", "hangup"].includes(action)) return res.status(400).json({ error: "Action d’appel native invalide." });
+  if (!uuidPattern.test(req.params.callId)) return res.status(404).json({ error: "Appel introuvable." });
+  const actionToken = readNativeCallActionToken(req);
+  if (!actionToken) return res.status(401).json({ error: "Jeton d’action requis." });
+
+  const client = await pool.connect();
+  let committed = false;
+  let call = null;
+  let idempotent = false;
+  let stateChanged = false;
+  let sendDeclineMessageNotification = false;
+  let expiredWhileRinging = false;
+  try {
+    await client.query("begin");
+    const actionResult = await client.query(
+      `select call_id,account_id,expires_at,control_expires_at,accepted_at,
+         consumed_action,consumed_at
+       from native_call_action_tokens
+       where call_id=$1 and token_hash=$2
+       for update`,
+      [req.params.callId, hashCallActionToken(actionToken)],
+    );
+    const actionGrant = actionResult.rows[0];
+    if (!actionGrant) throw httpError(404, "Appel introuvable.");
+    if (new Date(actionGrant.control_expires_at).getTime() <= Date.now()) {
+      throw httpError(410, "Le contrôle natif de cet appel a expiré.");
+    }
+
+    call = await getCallRow(req.params.callId, client);
+    if (!call || call.callee_id !== actionGrant.account_id) throw httpError(404, "Appel introuvable.");
+    if (action === "accept"
+      && call.status === "ringing"
+      && new Date(call.expires_at).getTime() > Date.now()) {
+      await assertConversationPolicy(
+        call.conversation_id,
+        { channel: call.call_type === "video" ? "video" : "calls" },
+        client,
+        true,
+      );
+    }
+    call = await getCallRow(req.params.callId, client, true);
+    if (!call || call.callee_id !== actionGrant.account_id) throw httpError(404, "Appel introuvable.");
+
+    if (actionGrant.consumed_action) {
+      const replayMatches = actionGrant.consumed_action === action
+        && ((action === "decline" && call.status === "declined") || (action === "hangup" && call.status === "ended"));
+      if (!replayMatches) throw httpError(409, "Ce jeton d’appel a déjà été consommé.");
+      idempotent = true;
+    } else if (action === "accept") {
+      if (call.status === "accepted") {
+        idempotent = true;
+        await client.query(
+          "update native_call_action_tokens set accepted_at=coalesce(accepted_at,now()) where call_id=$1",
+          [call.id],
+        );
+      } else if (call.status !== "ringing") {
+        throw httpError(409, "Cet appel ne peut plus être accepté.");
+      } else if (new Date(call.expires_at).getTime() <= Date.now()) {
+        await client.query(
+          "update call_sessions set status='missed',ended_at=now(),updated_at=now() where id=$1",
+          [call.id],
+        );
+        call = await getCallRow(call.id, client);
+        expiredWhileRinging = true;
+        stateChanged = true;
+      } else {
+        await client.query(
+          "update call_sessions set status='accepted',answered_at=now(),updated_at=now() where id=$1",
+          [call.id],
+        );
+        await client.query(
+          "update native_call_action_tokens set accepted_at=coalesce(accepted_at,now()) where call_id=$1",
+          [call.id],
+        );
+        call = await getCallRow(call.id, client);
+        stateChanged = true;
+      }
+    } else if (action === "decline") {
+      if (call.status === "declined") {
+        idempotent = true;
+        await client.query(
+          `update native_call_action_tokens
+           set consumed_action='decline',consumed_at=coalesce(consumed_at,now())
+           where call_id=$1`,
+          [call.id],
+        );
+      } else if (call.status !== "ringing") {
+        throw httpError(409, "Cet appel ne peut plus être refusé.");
+      } else if (new Date(call.expires_at).getTime() <= Date.now()) {
+        await client.query(
+          "update call_sessions set status='missed',ended_at=now(),updated_at=now() where id=$1",
+          [call.id],
+        );
+        call = await getCallRow(call.id, client);
+        expiredWhileRinging = true;
+        stateChanged = true;
+      } else {
+        await client.query(
+          "update call_sessions set status='declined',ended_at=now(),updated_at=now() where id=$1",
+          [call.id],
+        );
+        await insertEncryptedAutomaticMessage(
+          client,
+          call.conversation_id,
+          call.callee_id,
+          neutralCallReply,
+        );
+        await client.query(
+          `update native_call_action_tokens
+           set consumed_action='decline',consumed_at=now()
+           where call_id=$1`,
+          [call.id],
+        );
+        call = await getCallRow(call.id, client);
+        stateChanged = true;
+        sendDeclineMessageNotification = true;
+      }
+    } else if (call.status === "ended") {
+      idempotent = true;
+      await client.query(
+        `update native_call_action_tokens
+         set accepted_at=coalesce(accepted_at,call_session.answered_at,now()),
+             consumed_action='hangup',
+             consumed_at=coalesce(consumed_at,now())
+         from call_sessions call_session
+         where native_call_action_tokens.call_id=call_session.id
+           and native_call_action_tokens.call_id=$1`,
+        [call.id],
+      );
+    } else if (call.status !== "accepted") {
+      throw httpError(409, "Seul un appel accepté peut être raccroché depuis l’interface native.");
+    } else {
+      await client.query(
+        "update call_sessions set status='ended',ended_at=now(),updated_at=now() where id=$1",
+        [call.id],
+      );
+      await client.query(
+        `update native_call_action_tokens
+         set accepted_at=coalesce(accepted_at,now()),consumed_action='hangup',consumed_at=now()
+         where call_id=$1`,
+        [call.id],
+      );
+      call = await getCallRow(call.id, client);
+      stateChanged = true;
+    }
+
+    await client.query("commit");
+    committed = true;
+  } catch (error) {
+    if (!committed) await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  if (stateChanged) await Promise.allSettled([notifyNativeCallState(call)]);
+  if (sendDeclineMessageNotification) {
+    await notifyAccounts([call.caller_id], {
+      title: "Appel refusé",
+      body: neutralCallReply,
+      notificationType: "message",
+      conversationId: call.conversation_id,
+      tag: `conversation-${call.conversation_id}`,
+      url: `/?notification=message&conversation=${encodeURIComponent(call.conversation_id)}`,
+    });
+  }
+  if (expiredWhileRinging) {
+    return res.status(409).json({ error: "Cet appel a expiré.", call: serializeNativeCallStatus(call) });
+  }
+  return res.json({ call: serializeNativeCallStatus(call), idempotent });
+}
+
+app.post("/api/native/calls/:callId/respond", respondToNativeCall);
+app.post("/api/native/calls/:callId/respond/:nativeAction", respondToNativeCall);
+
+app.get("/api/calls/:callId", requireAuth, requireActiveChild, async (req, res) => {
+  await expireStaleCalls();
+  const call = await getCallRow(req.params.callId);
+  if (!call) return res.status(404).json({ error: "Appel introuvable." });
+  if (![call.caller_id, call.callee_id].includes(req.auth.sub)) return res.status(403).json({ error: "Appel non autorisé." });
+  const rawAfterSignal = String(req.query.afterSignal ?? "0");
+  const afterSignal = /^\d+$/.test(rawAfterSignal) ? rawAfterSignal : "0";
+  const signals = await pool.query(
+    `select
+       id,encryption_context_id,call_id,sender_id,recipient_id,signal_type,
+       payload,payload_ciphertext,content_encryption_version,
+       content_encryption_key_id,created_at
+     from call_signals
+     where call_id=$1 and recipient_id=$2 and id>$3::bigint
+     order by id
+     limit 200`,
+    [call.id, req.auth.sub, afterSignal],
+  );
+  res.json({
+    call: serializeCall(call, req.auth.sub),
+    signals: signals.rows.map((signal) => {
+      const decrypted = decryptCallSignal(signal);
+      return {
+        id: signal.id,
+        signalType: signal.signal_type,
+        payload: decrypted.payload,
+        createdAt: signal.created_at,
+      };
+    }),
+    iceServers: await getRtcIceServers(),
+    callTimeoutSeconds,
+  });
+});
+
+app.post("/api/calls/:callId/signals", requireAuth, requireActiveChild, async (req, res) => {
+  const signalType = String(req.body?.signalType ?? "");
+  const payload = req.body?.payload;
+  if (!["offer", "answer", "ice"].includes(signalType) || !validateCallSignal(signalType, payload)) {
+    return res.status(400).json({ error: "Signal WebRTC invalide." });
+  }
+  const client = await pool.connect();
+  let committed = false;
+  try {
+    await client.query("begin");
+    let call = await getCallRow(req.params.callId, client);
+    if (!call) throw httpError(404, "Appel introuvable.");
+    if (![call.caller_id, call.callee_id].includes(req.auth.sub)) throw httpError(403, "Appel non autorisé.");
+    if (terminalCallStatuses.has(call.status)) throw httpError(409, "Cet appel est terminé.");
+    if (signalType === "offer" && req.auth.sub !== call.caller_id) throw httpError(403, "Seul l’appelant peut envoyer l’offre.");
+    if (signalType === "answer" && req.auth.sub !== call.callee_id) throw httpError(403, "Seul le destinataire peut répondre à l’offre.");
+    if (signalType === "answer" && call.status !== "accepted") throw httpError(409, "L’appel doit être accepté avant la réponse WebRTC.");
+
+    await assertConversationPolicy(
+      call.conversation_id,
+      { channel: call.call_type === "video" ? "video" : "calls" },
+      client,
+      true,
+    );
+
+    call = await getCallRow(req.params.callId, client, true);
+    if (!call) throw httpError(404, "Appel introuvable.");
+    if (![call.caller_id, call.callee_id].includes(req.auth.sub)) throw httpError(403, "Appel non autorisé.");
+    if (terminalCallStatuses.has(call.status)) throw httpError(409, "Cet appel est terminé.");
+    if (signalType === "offer" && req.auth.sub !== call.caller_id) throw httpError(403, "Seul l’appelant peut envoyer l’offre.");
+    if (signalType === "answer" && req.auth.sub !== call.callee_id) throw httpError(403, "Seul le destinataire peut répondre à l’offre.");
+    if (signalType === "answer" && call.status !== "accepted") throw httpError(409, "L’appel doit être accepté avant la réponse WebRTC.");
+
+    const recipientId = req.auth.sub === call.caller_id ? call.callee_id : call.caller_id;
+    const encryptionContextId = crypto.randomUUID();
+    const encryptedSignal = encryptCallSignal({
+      contextId: encryptionContextId,
+      callId: call.id,
+      senderId: req.auth.sub,
+      recipientId,
+      signalType,
+      payload,
+    });
+    const result = await client.query(
+      `insert into call_signals(
+         encryption_context_id,call_id,sender_id,recipient_id,signal_type,
+         payload_ciphertext,content_encryption_version,content_encryption_key_id
+       )
+       values($1,$2,$3,$4,$5,$6,$7,$8)
+       returning id,created_at`,
+      [
+        encryptionContextId,
+        call.id,
+        req.auth.sub,
+        recipientId,
+        signalType,
+        encryptedSignal.payloadCiphertext,
+        encryptedSignal.encryptionVersion,
+        encryptedSignal.encryptionKeyId,
+      ],
+    );
+    await client.query("commit");
+    committed = true;
+    return res.status(201).json({
+      signal: {
+        id: result.rows[0].id,
+        signalType,
+        createdAt: result.rows[0].created_at,
+      },
+    });
+  } catch (error) {
+    if (!committed) await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.patch("/api/calls/:callId", requireAuth, async (req, res) => {
+  const action = String(req.body?.action ?? "");
+  if (!["accept", "decline", "cancel", "hangup"].includes(action)) return res.status(400).json({ error: "Action d’appel invalide." });
+  const client = await pool.connect();
+  let notify = null;
+  try {
+    await client.query("begin");
+    let call = await getCallRow(req.params.callId, client);
+    if (!call) throw httpError(404, "Appel introuvable.");
+    if (![call.caller_id, call.callee_id].includes(req.auth.sub)) throw httpError(403, "Appel non autorisé.");
+    if (action === "accept"
+      && call.status === "ringing"
+      && new Date(call.expires_at).getTime() > Date.now()) {
+      await assertConversationPolicy(
+        call.conversation_id,
+        { channel: call.call_type === "video" ? "video" : "calls" },
+        client,
+        true,
+      );
+    }
+    call = await getCallRow(req.params.callId, client, true);
+    if (!call) throw httpError(404, "Appel introuvable.");
+    if (![call.caller_id, call.callee_id].includes(req.auth.sub)) throw httpError(403, "Appel non autorisé.");
+    if (call.status === "ringing" && new Date(call.expires_at).getTime() <= Date.now()) {
+      await client.query(
+        "update call_sessions set status='missed',ended_at=now(),updated_at=now() where id=$1",
+        [call.id],
+      );
+      call = await getCallRow(call.id, client);
+      await client.query("commit");
+      await Promise.allSettled([notifyNativeCallState(call)]);
+      return res.status(409).json({ error: "Cet appel a expiré.", call: serializeCall(call, req.auth.sub) });
+    }
+
+    if (action === "accept") {
+      if (req.auth.sub !== call.callee_id || call.status !== "ringing") throw httpError(409, "Cet appel ne peut plus être accepté.");
+      await client.query(
+        "update call_sessions set status='accepted',answered_at=now(),updated_at=now() where id=$1",
+        [call.id],
+      );
+    } else if (action === "decline") {
+      if (req.auth.sub !== call.callee_id || call.status !== "ringing") throw httpError(409, "Cet appel ne peut plus être refusé.");
+      await client.query(
+        "update call_sessions set status='declined',ended_at=now(),updated_at=now() where id=$1",
+        [call.id],
+      );
+      await insertEncryptedAutomaticMessage(
+        client,
+        call.conversation_id,
+        call.callee_id,
+        neutralCallReply,
+      );
+      notify = {
+        accountId: call.caller_id,
+        title: "Appel refusé",
+        body: neutralCallReply,
+        conversationId: call.conversation_id,
+      };
+    } else if (action === "cancel") {
+      if (req.auth.sub !== call.caller_id || call.status !== "ringing") throw httpError(409, "Cet appel ne peut plus être annulé.");
+      await client.query(
+        "update call_sessions set status='cancelled',ended_at=now(),updated_at=now() where id=$1",
+        [call.id],
+      );
+    } else {
+      if (!["ringing", "accepted"].includes(call.status)) throw httpError(409, "Cet appel est déjà terminé.");
+      const status = call.status === "ringing" ? "cancelled" : "ended";
+      await client.query(
+        "update call_sessions set status=$2,ended_at=now(),updated_at=now() where id=$1",
+        [call.id, status],
+      );
+    }
+
+    call = await getCallRow(call.id, client);
+    await client.query("commit");
+    await Promise.allSettled([notifyNativeCallState(call)]);
+    if (notify) {
+      await notifyAccounts([notify.accountId], {
+        title: notify.title,
+        body: notify.body,
+        notificationType: "message",
+        conversationId: notify.conversationId,
+        tag: `conversation-${notify.conversationId}`,
+        url: `/?notification=message&conversation=${encodeURIComponent(notify.conversationId)}`,
+      });
+    }
+    res.json({ call: serializeCall(call, req.auth.sub), iceServers: await getRtcIceServers() });
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+async function requireConversationMessagingAccess(req, res, next) {
+  try {
+    if (!await isConversationMember(req.auth.sub, req.params.id)) {
+      return res.status(403).json({ error: "Conversation non autorisée." });
+    }
+    req.conversationChildPolicies = await assertConversationPolicy(req.params.id, { channel: "messages" });
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+app.get("/api/conversations/:id/typing", requireAuth, requireActiveChild, async (req, res) => {
   if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
   await pool.query("delete from typing_states where conversation_id=$1 and expires_at<=now()", [req.params.id]);
   const result = await pool.query(`select a.display_name from typing_states t join accounts a on a.id=t.account_id
@@ -1684,8 +4217,7 @@ app.get("/api/conversations/:id/typing", requireAuth, async (req, res) => {
   res.json({ typing: Boolean(result.rowCount), name: result.rows[0]?.display_name ?? null });
 });
 
-app.post("/api/conversations/:id/typing", requireAuth, async (req, res) => {
-  if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
+app.post("/api/conversations/:id/typing", requireAuth, requireActiveChild, requireConversationMessagingAccess, async (req, res) => {
   if (req.body?.active === true) {
     await pool.query(`insert into typing_states(conversation_id,account_id,expires_at) values($1,$2,now()+interval '6 seconds')
       on conflict(conversation_id,account_id) do update set expires_at=excluded.expires_at`, [req.params.id, req.auth.sub]);
@@ -1695,42 +4227,206 @@ app.post("/api/conversations/:id/typing", requireAuth, async (req, res) => {
   res.status(204).end();
 });
 
-app.post("/api/conversations/:id/messages", requireAuth, async (req, res) => {
-  if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
+app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, requireConversationMessagingAccess, async (req, res) => {
   const body = String(req.body?.text ?? "").trim();
   if (!body || body.length > 4000) return res.status(400).json({ error: "Message vide ou trop long." });
-  const result = await pool.query("insert into messages(conversation_id,sender_id,body) values($1,$2,$3) returning id,body,created_at", [req.params.id, req.auth.sub, body]);
-  const sender = await pool.query("select display_name from accounts where id=$1", [req.auth.sub]);
-  await notifyConversation(req.params.id, req.auth.sub, { title: sender.rows[0]?.display_name || "Nouveau message", body: body.slice(0, 120), notificationType: "message", conversationId: req.params.id, tag: `conversation-${req.params.id}`, url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}` });
-  res.status(201).json({ message: result.rows[0] });
-});
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 6 } });
-const supportedAudioTypes = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/aac", "audio/x-m4a"]);
-app.post("/api/conversations/:id/media", requireAuth, upload.array("media", 6), async (req, res) => {
-  if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
-  const receivedFiles = req.files ?? [];
-  const files = receivedFiles.filter((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/") || supportedAudioTypes.has(file.mimetype));
-  if (receivedFiles.some((file) => !files.includes(file))) return res.status(415).json({ error: "Format de média non pris en charge." });
-  if (!files.length) return res.status(400).json({ error: "Photo, vidéo ou message vocal requis." });
-  const inserted = [];
-  for (const file of files) {
-    const result = await pool.query("insert into messages(conversation_id,sender_id,media_name,media_type,media_data) values($1,$2,$3,$4,$5) returning id,media_name,media_type,created_at", [req.params.id, req.auth.sub, file.originalname, file.mimetype, file.buffer]);
-    inserted.push(result.rows[0]);
+  const client = await pool.connect();
+  let message;
+  try {
+    await client.query("begin");
+    if (!await isConversationMember(req.auth.sub, req.params.id, client)) throw httpError(403, "Conversation non autorisée.");
+    await assertConversationPolicy(req.params.id, { channel: "messages" }, client, true);
+    const id = crypto.randomUUID();
+    const encrypted = encryptMessageContent({
+      id,
+      conversationId: req.params.id,
+      senderId: req.auth.sub,
+      body,
+    });
+    const result = await client.query(
+      `insert into messages(
+         id,conversation_id,sender_id,body_ciphertext,
+         content_encryption_version,content_encryption_key_id
+       ) values($1,$2,$3,$4,$5,$6)
+       returning id,created_at`,
+      [
+        id,
+        req.params.id,
+        req.auth.sub,
+        encrypted.bodyCiphertext,
+        encrypted.encryptionVersion,
+        encrypted.encryptionKeyId,
+      ],
+    );
+    message = { ...result.rows[0], body };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
   }
-  const sender = await pool.query("select display_name from accounts where id=$1", [req.auth.sub]);
-  const notificationBody = files.some((file) => file.mimetype.startsWith("audio/"))
-    ? "Vous a envoyé un message vocal."
-    : files.some((file) => file.mimetype.startsWith("video/"))
-      ? "Vous a envoyé une vidéo."
-      : "Vous a envoyé une photo.";
-  await notifyConversation(req.params.id, req.auth.sub, { title: sender.rows[0]?.display_name || "Nouveau média", body: notificationBody, notificationType: "message", conversationId: req.params.id, tag: `conversation-${req.params.id}`, url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}` });
-  res.status(201).json({ messages: inserted });
+  await notifyConversation(req.params.id, req.auth.sub, {
+    title: "Secret Clubhouse",
+    body: "Nouveau message.",
+    notificationType: "message",
+    conversationId: req.params.id,
+    tag: `conversation-${req.params.id}`,
+    url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}`,
+  });
+  res.status(201).json({ message });
 });
 
-app.get("/api/media/:messageId", requireAuth, async (req, res) => {
+const supportedAudioTypes = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/aac", "audio/x-m4a"]);
+const maxMediaFileBytes = 25 * 1024 * 1024;
+const maxMediaPayloadBytes = 30 * 1024 * 1024;
+const maxMediaRequestBytes = maxMediaPayloadBytes + (1024 * 1024);
+const mediaUploadDirectory = path.join(os.tmpdir(), "secret-clubhouse-uploads");
+
+function requireBoundedMediaRequest(req, _res, next) {
+  const rawContentLength = req.headers["content-length"];
+  if (typeof rawContentLength !== "string") {
+    return next(httpError(411, "La taille de l’envoi doit être indiquée."));
+  }
+  const contentLength = Number(rawContentLength);
+  if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+    return next(httpError(400, "Taille d’envoi invalide."));
+  }
+  if (contentLength > maxMediaRequestBytes) {
+    return next(httpError(413, "L’envoi de médias est limité à 30 Mo au total."));
+  }
+  return next();
+}
+
+async function removeUploadedFiles(files = []) {
+  await Promise.allSettled(
+    files
+      .map((file) => file?.path)
+      .filter(Boolean)
+      .map((filePath) => fs.rm(filePath, { force: true })),
+  );
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, callback) => {
+      fs.mkdir(mediaUploadDirectory, { recursive: true })
+        .then(() => callback(null, mediaUploadDirectory))
+        .catch(callback);
+    },
+    filename: (_req, _file, callback) => callback(null, crypto.randomUUID()),
+  }),
+  limits: {
+    fileSize: maxMediaFileBytes,
+    files: 6,
+    fields: 0,
+    parts: 6,
+    headerPairs: 64,
+  },
+  fileFilter: (req, file, callback) => {
+    const supported = file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/") || supportedAudioTypes.has(file.mimetype);
+    if (!supported) return callback(httpError(415, "Format de média non pris en charge."));
+    if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
+      try {
+        assertChildPolicies(req.conversationChildPolicies ?? [], { requiresVisualMedia: true });
+      } catch (error) {
+        return callback(error);
+      }
+    }
+    return callback(null, true);
+  },
+});
+app.post("/api/conversations/:id/media", requireAuth, requireActiveChild, requireConversationMessagingAccess, requireBoundedMediaRequest, upload.array("media", 6), async (req, res) => {
+  const receivedFiles = req.files ?? [];
+  try {
+    const files = receivedFiles.filter((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/") || supportedAudioTypes.has(file.mimetype));
+    if (receivedFiles.some((file) => !files.includes(file))) return res.status(415).json({ error: "Format de média non pris en charge." });
+    if (!files.length) return res.status(400).json({ error: "Photo, vidéo ou message vocal requis." });
+    const totalMediaBytes = files.reduce((total, file) => total + file.size, 0);
+    if (totalMediaBytes > maxMediaPayloadBytes) {
+      return res.status(413).json({ error: "L’envoi de médias est limité à 30 Mo au total." });
+    }
+    const requiresVisualMedia = files.some((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/"));
+    const client = await pool.connect();
+    const inserted = [];
+    try {
+      await client.query("begin");
+      if (!await isConversationMember(req.auth.sub, req.params.id, client)) throw httpError(403, "Conversation non autorisée.");
+      await assertConversationPolicy(req.params.id, { channel: "messages", requiresVisualMedia }, client, true);
+      for (const file of files) {
+        let mediaData;
+        let encryptedMediaData;
+        try {
+          mediaData = await fs.readFile(file.path);
+          const id = crypto.randomUUID();
+          const encrypted = encryptMessageContent({
+            id,
+            conversationId: req.params.id,
+            senderId: req.auth.sub,
+            mediaName: file.originalname,
+            mediaType: file.mimetype,
+            mediaData,
+          });
+          encryptedMediaData = encrypted.mediaCiphertext;
+          const result = await client.query(
+            `insert into messages(
+               id,conversation_id,sender_id,
+               media_name_ciphertext,media_type_ciphertext,media_ciphertext,
+               content_encryption_version,content_encryption_key_id
+             ) values($1,$2,$3,$4,$5,$6,$7,$8)
+             returning id,created_at`,
+            [
+              id,
+              req.params.id,
+              req.auth.sub,
+              encrypted.mediaNameCiphertext,
+              encrypted.mediaTypeCiphertext,
+              encrypted.mediaCiphertext,
+              encrypted.encryptionVersion,
+              encrypted.encryptionKeyId,
+            ],
+          );
+          inserted.push({
+            ...result.rows[0],
+            media_name: file.originalname,
+            media_type: file.mimetype,
+          });
+        } finally {
+          encryptedMediaData?.fill(0);
+          encryptedMediaData = null;
+          mediaData?.fill(0);
+          mediaData = null;
+        }
+      }
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    await notifyConversation(req.params.id, req.auth.sub, {
+      title: "Secret Clubhouse",
+      body: "Nouveau message.",
+      notificationType: "message",
+      conversationId: req.params.id,
+      tag: `conversation-${req.params.id}`,
+      url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}`,
+    });
+    return res.status(201).json({ messages: inserted });
+  } finally {
+    await removeUploadedFiles(receivedFiles);
+  }
+});
+
+app.get("/api/media/:messageId", requireAuth, requireActiveChild, async (req, res) => {
   const result = await pool.query(
-    `select message.media_data,message.media_type,message.media_name
+    `select
+       message.id,message.conversation_id,message.sender_id,
+       message.media_data,message.media_type,message.media_name,
+       message.body_ciphertext,message.media_name_ciphertext,
+       message.media_type_ciphertext,message.media_ciphertext,
+       message.content_encryption_version,message.content_encryption_key_id
      from messages message
      join conversation_members member on member.conversation_id=message.conversation_id and member.account_id=$2
      where message.id=$1
@@ -1746,19 +4442,24 @@ app.get("/api/media/:messageId", requireAuth, async (req, res) => {
     [req.params.messageId, req.auth.sub],
   );
   const media = result.rows[0];
-  if (!media?.media_data) return res.status(404).json({ error: "Média introuvable." });
-  res.set({ "Content-Type": media.media_type, "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(media.media_name)}`, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" });
-  res.send(media.media_data);
-});
-
-app.use((error, _req, res, _next) => {
-  console.error(error);
-  const statusCode = error instanceof multer.MulterError
-    ? 400
-    : Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 600
-      ? error.statusCode
-      : 500;
-  res.status(statusCode).json({ error: error.message || "Erreur interne." });
+  if (!media) return res.status(404).json({ error: "Média introuvable." });
+  const content = decryptMessageContent(media);
+  if (!content.mediaData) return res.status(404).json({ error: "Média introuvable." });
+  let cleared = false;
+  const clearMediaBuffer = () => {
+    if (cleared) return;
+    cleared = true;
+    content.mediaData.fill(0);
+  };
+  res.once("finish", clearMediaBuffer);
+  res.once("close", clearMediaBuffer);
+  res.set({
+    "Content-Type": content.mediaType,
+    "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(content.mediaName)}`,
+    "Cache-Control": "private, no-store, max-age=0",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(content.mediaData);
 });
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -1776,7 +4477,100 @@ app.get("/sw.js", (_req, res) => {
 });
 app.use(express.static(path.join(root, "dist")));
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(root, "dist", "index.html")));
+app.use(async (error, req, res, _next) => {
+  await removeUploadedFiles(req.files ?? []);
+  const response = safeHttpErrorResponse(error, {
+    multerError: error instanceof multer.MulterError,
+  });
+  console.error(
+    `[${req.requestId || "sans-id"}] ${req.method} ${req.originalUrl} -> ${response.statusCode}`,
+    error,
+  );
+  res.status(response.statusCode).json({
+    error: response.message,
+    requestId: req.requestId || null,
+  });
+});
 
-await initializeDatabase();
-await initializeWebPush();
-app.listen(port, "0.0.0.0", () => console.log(`Secret Clubhouse écoute sur ${port}`));
+export { app };
+
+export async function startServer() {
+  const contentCipher = getContentCipher();
+  await initializeDatabase();
+  // Le service ne devient joignable qu'après chiffrement de tout contenu
+  // legacy encore conservé. Une clé manquante ou une enveloppe incohérente
+  // fait échouer le démarrage au lieu de laisser une instance partiellement
+  // migrée répondre avec un healthcheck vert.
+  await migrateLegacyMessageContent(pool, {
+    cipher: contentCipher,
+    logger: console,
+  });
+  await migrateLegacyCallSignals(pool, {
+    cipher: contentCipher,
+    logger: console,
+  });
+  nativePushService = createNativePushService({ pool, env: process.env, logger: console });
+  console.log(
+    `Notifications natives : FCM ${nativePushService.capabilities.fcm ? "actif" : "non configuré"}, `
+    + `APNs ${nativePushService.capabilities.apns ? "actif" : "non configuré"}.`,
+  );
+  await initializeWebPush();
+  const server = app.listen(port, "0.0.0.0", () => console.log(`Secret Clubhouse écoute sur ${port}`));
+  let contentMigrationPromise = null;
+  const runContentEncryptionMigration = () => {
+    if (contentMigrationPromise) return contentMigrationPromise;
+    contentMigrationPromise = (async () => {
+      await migrateLegacyMessageContent(pool, {
+        cipher: contentCipher,
+        logger: console,
+      });
+      await migrateLegacyCallSignals(pool, {
+        cipher: contentCipher,
+        logger: console,
+      });
+    })().finally(() => {
+      contentMigrationPromise = null;
+    });
+    return contentMigrationPromise;
+  };
+  const failClosedAfterMigrationError = (error) => {
+    console.error("Migration du chiffrement applicatif impossible ; arrêt de sécurité.", error);
+    server.close();
+    setImmediate(() => {
+      throw error;
+    });
+  };
+  const postDeployContentMigration = setTimeout(() => {
+    runContentEncryptionMigration().catch(failClosedAfterMigrationError);
+  }, 30_000);
+  const recurringContentMigration = setInterval(() => {
+    runContentEncryptionMigration().catch(failClosedAfterMigrationError);
+  }, 6 * 60 * 60 * 1000);
+  const loginRateLimitCleanup = setInterval(() => {
+    pruneLoginRateLimits(pool).catch((error) => console.error("Nettoyage des limitations de connexion impossible.", error));
+  }, 6 * 60 * 60 * 1000);
+  const staleCallCleanup = setInterval(() => {
+    expireStaleCalls().catch((error) => console.error("Expiration des appels natifs impossible.", error));
+  }, 2_000);
+  const nativeActionCleanup = setInterval(() => {
+    pool.query(
+      "delete from native_call_action_tokens where control_expires_at<now()-interval '1 day'",
+    ).catch((error) => console.error("Nettoyage des jetons d’appel natifs impossible.", error));
+  }, 60 * 60 * 1000);
+  loginRateLimitCleanup.unref();
+  staleCallCleanup.unref();
+  nativeActionCleanup.unref();
+  postDeployContentMigration.unref();
+  recurringContentMigration.unref();
+  server.on("close", () => {
+    clearTimeout(postDeployContentMigration);
+    clearInterval(recurringContentMigration);
+    clearInterval(loginRateLimitCleanup);
+    clearInterval(staleCallCleanup);
+    clearInterval(nativeActionCleanup);
+  });
+  return server;
+}
+
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) await startServer();

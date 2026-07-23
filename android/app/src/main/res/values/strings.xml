@@ -4,4 +4,5 @@
     <string name="title_activity_main">Secret Clubhouse</string>
     <string name="package_name">fr.secretclubhouse.app</string>
     <string name="custom_url_scheme">fr.secretclubhouse.app</string>
+    <string name="native_api_origin" translatable="false">https://secret-clubhouse.onrender.com</string>
 </resources>

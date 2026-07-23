@@ -24,6 +24,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Secret Clubhouse utilise la caméra uniquement pendant les appels vidéo autorisés.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Secret Clubhouse utilise le microphone pour les messages vocaux et les appels autorisés.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>remote-notification</string>
+		<string>voip</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

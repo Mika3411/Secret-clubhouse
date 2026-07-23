@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="clubhouse_indigo">#17106B</color>
+    <color name="clubhouse_indigo_dark">#0D084A</color>
+    <color name="clubhouse_mint">#60E7C7</color>
+    <color name="clubhouse_violet">#8B68F6</color>
+    <color name="clubhouse_surface">#F7F5FF</color>
+    <color name="clubhouse_text">#17123F</color>
+    <color name="clubhouse_white">#FFFFFF</color>
+    <color name="clubhouse_decline">#E85A76</color>
+</resources>

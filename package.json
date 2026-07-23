@@ -10,6 +10,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test server/*.test.js",
+    "retention:purge": "node server/run-retention.js",
+    "privacy:reapply-erasure": "node server/reapply-erasure-tombstones.js",
     "preview": "vite preview",
     "start": "node server/index.js",
     "mobile:sync": "npm run build && cap sync",
@@ -18,7 +21,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",
-    "@capacitor/cli": "^8.0.0",
+    "@capacitor/cli": "^8.4.2",
     "@capacitor/core": "^8.0.0",
     "@capacitor/ios": "^8.0.0",
     "@capacitor/push-notifications": "^8.0.0",
@@ -29,13 +32,13 @@
     "bcryptjs": "^3.0.2",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^2.0.2",
+    "multer": "^2.2.0",
     "pg": "^8.16.3",
     "phaser": "^3.90.0",
     "qrcode.react": "^4.2.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "vite": "6.4.2",
+    "vite": "6.4.3",
     "web-push": "^3.6.7"
   }
 }

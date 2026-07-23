@@ -1,0 +1,92 @@
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+
+// Keep the notification tones reproducible without committing opaque binary blobs.
+// This task creates small PCM WAV resources before Android resource processing.
+def nativeNotificationSoundRoot = layout.buildDirectory.dir("generated/native-notification-sounds")
+android.sourceSets.main.res.srcDir(nativeNotificationSoundRoot)
+
+def writeLittleEndian16 = { DataOutputStream stream, int value ->
+    stream.writeByte(value & 0xff)
+    stream.writeByte((value >>> 8) & 0xff)
+}
+
+def writeLittleEndian32 = { DataOutputStream stream, long value ->
+    stream.writeByte((int) (value & 0xff))
+    stream.writeByte((int) ((value >>> 8) & 0xff))
+    stream.writeByte((int) ((value >>> 16) & 0xff))
+    stream.writeByte((int) ((value >>> 24) & 0xff))
+}
+
+def writeWave = { File target, int durationMs, Closure<Double> waveform ->
+    int sampleRate = 22050
+    int sampleCount = Math.max(1, (int) Math.round(sampleRate * durationMs / 1000d))
+    ByteArrayOutputStream pcmBytes = new ByteArrayOutputStream(sampleCount * 2)
+    DataOutputStream pcm = new DataOutputStream(pcmBytes)
+
+    for (int sampleIndex = 0; sampleIndex < sampleCount; sampleIndex++) {
+        double seconds = sampleIndex / (double) sampleRate
+        double value = Math.max(-1d, Math.min(1d, waveform.call(seconds)))
+        int signedSample = (int) Math.round(value * 32767d)
+        writeLittleEndian16(pcm, signedSample)
+    }
+    pcm.flush()
+
+    byte[] audio = pcmBytes.toByteArray()
+    target.parentFile.mkdirs()
+    target.withOutputStream { output ->
+        DataOutputStream wave = new DataOutputStream(output)
+        wave.writeBytes("RIFF")
+        writeLittleEndian32(wave, 36L + audio.length)
+        wave.writeBytes("WAVE")
+        wave.writeBytes("fmt ")
+        writeLittleEndian32(wave, 16)
+        writeLittleEndian16(wave, 1)
+        writeLittleEndian16(wave, 1)
+        writeLittleEndian32(wave, sampleRate)
+        writeLittleEndian32(wave, sampleRate * 2L)
+        writeLittleEndian16(wave, 2)
+        writeLittleEndian16(wave, 16)
+        wave.writeBytes("data")
+        writeLittleEndian32(wave, audio.length)
+        wave.write(audio)
+        wave.flush()
+    }
+}
+
+tasks.register("generateNativeNotificationSounds") {
+    outputs.dir(nativeNotificationSoundRoot)
+    doLast {
+        File rawDirectory = nativeNotificationSoundRoot.get().dir("raw").asFile
+
+        writeWave(new File(rawDirectory, "message_discreet.wav"), 620) { double t ->
+            double envelope = Math.min(1d, t / 0.04d) * Math.max(0d, Math.min(1d, (0.62d - t) / 0.16d))
+            double frequency = t < 0.28d ? 659.25d : 523.25d
+            return 0.14d * envelope * Math.sin(2d * Math.PI * frequency * t)
+        }
+
+        writeWave(new File(rawDirectory, "contact_gentle.wav"), 980) { double t ->
+            double envelope = Math.min(1d, t / 0.05d) * Math.max(0d, Math.min(1d, (0.98d - t) / 0.22d))
+            double frequency = t < 0.30d ? 523.25d : (t < 0.62d ? 659.25d : 783.99d)
+            return 0.13d * envelope * (
+                Math.sin(2d * Math.PI * frequency * t) +
+                0.22d * Math.sin(2d * Math.PI * frequency * 2d * t)
+            )
+        }
+
+        writeWave(new File(rawDirectory, "incoming_call_soft.wav"), 7200) { double t ->
+            double cycle = t % 2.4d
+            if (cycle > 1.45d) return 0d
+            double envelope = Math.min(1d, cycle / 0.12d) * Math.max(0d, Math.min(1d, (1.45d - cycle) / 0.25d))
+            double pulse = cycle < 0.64d || (cycle > 0.82d && cycle < 1.45d) ? 1d : 0.18d
+            return 0.11d * envelope * pulse * (
+                Math.sin(2d * Math.PI * 440d * t) +
+                0.55d * Math.sin(2d * Math.PI * 554.37d * t)
+            )
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("generateNativeNotificationSounds")
+}

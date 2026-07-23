@@ -54,15 +54,83 @@ import {
   WaveSine,
   X,
 } from "@phosphor-icons/react";
-import { createLocalWebRtcSession, createRemoteAudioPlaceholder, createRemoteVideoPlaceholder, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "./webrtc";
-import { api, clearToken, getToken } from "./api";
-import { Capacitor } from "@capacitor/core";
+import { createWebRtcSession, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "./webrtc";
+import { api, clearToken, hasNativeSession } from "./api";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import PhaserMemoryGame from "./PhaserMemoryGame";
 import ConnectFourGame from "./ConnectFourGame";
+import PrivacyPolicyModal from "./PrivacyPolicyModal";
+import LegalNoticeModal from "./LegalNoticeModal";
+import { privacyAudienceFromPath, privacyController, privacyRoutes } from "./privacy-policy";
+import { isLegalNoticePath, legalNoticeRoute } from "./legal-notice";
+import {
+  legalDocumentVersions,
+  notificationConsentCopy,
+  registrationLegalEvidence,
+} from "./legal-framework";
 
 const rememberedParentEmailKey = "secret-clubhouse-parent-email";
+const nativeInstallationKey = "secret-clubhouse-native-installation";
+const nativeApnsEnvironmentKey = "secret-clubhouse-apns-environment";
+const nativePushOptInKey = "secret-clubhouse-native-push-opt-in";
+const NativeCallNotifications = registerPlugin("NativeCallNotifications");
 const familyInviteQueryKeys = ["familyInvite", "family-invite", "invite"];
+
+const endNativeSystemCall = async (callId, status = "ended") => {
+  if (!Capacitor.isNativePlatform() || !callId) return;
+  const method = Capacitor.getPlatform() === "ios" ? "reportCallEnded" : "endNativeCall";
+  await NativeCallNotifications[method]({ callId, status }).catch(() => undefined);
+};
+
+const registerForNativePushToken = async () => {
+  let resolveToken;
+  let rejectToken;
+  let registeredHandle;
+  let failedHandle;
+  let timeout;
+  const tokenPromise = new Promise((resolve, reject) => {
+    resolveToken = resolve;
+    rejectToken = reject;
+  });
+  try {
+    registeredHandle = await PushNotifications.addListener("registration", resolveToken);
+    failedHandle = await PushNotifications.addListener("registrationError", (registrationError) => {
+      rejectToken(new Error(registrationError.error || "L’inscription aux notifications a échoué."));
+    });
+    timeout = window.setTimeout(() => {
+      rejectToken(new Error("Le service de notifications du téléphone n’a pas répondu."));
+    }, 12_000);
+    await PushNotifications.register();
+    return await tokenPromise;
+  } finally {
+    window.clearTimeout(timeout);
+    await Promise.allSettled([
+      registeredHandle?.remove(),
+      failedHandle?.remove(),
+    ]);
+  }
+};
+
+const getNativeInstallationId = () => {
+  let installationId = localStorage.getItem(nativeInstallationKey);
+  if (!installationId) {
+    installationId = globalThis.crypto?.randomUUID?.() ?? `device-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(nativeInstallationKey, installationId);
+  }
+  return installationId;
+};
+
+const nativeTokenDetails = (platform = Capacitor.getPlatform(), overrides = {}) => ({
+  platform,
+  tokenKind: platform === "ios" ? "apns_alert" : "fcm",
+  deviceId: getNativeInstallationId(),
+  ...(platform === "ios" ? {
+    topic: "fr.secretclubhouse.app",
+    ...(localStorage.getItem(nativeApnsEnvironmentKey) ? { environment: localStorage.getItem(nativeApnsEnvironmentKey) } : {}),
+  } : {}),
+  ...overrides,
+});
 
 const readFamilyInviteToken = () => {
   const params = new URLSearchParams(window.location.search);
@@ -80,6 +148,14 @@ const clearFamilyInviteFromUrl = () => {
   const query = params.toString();
   const hash = hashParams.toString();
   window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`);
+};
+
+const clearContactRequestFromUrl = () => {
+  const params = new URLSearchParams(window.location.search);
+  params.delete("contact");
+  params.delete("requester");
+  const query = params.toString();
+  window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
 };
 
 const normalizeFamily = (payload, currentParent = {}) => {
@@ -116,7 +192,7 @@ const defaultCommunicationSchedule = {
   messages: { enabled: true, start: "07:30", end: "20:30" },
   calls: { enabled: true, start: "08:00", end: "19:30" },
   video: { enabled: false, start: "09:00", end: "18:30" },
-  autoReply: { enabled: true, message: "Je suis en mode calme pour le moment. Je te répondrai pendant mes horaires autorisés." },
+  autoReply: { enabled: true, message: "Je ne peux pas répondre pour le moment." },
 };
 
 const cloneSafetySettings = (settings = defaultSafetySettings) => ({ ...defaultSafetySettings, ...settings });
@@ -138,7 +214,6 @@ const clubhouseActivities = [
     title: "La chasse aux couleurs",
     description: "Trouve cinq objets de couleurs différentes autour de toi.",
     duration: 5,
-    reward: 25,
     Icon: Sparkle,
     tone: "mint",
     steps: ["Choisis cinq couleurs", "Trouve un objet pour chaque couleur", "Raconte ta meilleure trouvaille à un ami"],
@@ -149,7 +224,6 @@ const clubhouseActivities = [
     title: "Dessin en un trait",
     description: "Dessine un animal sans lever ton crayon.",
     duration: 4,
-    reward: 20,
     Icon: PencilSimple,
     tone: "violet",
     steps: ["Choisis ton animal", "Pose ton crayon et ne le lève plus", "Ajoute un nom rigolo à ton dessin"],
@@ -160,7 +234,6 @@ const clubhouseActivities = [
     title: "Le mime mystère",
     description: "Fais deviner une activité sans prononcer un mot.",
     duration: 6,
-    reward: 30,
     Icon: UsersThree,
     tone: "coral",
     steps: ["Choisis une activité secrète", "Mime-la pendant trente secondes", "Laisse les autres proposer une réponse"],
@@ -173,7 +246,6 @@ const clubhouseActivities = [
     title: "Jeux multijoueurs",
     description: "Invite un contact approuvé à Puissance 4, au Morpion ou à la Bataille navale.",
     duration: 8,
-    reward: 40,
     Icon: UsersThree,
     tone: "blue",
   },
@@ -184,7 +256,6 @@ const clubhouseActivities = [
     title: "Memory des symboles",
     description: "Retourne les cartes et retrouve les six paires.",
     duration: 4,
-    reward: 30,
     Icon: GameController,
     tone: "violet",
   },
@@ -194,7 +265,6 @@ const clubhouseActivities = [
     title: "Quiz des animaux",
     description: "Teste tes connaissances avec trois nouvelles questions à chaque partie.",
     duration: 3,
-    reward: 20,
     Icon: Brain,
     tone: "sun",
     questions: [
@@ -218,7 +288,6 @@ const clubhouseActivities = [
     title: "Trouve l’intrus",
     description: "Observe bien et choisis l’élément qui ne va pas avec les autres.",
     duration: 3,
-    reward: 20,
     Icon: PuzzlePiece,
     tone: "blue",
     questions: [
@@ -336,7 +405,11 @@ const mapServerMessage = (message, accountId, directionOverride = null) => {
   const mediaName = message.mediaName ?? message.media_name ?? "";
   const createdAt = message.createdAt ?? message.created_at;
   const senderId = message.senderId ?? message.sender_id;
+  const messageKind = message.messageKind ?? message.message_kind ?? "user";
   const direction = directionOverride ?? (senderId === accountId ? "sent" : "received");
+  const status = direction === "sent"
+    ? message.deliveryStatus ?? message.delivery_status ?? "sent"
+    : null;
   if (mediaType.startsWith("audio/")) {
     const durationMatch = mediaName.match(/-(\d{1,3})s(?:\.|$)/i);
     return {
@@ -346,8 +419,9 @@ const mapServerMessage = (message, accountId, directionOverride = null) => {
       mediaType,
       name: mediaName,
       duration: durationMatch ? Math.min(120, Number(durationMatch[1])) : 0,
+      messageKind,
       time: formatServerMessageTime(createdAt),
-      status: "received",
+      status,
     };
   }
   if (mediaType.startsWith("image/") || mediaType.startsWith("video/")) {
@@ -357,8 +431,9 @@ const mapServerMessage = (message, accountId, directionOverride = null) => {
       type: mediaType.startsWith("video/") ? "video" : "image",
       mediaType,
       name: mediaName,
+      messageKind,
       time: formatServerMessageTime(createdAt),
-      status: "received",
+      status,
     };
   }
   const text = String(message.text ?? message.body ?? "").trim();
@@ -368,8 +443,9 @@ const mapServerMessage = (message, accountId, directionOverride = null) => {
     direction,
     type: "text",
     text,
+    messageKind,
     time: formatServerMessageTime(createdAt),
-    status: "received",
+    status,
   };
 };
 
@@ -650,6 +726,8 @@ const mapServerConversation = (conversation, account) => {
     name: conversation.name,
     contactId: conversation.contact_id,
     contactRole: conversation.contact_role,
+    contactStatus: conversation.contact_status ?? "active",
+    schedule: cloneCommunicationSchedule(conversation.communication_schedule ?? defaultCommunicationSchedule),
     isFamily,
     isHouseholdParent,
     serverBacked: true,
@@ -657,7 +735,7 @@ const mapServerConversation = (conversation, account) => {
     initials,
     preview: latestPreview ?? (isFamily || isHouseholdParent ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
     time: latest?.time ?? "Maintenant",
-    unread: 0,
+    unread: Number(conversation.unread_count ?? conversation.unreadCount ?? 0),
     messages,
     ActivityIcon: ChatCircleDots,
     received: messages.filter((message) => message.direction === "received" && message.type === "text").map((message) => message.text),
@@ -748,8 +826,27 @@ function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isTermsOpen, setIsTermsOpen] = useState(false);
-  const [consent, setConsent] = useState(false);
+  const [privacyAudience, setPrivacyAudience] = useState(() => privacyAudienceFromPath(window.location.pathname));
+  const [isLegalNoticeOpen, setIsLegalNoticeOpen] = useState(() => isLegalNoticePath(window.location.pathname));
+  const [parentalAuthorityConfirmed, setParentalAuthorityConfirmed] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState("");
+  const [invalidChildFields, setInvalidChildFields] = useState([]);
+  const childContactIdRef = useRef(null);
+  const passwordRef = useRef(null);
+  const privacyReturnUrlRef = useRef(null);
+  const legalNoticeReturnUrlRef = useRef(null);
+
+  const clearAuthError = () => {
+    setError("");
+    setInvalidChildFields([]);
+  };
+
+  const showChildAuthError = (message, fields, fieldToFocus) => {
+    setError(message);
+    setInvalidChildFields(fields);
+    window.requestAnimationFrame(() => fieldToFocus.current?.focus());
+  };
 
   useEffect(() => {
     if (!familyInvitation?.email) return;
@@ -757,9 +854,51 @@ function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false
     setEmail(familyInvitation.email);
   }, [familyInvitation?.email]);
 
+  useEffect(() => {
+    const syncPublicLegalRoute = () => {
+      setPrivacyAudience(privacyAudienceFromPath(window.location.pathname));
+      setIsLegalNoticeOpen(isLegalNoticePath(window.location.pathname));
+    };
+    window.addEventListener("popstate", syncPublicLegalRoute);
+    return () => window.removeEventListener("popstate", syncPublicLegalRoute);
+  }, []);
+
+  const openPrivacy = (nextAudience) => {
+    privacyReturnUrlRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.history.pushState({ privacy: nextAudience }, "", privacyRoutes[nextAudience]);
+    setIsLegalNoticeOpen(false);
+    setPrivacyAudience(nextAudience);
+  };
+
+  const changePrivacyAudience = (nextAudience) => {
+    window.history.replaceState({ privacy: nextAudience }, "", privacyRoutes[nextAudience]);
+    setPrivacyAudience(nextAudience);
+  };
+
+  const closePrivacy = () => {
+    const returnUrl = privacyReturnUrlRef.current || "/";
+    privacyReturnUrlRef.current = null;
+    window.history.replaceState({}, "", returnUrl);
+    setPrivacyAudience(null);
+  };
+
+  const openLegalNotice = () => {
+    legalNoticeReturnUrlRef.current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.history.pushState({ legalNotice: true }, "", legalNoticeRoute);
+    setPrivacyAudience(null);
+    setIsLegalNoticeOpen(true);
+  };
+
+  const closeLegalNotice = () => {
+    const returnUrl = legalNoticeReturnUrlRef.current || "/";
+    legalNoticeReturnUrlRef.current = null;
+    window.history.replaceState({}, "", returnUrl);
+    setIsLegalNoticeOpen(false);
+  };
+
   const changeMode = (nextMode) => {
     setMode(nextMode);
-    setError("");
+    clearAuthError();
   };
 
   const changeAudience = (nextAudience) => {
@@ -767,19 +906,33 @@ function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false
     setAudience(nextAudience);
     setMode("login");
     setPassword("");
-    setError("");
+    clearAuthError();
   };
 
   const submitAuth = async (event) => {
     event.preventDefault();
     if (audience === "child") {
       const cleanContactId = childContactId.trim().toUpperCase();
-      if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(cleanContactId) || password.length < 6) {
-        setError("Saisis ton identifiant unique au format SC-000-000-000 et ton mot de passe.");
+      const hasValidContactId = /^SC-\d{3}-\d{3}-\d{3}$/.test(cleanContactId);
+      const hasValidPassword = password.length >= 6;
+      if (!hasValidContactId || !hasValidPassword) {
+        const invalidFields = [
+          ...(!hasValidContactId ? ["contactId"] : []),
+          ...(!hasValidPassword ? ["password"] : []),
+        ];
+        showChildAuthError(
+          "Saisis ton identifiant unique au format SC-000-000-000 et ton mot de passe.",
+          invalidFields,
+          !hasValidContactId ? childContactIdRef : passwordRef,
+        );
         return;
       }
       if (!await onChildLogin(cleanContactId, password)) {
-        setError("Identifiant ou mot de passe incorrect.");
+        showChildAuthError(
+          "Identifiant ou mot de passe incorrect.",
+          ["contactId", "password"],
+          childContactIdRef,
+        );
       }
       return;
     }
@@ -789,12 +942,17 @@ function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false
       return;
     }
     if (mode === "register") {
-      if (name.trim().length < 2 || !consent) {
-        setError("Indiquez votre prénom et confirmez que vous êtes le parent ou responsable légal.");
+      if (name.trim().length < 2 || !parentalAuthorityConfirmed || !termsAccepted) {
+        setError("Indiquez votre prénom, acceptez les conditions d’utilisation et confirmez votre autorité parentale.");
         return;
       }
       try {
-        await onRegister({ name: name.trim(), email: cleanEmail, password });
+        await onRegister({
+          name: name.trim(),
+          email: cleanEmail,
+          password,
+          legal: registrationLegalEvidence(),
+        });
       } catch (authError) {
         setError(authError.message);
       }
@@ -842,19 +1000,25 @@ function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false
           <form className="auth-form" onSubmit={submitAuth}>
             <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
             {audience === "parent" && mode === "register" && <label className="auth-field"><span>Prénom du parent</span><input value={name} onChange={(event) => { setName(event.target.value); setError(""); }} autoComplete="given-name" placeholder="Marie" /></label>}
-            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-123-456-789" /></label>}
-            <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="6 caractères minimum" /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
+            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton identifiant unique</span><input ref={childContactIdRef} value={childContactId} onChange={(event) => { setChildContactId(event.target.value.toUpperCase().slice(0, 14)); clearAuthError(); }} autoComplete="username" autoCapitalize="characters" spellCheck="false" placeholder="SC-123-456-789" aria-invalid={invalidChildFields.includes("contactId")} aria-describedby={error ? "auth-error" : undefined} /></label>}
+            <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input ref={audience === "child" ? passwordRef : undefined} type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); clearAuthError(); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder={audience === "child" ? "6 caractères minimum" : "8 caractères minimum"} minLength={audience === "child" ? 6 : 8} aria-invalid={audience === "child" && invalidChildFields.includes("password")} aria-describedby={audience === "child" && error ? "auth-error" : undefined} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
+            {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> Votre e-mail et les profils créés servent à fournir et sécuriser le service familial. L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
             {audience === "parent" && mode === "register" && (
-              <label className="auth-consent"><input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setError(""); }} /><span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span></label>
+              <div className="auth-legal-confirmations">
+                <label className="auth-consent"><input type="checkbox" checked={termsAccepted} onChange={(event) => { setTermsAccepted(event.target.checked); setError(""); }} /><span>J’accepte les <button type="button" onClick={(event) => { event.preventDefault(); setIsTermsOpen(true); }}>conditions d’utilisation</button> (version du {legalDocumentVersions.terms.label}). Cette acceptation conclut le contrat de service ; ce n’est pas un consentement RGPD.</span></label>
+                <label className="auth-consent"><input type="checkbox" checked={parentalAuthorityConfirmed} onChange={(event) => { setParentalAuthorityConfirmed(event.target.checked); setError(""); }} /><span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span></label>
+              </div>
             )}
-            {error && <p className="auth-error" role="alert">{error}</p>}
+            {error && <p className="auth-error" id="auth-error" role="alert">{error}</p>}
             <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter et accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte"}</button>
           </form>
 
-          <p className="auth-legal"><LockKey size={13} weight="fill" /> Les comptes réels sont protégés et enregistrés sur le serveur familial. <button type="button" onClick={() => setIsTermsOpen(true)}>CGV</button></p>
+          <div className="auth-legal"><LockKey size={14} weight="fill" /><span>Informations :</span><button type="button" onClick={() => openPrivacy("parent")}>confidentialité parents</button><button type="button" onClick={() => openPrivacy("child")}>confidentialité enfants</button><span aria-hidden="true">•</span><button type="button" onClick={() => setIsTermsOpen(true)}>Conditions d’utilisation</button><span aria-hidden="true">•</span><button type="button" onClick={openLegalNotice}>Mentions légales</button></div>
         </div>
       </div>
       {isTermsOpen && <TermsModal onClose={() => setIsTermsOpen(false)} />}
+      {privacyAudience && <PrivacyPolicyModal audience={privacyAudience} onAudienceChange={changePrivacyAudience} onClose={closePrivacy} />}
+      {isLegalNoticeOpen && <LegalNoticeModal onClose={closeLegalNotice} />}
     </section>
   );
 }
@@ -864,22 +1028,22 @@ function TermsModal({ onClose }) {
     <div className="terms-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title">
         <header className="terms-modal__header">
-          <div><span>Informations légales</span><h2 id="terms-title">Conditions générales de vente</h2><small>Version du 22 juillet 2026</small></div>
-          <button type="button" onClick={onClose} aria-label="Fermer les conditions générales de vente"><X size={21} weight="bold" /></button>
+          <div><span>Informations légales</span><h2 id="terms-title">Conditions d’utilisation</h2><small>Version du {legalDocumentVersions.terms.label}</small></div>
+          <button type="button" onClick={onClose} aria-label="Fermer les conditions d’utilisation"><X size={21} weight="bold" /></button>
         </header>
         <div className="terms-modal__content">
-          <aside><ShieldCheck size={20} weight="fill" /><span><strong>Document provisoire</strong> Ces CGV doivent être complétées avec l’identité de l’éditeur, les tarifs définitifs et validées par un professionnel du droit avant commercialisation.</span></aside>
+          <aside><ShieldCheck size={20} weight="fill" /><span><strong>Contrat avec le parent</strong> Ces conditions encadrent le service familial gratuit actuellement proposé. Elles sont acceptées séparément de la politique de confidentialité.</span></aside>
 
-          <article><h3>1. Éditeur et champ d’application</h3><p>Secret Clubhouse est un service familial de communication destiné aux enfants de 6 à 13 ans sous le contrôle de leurs responsables légaux. L’identité, l’adresse, le numéro d’immatriculation et les coordonnées définitives de l’éditeur seront ajoutés avant la mise en production.</p></article>
-          <article><h3>2. Acceptation</h3><p>La création d’un compte parent et toute commande éventuelle supposent l’acceptation des présentes conditions par un adulte disposant de l’autorité nécessaire. Un enfant ne peut ni créer seul un compte familial ni effectuer un achat.</p></article>
+          <article><h3>1. Éditeur et champ d’application</h3><p>Secret Clubhouse est édité par {privacyController.name}, {privacyController.capacity.toLowerCase()}, joignable à {privacyController.email}. Le service familial gratuit est destiné aux enfants de 6 à 13 ans sous le contrôle de leurs responsables légaux.</p></article>
+          <article><h3>2. Acceptation</h3><p>La création d’un compte parent suppose l’acceptation des présentes conditions par un adulte disposant de l’autorité nécessaire. Un enfant ne peut pas créer seul un compte familial.</p></article>
           <article><h3>3. Comptes et sécurité</h3><p>Le parent crée et administre les profils enfants, approuve les contacts et règle les autorisations. Les identifiants sont personnels et doivent rester confidentiels. Toute utilisation suspecte doit être signalée sans délai à l’éditeur.</p></article>
           <article><h3>4. Services proposés</h3><p>Le service peut proposer la messagerie, les messages vocaux, les appels audio et vidéo, le partage de médias autorisé par le parent et des activités privées. Leur disponibilité dépend du réseau, du terminal et des autorisations du système.</p></article>
-          <article><h3>5. Prix et paiement</h3><p>Le prototype présenté est gratuit et ne constitue pas une offre commerciale. Si une formule payante est proposée ultérieurement, son prix toutes taxes comprises, sa durée, son renouvellement et les moyens de paiement seront affichés clairement avant toute validation.</p></article>
-          <article><h3>6. Droit de rétractation</h3><p>Lorsque la réglementation applicable le prévoit, le consommateur dispose du délai légal de rétractation. Pour un contenu ou service numérique commencé immédiatement, un accord exprès et les conséquences sur ce droit seront recueillis avant l’exécution.</p></article>
+          <article><h3>5. Gratuité</h3><p>Le service est fourni gratuitement, sans abonnement, achat intégré ni publicité. Si une offre payante était proposée un jour, elle ferait l’objet de conditions distinctes et d’une acceptation préalable ; elle ne serait jamais activée automatiquement.</p></article>
+          <article><h3>6. Fin d’utilisation</h3><p>Le parent peut cesser d’utiliser le service à tout moment et demander la suppression de son compte depuis l’espace protégé. Aucun engagement financier ni durée minimale ne s’applique.</p></article>
           <article><h3>7. Disponibilité et responsabilité</h3><p>L’éditeur met en œuvre des moyens raisonnables pour assurer le fonctionnement du service, sans garantir une disponibilité permanente. Les parents restent responsables de la configuration des profils, du choix des contacts et de l’usage du service par leurs enfants.</p></article>
-          <article><h3>8. Données personnelles</h3><p>Les données sont traitées pour fournir et sécuriser le service. Les modalités détaillées, durées de conservation et droits des personnes devront figurer dans une politique de confidentialité distincte, accessible avant l’inscription.</p></article>
+          <article><h3>8. Données personnelles</h3><p>Les données sont traitées pour fournir et sécuriser le service selon la politique de confidentialité distincte, disponible en versions parent et enfant depuis l’écran public avant toute inscription.</p></article>
           <article><h3>9. Suspension et résiliation</h3><p>Le parent peut cesser d’utiliser le service et demander la suppression de son compte. L’éditeur peut suspendre un compte en cas de fraude, de risque pour un enfant, de violation des règles ou d’obligation légale, selon une procédure proportionnée.</p></article>
-          <article><h3>10. Droit applicable et réclamations</h3><p>Les coordonnées du service client, le médiateur de la consommation compétent et les règles de règlement des litiges seront précisés selon le pays d’établissement de l’éditeur et le lieu de résidence du consommateur.</p></article>
+          <article><h3>10. Droit applicable et réclamations</h3><p>Le droit français s’applique. Toute question ou réclamation peut être adressée à {privacyController.email}. L’éditeur agit à titre non professionnel et le service ne donne lieu à aucune transaction commerciale.</p></article>
         </div>
         <footer><button className="primary-button" type="button" onClick={onClose}>Fermer</button></footer>
       </section>
@@ -995,10 +1159,11 @@ function formatCallDuration(totalSeconds) {
   return `${minutes}:${seconds}`;
 }
 
-function MessageStatus({ status = "received" }) {
+function MessageStatus({ status = "sent" }) {
   const isSeen = status === "seen";
-  const StatusIcon = isSeen ? Checks : Check;
-  const label = isSeen ? "Vu" : "Reçu";
+  const isReceived = status === "received";
+  const StatusIcon = isSeen ? Checks : isReceived ? Check : Clock;
+  const label = isSeen ? "Vu" : isReceived ? "Reçu" : "Envoyé";
   return <span className={`message-status message-status--${status}`} role="img" aria-label={label} title={label}><StatusIcon size={15} weight="bold" /></span>;
 }
 
@@ -1080,7 +1245,7 @@ function ConversationMediaMessage({ message, parent = false }) {
       )}
       <figcaption>
         <span>{description}{message.time ? ` · ${message.time}` : ""}</span>
-        {!isReceived && <MessageStatus status={message.status ?? "received"} />}
+        {!isReceived && <MessageStatus status={message.status ?? "sent"} />}
       </figcaption>
     </figure>
     {isMediaOpen && createPortal((
@@ -1137,7 +1302,7 @@ function ConversationVoiceMessage({ message, parent = false }) {
 
   return (
     <div className={`conversation-voice-message ${parent ? "conversation-voice-message--parent" : ""} ${isReceived ? "is-received" : "is-sent"}`}>
-      <VoiceMessage url={mediaUrl} duration={message.duration} status={isReceived ? null : message.status ?? "received"} parent={parent} />
+      <VoiceMessage url={mediaUrl} duration={message.duration} status={isReceived ? null : message.status ?? "sent"} parent={parent} />
       {message.time && <time>{message.time}</time>}
     </div>
   );
@@ -1204,52 +1369,134 @@ function PushNotificationButton() {
   const isWindowsWeb = !native && /Windows/i.test(navigator.userAgent);
   const supported = native || ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
   const [status, setStatus] = useState(supported ? "checking" : "unsupported");
+  const [consent, setConsent] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!supported) return;
-    if (native) {
-      PushNotifications.checkPermissions().then(({ receive }) => setStatus(receive === "granted" ? "enabled" : receive === "denied" ? "denied" : "disabled"));
-      return;
-    }
-    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
-      .then(async (registration) => {
-        await registration.update().catch(() => {});
-        return registration.pushManager.getSubscription();
-      })
-      .then(async (subscription) => {
+    if (!supported) return undefined;
+    let active = true;
+
+    const refreshStatus = async () => {
+      try {
+        const consentResult = await api.notificationConsent();
+        if (!active) return;
+        setConsent(consentResult.consent);
+        if (!consentResult.consent.active) {
+          if (!native) {
+            const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+            const subscription = await registration.pushManager.getSubscription();
+            if (subscription) {
+              await api.unsubscribePush(subscription.endpoint).catch(() => undefined);
+              await subscription.unsubscribe().catch(() => undefined);
+            }
+          }
+          setStatus(consentResult.consent.subjectAgreed && consentResult.consent.requiresGuardian ? "awaiting-parent" : "disabled");
+          return;
+        }
+
+        if (native) {
+          const { receive } = await PushNotifications.checkPermissions();
+          if (!active) return;
+          if (receive === "denied") {
+            setStatus("denied");
+            return;
+          }
+          if (receive !== "granted" || localStorage.getItem(nativePushOptInKey) === "false") {
+            setStatus("disabled");
+            return;
+          }
+          const registration = await api.nativePushStatus(getNativeInstallationId()).catch(() => ({ registered: false }));
+          if (active) setStatus(registration.registered ? "enabled" : "disabled");
+          return;
+        }
+
+        const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+        await registration.update().catch(() => undefined);
+        const subscription = await registration.pushManager.getSubscription();
         if (subscription) await api.subscribePush(subscription.toJSON());
-        setStatus(subscription ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
-      })
-      .catch(() => setStatus("unsupported"));
+        if (active) setStatus(subscription ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
+      } catch (refreshError) {
+        if (active) {
+          setError(refreshError.message || "Le choix de notifications ne peut pas être vérifié.");
+          setStatus("disabled");
+        }
+      }
+    };
+
+    const handleNativeSync = () => { void refreshStatus(); };
+    window.addEventListener("secretclubhouse:native-push-synced", handleNativeSync);
+    void refreshStatus();
+    return () => {
+      active = false;
+      window.removeEventListener("secretclubhouse:native-push-synced", handleNativeSync);
+    };
   }, [native, supported]);
 
   const togglePush = async () => {
     setError("");
     try {
+      if (status === "enabled" || status === "awaiting-parent") {
+        if (native) {
+          await api.deleteNativePushToken({ deviceId: getNativeInstallationId() });
+          await PushNotifications.unregister();
+          localStorage.setItem(nativePushOptInKey, "false");
+        } else {
+          const registration = await navigator.serviceWorker.ready;
+          const current = await registration.pushManager.getSubscription();
+          if (current) {
+            await api.unsubscribePush(current.endpoint);
+            await current.unsubscribe();
+          }
+        }
+        const result = await api.setNotificationConsent(false);
+        setConsent(result.consent);
+        setStatus("disabled");
+        return;
+      }
+
+      const consentResult = await api.setNotificationConsent(true);
+      setConsent(consentResult.consent);
+      if (!consentResult.consent.active) {
+        setStatus("awaiting-parent");
+        return;
+      }
+
       if (native) {
         const permission = await PushNotifications.requestPermissions();
-        if (permission.receive !== "granted") { setStatus("denied"); return; }
+        if (permission.receive !== "granted") {
+          await api.setNotificationConsent(false).catch(() => undefined);
+          setStatus("denied");
+          return;
+        }
         const platform = Capacitor.getPlatform();
-        const registration = await new Promise((resolve, reject) => {
-          const registered = PushNotifications.addListener("registration", (token) => { registered.then((handle) => handle.remove()); resolve(token); });
-          const failed = PushNotifications.addListener("registrationError", (registrationError) => { failed.then((handle) => handle.remove()); reject(new Error(registrationError.error)); });
-          PushNotifications.register();
-        });
-        await api.saveNativePushToken(registration.value, platform);
+        const pendingState = platform === "ios"
+          ? await NativeCallNotifications.getPendingState().catch(() => ({}))
+          : {};
+        if (pendingState.deviceId) localStorage.setItem(nativeInstallationKey, String(pendingState.deviceId));
+        if (pendingState.environment) localStorage.setItem(nativeApnsEnvironmentKey, String(pendingState.environment));
+        const registration = await registerForNativePushToken();
+        await api.saveNativePushToken(registration.value, nativeTokenDetails(platform));
+        if (platform === "ios") {
+          if (pendingState.voipToken) {
+            await api.saveNativePushToken(pendingState.voipToken, nativeTokenDetails("ios", {
+              tokenKind: "apns_voip",
+              ...(pendingState.deviceId ? { deviceId: String(pendingState.deviceId) } : {}),
+              environment: pendingState.environment,
+              topic: pendingState.topic,
+            }));
+          }
+        }
+        localStorage.setItem(nativePushOptInKey, "true");
         setStatus("enabled");
         return;
       }
       const registration = await navigator.serviceWorker.ready;
-      const current = await registration.pushManager.getSubscription();
-      if (current) {
-        await api.unsubscribePush(current.endpoint);
-        await current.unsubscribe();
-        setStatus("disabled");
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        await api.setNotificationConsent(false).catch(() => undefined);
+        setStatus("denied");
         return;
       }
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") { setStatus("denied"); return; }
       const { publicKey } = await api.pushPublicKey();
       const padding = "=".repeat((4 - publicKey.length % 4) % 4);
       const base64 = (publicKey + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -1264,6 +1511,8 @@ function PushNotificationButton() {
 
   const statusText = status === "enabled"
     ? isWindowsWeb ? "Activées dans Windows, même lorsque l’application est fermée" : "Activées même lorsque l’application est fermée"
+    : status === "awaiting-parent"
+      ? "Ton accord est enregistré · l’accord du parent manque encore"
     : status === "denied"
       ? isWindowsWeb ? "Bloquées dans les paramètres de notifications Windows ou du navigateur" : "Bloquées dans les réglages du téléphone"
       : status === "unsupported"
@@ -1277,8 +1526,59 @@ function PushNotificationButton() {
         <span><strong>{isWindowsWeb ? "Notifications Windows" : "Notifications et son système"}</strong><small>{statusText}</small></span>
         <span className={`toggle ${status === "enabled" ? "is-on" : ""}`} aria-hidden="true"><span /></span>
       </button>
+      <small className="push-setting__legal">{consent?.role === "child" ? notificationConsentCopy.child : notificationConsentCopy.parent} {notificationConsentCopy.systemPermission}</small>
       {error && <small className="push-setting__error" role="alert">{error}</small>}
       {/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.matchMedia("(display-mode: standalone)").matches && <small className="push-setting__hint">Sur iPhone/iPad, ajoutez d’abord Secret Clubhouse à l’écran d’accueil.</small>}
+    </div>
+  );
+}
+
+function ChildNotificationConsentSetting({ child }) {
+  const [consent, setConsent] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setConsent(null);
+    setError("");
+    api.childNotificationConsent(child.id)
+      .then((result) => { if (active) setConsent(result.consent); })
+      .catch((consentError) => { if (active) setError(consentError.message); });
+    return () => { active = false; };
+  }, [child.id]);
+
+  const toggleGuardianConsent = async () => {
+    if (!consent || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.setChildNotificationConsent(child.id, !consent.guardianAgreed);
+      setConsent(result.consent);
+    } catch (consentError) {
+      setError(consentError.message || "L’accord parental n’a pas pu être enregistré.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const detail = !consent
+    ? "Vérification de l’accord…"
+    : consent.guardianAgreed
+      ? consent.subjectAgreed
+        ? "Accord conjoint actif · révocable à tout moment"
+        : `Votre accord est enregistré · ${child.name} doit aussi accepter`
+      : "Votre accord parental est nécessaire avant l’activation";
+
+  return (
+    <div className="child-notification-consent">
+      <button className="safety-setting" type="button" role="switch" aria-checked={Boolean(consent?.guardianAgreed)} onClick={toggleGuardianConsent} disabled={!consent || busy}>
+        <span className="setting-icon"><Bell size={20} weight="fill" /></span>
+        <span className="setting-copy"><strong>Notifications de {child.name}</strong><small>{detail}</small></span>
+        <span className={`toggle ${consent?.guardianAgreed ? "is-on" : ""}`} aria-hidden="true"><span /></span>
+      </button>
+      <small>{notificationConsentCopy.guardian}</small>
+      {error && <small className="push-setting__error" role="alert">{error}</small>}
     </div>
   );
 }
@@ -1512,22 +1812,7 @@ function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
     setPhase("connecting");
 
     try {
-      const localSource = { stream: await openMicrophoneStream(), stop: null };
-      const remoteSource = await createRemoteAudioPlaceholder();
-      localStreamRef.current = localSource.stream;
-      remoteSourceRef.current = remoteSource.stream;
-      streamCleanupsRef.current.push(remoteSource.stop);
-
-      rtcSessionRef.current = await createLocalWebRtcSession({
-        localStream: localSource.stream,
-        remoteSourceStream: remoteSource.stream,
-        onRemoteStream: (stream) => {
-          receivedStreamRef.current = stream;
-          if (remoteAudioRef.current) remoteAudioRef.current.srcObject = stream;
-        },
-        onStateChange: setConnectionState,
-      });
-      setPhase("active");
+      throw new Error("Utilisez le flux d’appel serveur depuis une conversation authentifiée.");
     } catch (callError) {
       cleanUpCall();
       setPhase("error");
@@ -1676,24 +1961,7 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
     setPhase("connecting");
 
     try {
-      const localStream = await openCameraStream();
-
-      const remotePlaceholder = createRemoteVideoPlaceholder(conversation.name, ["#644bd7", "#62e7c4"]);
-      streamCleanupsRef.current.push(remotePlaceholder.stop);
-      localStreamRef.current = localStream;
-      remoteSourceRef.current = remotePlaceholder.stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStream;
-
-      rtcSessionRef.current = await createLocalWebRtcSession({
-        localStream,
-        remoteSourceStream: remotePlaceholder.stream,
-        onRemoteStream: (stream) => {
-          receivedStreamRef.current = stream;
-          if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
-        },
-        onStateChange: setConnectionState,
-      });
-      setPhase("active");
+      throw new Error("Utilisez le flux d’appel serveur depuis une conversation authentifiée.");
     } catch (callError) {
       cleanUpCall();
       setPhase("error");
@@ -1791,7 +2059,424 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
   );
 }
 
-function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage, onSendMedia, onInviteGame, onOpenGames }) {
+function RealtimeCallScreen({
+  account,
+  conversation,
+  callType,
+  direction = "outgoing",
+  initialCall = null,
+  initialIceServers = [],
+  acceptedNatively = false,
+  policy,
+  onClose,
+  onConversationRefresh,
+}) {
+  const isVideo = callType === "video";
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
+  const rtcSessionRef = useRef(null);
+  const callRef = useRef(initialCall);
+  const lastSignalIdRef = useRef("0");
+  const processingSignalsRef = useRef(false);
+  const acceptedOfferRef = useRef(false);
+  const acceptedAnswerRef = useRef(false);
+  const closedExplicitlyRef = useRef(false);
+  const nativeResumeStartedRef = useRef(false);
+  const acceptedNativelyRef = useRef(acceptedNatively);
+  const [call, setCall] = useState(initialCall);
+  const [phase, setPhase] = useState(direction === "incoming" ? (acceptedNatively ? "requesting-media" : "incoming") : "ready");
+  const [error, setError] = useState("");
+  const [connectionState, setConnectionState] = useState("new");
+  const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isSpeakerOff, setIsSpeakerOff] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const effectivePolicy = policy ?? { allowed: true, detail: "Autorisation vérifiée par le serveur." };
+  acceptedNativelyRef.current = acceptedNatively;
+
+  const releaseMedia = () => {
+    rtcSessionRef.current?.close();
+    rtcSessionRef.current = null;
+    stopMediaStream(localStreamRef.current);
+    stopMediaStream(remoteStreamRef.current);
+    localStreamRef.current = null;
+    remoteStreamRef.current = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+  };
+
+  const updateCall = (nextCall) => {
+    callRef.current = nextCall;
+    setCall(nextCall);
+  };
+
+  const attachStreams = () => {
+    if (localVideoRef.current && localStreamRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+    if (remoteVideoRef.current && remoteStreamRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    if (remoteAudioRef.current && remoteStreamRef.current) remoteAudioRef.current.srcObject = remoteStreamRef.current;
+  };
+
+  const openLocalStream = () => isVideo ? openCameraStream() : openMicrophoneStream();
+
+  const createPeer = (localStream, iceServers, callId) => {
+    const session = createWebRtcSession({
+      localStream,
+      iceServers,
+      onIceCandidate: (candidate) => api.sendCallSignal(callId, "ice", candidate),
+      onRemoteStream: (stream) => {
+        remoteStreamRef.current = stream;
+        attachStreams();
+      },
+      onStateChange: (state) => {
+        setConnectionState(state);
+        if (state === "connected") setPhase("active");
+        if (state === "failed") {
+          setError("La connexion WebRTC a échoué. Vérifiez le réseau ou la configuration TURN.");
+          setPhase("error");
+        }
+      },
+    });
+    rtcSessionRef.current = session;
+    return session;
+  };
+
+  useEffect(() => {
+    if (!acceptedNatively || initialCall?.status !== "accepted") return;
+    callRef.current = initialCall;
+    setCall(initialCall);
+  }, [acceptedNatively, initialCall]);
+
+  useEffect(() => {
+    if (!acceptedNatively || direction !== "incoming" || nativeResumeStartedRef.current) return undefined;
+    nativeResumeStartedRef.current = true;
+    let active = true;
+    const resumeAcceptedCall = async () => {
+      try {
+        if (!callRef.current || callRef.current.status !== "accepted") throw new Error("Cet appel n’est plus actif.");
+        setPhase("requesting-media");
+        const localStream = await openLocalStream();
+        if (!active) {
+          stopMediaStream(localStream);
+          return;
+        }
+        localStreamRef.current = localStream;
+        createPeer(localStream, initialIceServers, callRef.current.id);
+        setConnectionState("connecting");
+        setPhase("connecting");
+        attachStreams();
+      } catch (callError) {
+        releaseMedia();
+        if (callRef.current?.status === "accepted") {
+          void endNativeSystemCall(callRef.current.id, "ended");
+          try {
+            const ended = await api.respondToCall(callRef.current.id, "hangup");
+            updateCall(ended.call);
+            closedExplicitlyRef.current = true;
+          } catch {
+            // Le serveur ou l’autre participant a peut-être déjà terminé l’appel.
+          }
+        }
+        if (!active) return;
+        setPhase("error");
+        setError(callError?.name === "NotAllowedError"
+          ? `${isVideo ? "La caméra ou le micro n’a" : "Le micro n’a"} pas été autorisé. L’appel accepté depuis l’écran verrouillé a été terminé.`
+          : callError?.message ?? "Impossible de reprendre l’appel accepté.");
+      }
+    };
+    void resumeAcceptedCall();
+    return () => { active = false; };
+  }, [acceptedNatively]);
+
+  useEffect(() => {
+    attachStreams();
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "active") return undefined;
+    const timer = window.setInterval(() => setDuration((current) => current + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [phase]);
+
+  useEffect(() => () => {
+    const currentCall = callRef.current;
+    if (!closedExplicitlyRef.current && currentCall && ["ringing", "accepted"].includes(currentCall.status)) {
+      void api.respondToCall(currentCall.id, "hangup").catch(() => undefined);
+      void endNativeSystemCall(currentCall.id, "ended");
+    }
+    releaseMedia();
+  }, []);
+
+  const processSignals = async (signals) => {
+    const session = rtcSessionRef.current;
+    if (!session) return;
+    for (const signal of signals) {
+      if (signal.signalType === "offer" && direction === "incoming" && !acceptedOfferRef.current) {
+        const answer = await session.acceptOffer(signal.payload);
+        acceptedOfferRef.current = true;
+        await api.sendCallSignal(callRef.current.id, "answer", answer);
+      } else if (signal.signalType === "answer" && direction === "outgoing" && !acceptedAnswerRef.current) {
+        await session.acceptAnswer(signal.payload);
+        acceptedAnswerRef.current = true;
+      } else if (signal.signalType === "ice") {
+        await session.addRemoteCandidate(signal.payload);
+      }
+      lastSignalIdRef.current = String(signal.id);
+    }
+  };
+
+  useEffect(() => {
+    if (!call?.id || !["incoming", "outgoing-ringing", "connecting", "active"].includes(phase)) return undefined;
+    let active = true;
+    const refresh = async () => {
+      if (!active || processingSignalsRef.current) return;
+      processingSignalsRef.current = true;
+      try {
+        const result = await api.call(call.id, lastSignalIdRef.current);
+        if (!active) return;
+        updateCall(result.call);
+        await processSignals(result.signals ?? []);
+        if (result.call.status === "accepted" && phase === "outgoing-ringing") setPhase("connecting");
+        if (result.call.status === "accepted" && direction === "incoming" && phase === "incoming" && !acceptedNativelyRef.current) {
+          closedExplicitlyRef.current = true;
+          releaseMedia();
+          setPhase("answered-elsewhere");
+        } else if (result.call.status === "declined") {
+          releaseMedia();
+          void endNativeSystemCall(result.call.id, "declined");
+          setPhase("declined");
+          void onConversationRefresh?.();
+        } else if (result.call.status === "cancelled") {
+          releaseMedia();
+          void endNativeSystemCall(result.call.id, "cancelled");
+          setPhase("cancelled");
+        } else if (result.call.status === "missed") {
+          releaseMedia();
+          void endNativeSystemCall(result.call.id, "missed");
+          setPhase("missed");
+        } else if (result.call.status === "ended") {
+          releaseMedia();
+          void endNativeSystemCall(result.call.id, "ended");
+          setPhase("ended");
+        }
+      } catch (refreshError) {
+        if (active && refreshError.status !== 404) setError(refreshError.message);
+      } finally {
+        processingSignalsRef.current = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 750);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [call?.id, phase]);
+
+  const startOutgoingCall = async () => {
+    if (!effectivePolicy.allowed || phase !== "ready") return;
+    setError("");
+    setPhase("requesting-media");
+    try {
+      const localStream = await openLocalStream();
+      localStreamRef.current = localStream;
+      const result = await api.startCall(conversation.id, callType);
+      updateCall(result.call);
+      const session = createPeer(localStream, result.iceServers, result.call.id);
+      const offer = await session.createOffer();
+      await api.sendCallSignal(result.call.id, "offer", offer);
+      setConnectionState("connecting");
+      setPhase("outgoing-ringing");
+      attachStreams();
+    } catch (callError) {
+      releaseMedia();
+      setPhase("error");
+      setError(callError?.name === "NotAllowedError"
+        ? `${isVideo ? "La caméra ou le micro n’a" : "Le micro n’a"} pas été autorisé. Vérifiez les autorisations puis réessayez.`
+        : callError?.message ?? "Impossible de démarrer l’appel.");
+      if (callError?.payload?.autoReplySent) void onConversationRefresh?.();
+    }
+  };
+
+  const acceptIncomingCall = async () => {
+    if (!callRef.current || phase !== "incoming") return;
+    setError("");
+    setPhase("requesting-media");
+    try {
+      const localStream = await openLocalStream();
+      localStreamRef.current = localStream;
+      const result = await api.respondToCall(callRef.current.id, "accept");
+      updateCall(result.call);
+      createPeer(localStream, result.iceServers, result.call.id);
+      setConnectionState("connecting");
+      setPhase("connecting");
+      attachStreams();
+    } catch (callError) {
+      releaseMedia();
+      if (callRef.current?.status === "ringing") {
+        try {
+          const declined = await api.respondToCall(callRef.current.id, "decline");
+          updateCall(declined.call);
+          closedExplicitlyRef.current = true;
+          void onConversationRefresh?.();
+        } catch {
+          // L’appel peut avoir expiré ou avoir déjà été annulé par l’appelant.
+        }
+      }
+      setPhase("error");
+      setError(callError?.name === "NotAllowedError"
+        ? `${isVideo ? "La caméra ou le micro n’a" : "Le micro n’a"} pas été autorisé. L’appel n’a pas été accepté.`
+        : callError?.message ?? "Impossible d’accepter l’appel.");
+    }
+  };
+
+  const declineIncomingCall = async () => {
+    if (!callRef.current) return;
+    setPhase("responding");
+    void endNativeSystemCall(callRef.current.id, "declined");
+    try {
+      await api.respondToCall(callRef.current.id, "decline");
+      closedExplicitlyRef.current = true;
+      await onConversationRefresh?.();
+      onClose();
+    } catch (callError) {
+      setError(callError.message);
+      setPhase("incoming");
+    }
+  };
+
+  const finishCall = async () => {
+    const currentCall = callRef.current;
+    setPhase("ending");
+    if (currentCall) void endNativeSystemCall(currentCall.id, "ended");
+    try {
+      if (currentCall && ["ringing", "accepted"].includes(currentCall.status)) {
+        await api.respondToCall(currentCall.id, "hangup");
+      }
+    } catch {
+      // La fermeture locale doit rester immédiate même si le réseau vient de tomber.
+    }
+    closedExplicitlyRef.current = true;
+    releaseMedia();
+    await onConversationRefresh?.();
+    onClose();
+  };
+
+  const closeTerminalState = async () => {
+    closedExplicitlyRef.current = true;
+    releaseMedia();
+    await onConversationRefresh?.();
+    onClose();
+  };
+
+  const toggleMicrophone = () => {
+    const nextMuted = !isMuted;
+    localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !nextMuted; });
+    setIsMuted(nextMuted);
+  };
+
+  const toggleCamera = () => {
+    const nextCameraOff = !isCameraOff;
+    localStreamRef.current?.getVideoTracks().forEach((track) => { track.enabled = !nextCameraOff; });
+    setIsCameraOff(nextCameraOff);
+  };
+
+  const toggleSpeaker = () => {
+    const nextSpeakerOff = !isSpeakerOff;
+    if (remoteAudioRef.current) remoteAudioRef.current.muted = nextSpeakerOff;
+    setIsSpeakerOff(nextSpeakerOff);
+  };
+
+  const terminalCopy = {
+    declined: ["Appel refusé", `${conversation.name} ne peut pas répondre pour le moment.`],
+    "answered-elsewhere": ["Appel pris sur un autre appareil", "La sonnerie a été arrêtée ici."],
+    cancelled: ["Appel annulé", "L’appel a été annulé avant la connexion."],
+    missed: ["Pas de réponse", `${conversation.name} n’a pas répondu à temps.`],
+    ended: ["Appel terminé", `La conversation avec ${conversation.name} est terminée.`],
+    error: ["Appel impossible", error || "La connexion n’a pas pu être établie."],
+  };
+  const isTerminal = Boolean(terminalCopy[phase]);
+  const isPreparing = phase === "requesting-media";
+  const isIncoming = direction === "incoming" && (phase === "incoming" || phase === "responding" || isPreparing);
+  const isLive = ["outgoing-ringing", "connecting", "active", "ending"].includes(phase);
+  const connectionLabel = phase === "outgoing-ringing"
+    ? `Appel de ${conversation.name}…`
+    : phase === "active" || connectionState === "connected"
+      ? "WebRTC connecté"
+      : "Connexion sécurisée…";
+
+  if (!isLive) {
+    const [terminalTitle, terminalDetail] = terminalCopy[phase] ?? [];
+    return (
+      <section className={`${isVideo ? "video" : "audio"}-call-screen ${isVideo ? "video" : "audio"}-call-screen--lobby`} aria-label={isIncoming ? `Appel entrant de ${conversation.name}` : `Préparer l’appel avec ${conversation.name}`}>
+        <header className="video-call-topbar">
+          {!isIncoming && <button type="button" className="video-call-back" onClick={isTerminal ? closeTerminalState : onClose} aria-label="Retour à la conversation"><ArrowLeft size={23} weight="bold" /></button>}
+          <span><ShieldCheck size={17} weight="fill" /> {isIncoming ? "Appel entrant privé" : "Appel protégé"}</span>
+        </header>
+        <div className={isVideo ? "video-lobby-card" : "audio-lobby-card"}>
+          <div className={isVideo ? "video-lobby-avatar" : "audio-lobby-avatar"}><Avatar person={conversation} size="hero" online /><span>{isVideo ? <VideoCamera size={26} weight="fill" /> : <Phone size={25} weight="fill" />}</span></div>
+          <small>{isIncoming ? "Contact autorisé" : "Conversation privée"}</small>
+          <h1>{isTerminal ? terminalTitle : isIncoming ? `${conversation.name} vous appelle` : `Appeler ${conversation.name} ?`}</h1>
+          <p>{isTerminal ? terminalDetail : isIncoming ? `${isVideo ? "Appel vidéo" : "Appel audio"} — choisissez accepter ou refuser.` : "Le serveur vérifie les participants et les règles parentales avant la sonnerie."}</p>
+          {!isIncoming && !isTerminal && <div className={`video-policy ${effectivePolicy.allowed ? "is-allowed" : "is-blocked"}`}>
+            {effectivePolicy.allowed ? <ShieldCheck size={20} weight="fill" /> : <LockKey size={20} weight="fill" />}
+            <span><strong>{effectivePolicy.allowed ? "Autorisation vérifiée" : effectivePolicy.reason}</strong><small>{effectivePolicy.detail}</small></span>
+          </div>}
+          {error && !isTerminal && <div className="video-call-error" role="alert">{isVideo ? <VideoCameraSlash size={20} weight="fill" /> : <MicrophoneSlash size={20} weight="fill" />}<span>{error}</span></div>}
+          <div className={`video-lobby-actions ${isIncoming ? "video-lobby-actions--incoming" : ""}`}>
+            {isIncoming ? <>
+              <button type="button" className="call-decline-button" onClick={declineIncomingCall} disabled={phase === "responding" || isPreparing}><PhoneDisconnect size={22} weight="fill" /> Refuser</button>
+              <button type="button" className={isVideo ? "video-start-button" : "audio-start-button"} onClick={acceptIncomingCall} disabled={phase === "responding" || isPreparing}>{isVideo ? <VideoCamera size={21} weight="fill" /> : <Phone size={21} weight="fill" />}{isPreparing ? "Autorisation…" : "Accepter"}</button>
+            </> : isTerminal
+              ? <button type="button" className={isVideo ? "video-start-button" : "audio-start-button"} onClick={closeTerminalState}>Retour à la conversation</button>
+              : <button type="button" className={isVideo ? "video-start-button" : "audio-start-button"} onClick={startOutgoingCall} disabled={!effectivePolicy.allowed || isPreparing}>{isVideo ? <VideoCamera size={21} weight="fill" /> : <Phone size={21} weight="fill" />}{isPreparing ? "Autorisation…" : isVideo ? "Appeler en visio" : "Appeler en audio"}</button>}
+          </div>
+          <div className="video-privacy-note"><LockKey size={15} weight="fill" /> Signalisation authentifiée par le service familial.</div>
+        </div>
+      </section>
+    );
+  }
+
+  if (!isVideo) {
+    return (
+      <section className="audio-call-screen audio-call-screen--active" aria-label={`Appel audio avec ${conversation.name}`}>
+        <audio ref={remoteAudioRef} autoPlay aria-label={`Audio de ${conversation.name}`} />
+        <header className="audio-call-topbar"><span className={`connection-dot ${connectionState === "connected" ? "is-connected" : ""}`} /><span>{connectionLabel}</span><strong>{formatCallDuration(duration)}</strong></header>
+        <div className="audio-call-center">
+          <div className="audio-call-avatar"><span className="audio-pulse audio-pulse--one" /><span className="audio-pulse audio-pulse--two" /><Avatar person={conversation} size="hero" online /></div>
+          <h1>{conversation.name}</h1>
+          <p>{phase === "outgoing-ringing" ? "En attente de sa réponse" : `En appel avec ${account.name}`}</p>
+          <div className="audio-waveform" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <span key={index} style={{ "--wave-index": index }} />)}</div>
+        </div>
+        <div className="video-call-controls audio-call-controls" aria-label="Contrôles de l’appel audio">
+          <button type="button" onClick={toggleMicrophone} className={isMuted ? "is-off" : ""} aria-label={isMuted ? "Réactiver le micro" : "Couper le micro"} aria-pressed={isMuted}>{isMuted ? <MicrophoneSlash size={25} weight="fill" /> : <Microphone size={25} weight="fill" />}<span>{isMuted ? "Micro coupé" : "Micro"}</span></button>
+          <button type="button" onClick={finishCall} className="hangup-button" aria-label="Raccrocher"><PhoneDisconnect size={27} weight="fill" /><span>{phase === "outgoing-ringing" ? "Annuler" : "Raccrocher"}</span></button>
+          <button type="button" onClick={toggleSpeaker} className={isSpeakerOff ? "is-off" : ""} aria-label={isSpeakerOff ? "Réactiver le haut-parleur" : "Couper le haut-parleur"} aria-pressed={isSpeakerOff}>{isSpeakerOff ? <SpeakerSlash size={25} weight="fill" /> : <SpeakerHigh size={25} weight="fill" />}<span>{isSpeakerOff ? "Son coupé" : "Haut-parleur"}</span></button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="video-call-screen" aria-label={`Visio avec ${conversation.name}`}>
+      <video ref={remoteVideoRef} className="remote-video" autoPlay playsInline aria-label={`Vidéo de ${conversation.name}`} />
+      <div className="video-call-shade" />
+      <header className="video-call-topbar video-call-topbar--active"><div><span className={`connection-dot ${connectionState === "connected" ? "is-connected" : ""}`} /><span>{connectionLabel}</span></div><strong>{formatCallDuration(duration)}</strong></header>
+      <div className="video-call-person"><strong>{conversation.name}</strong><span>{phase === "outgoing-ringing" ? "En attente de sa réponse" : "Contact autorisé"}</span></div>
+      <div className={`local-video-wrap ${isCameraOff ? "is-off" : ""}`}><video ref={localVideoRef} className="local-video" autoPlay playsInline muted aria-label={`Aperçu caméra de ${account.name}`} />{isCameraOff && <span><VideoCameraSlash size={21} weight="fill" /> Caméra coupée</span>}<small>Vous</small></div>
+      <div className="video-call-controls" aria-label="Contrôles de l’appel">
+        <button type="button" onClick={toggleMicrophone} className={isMuted ? "is-off" : ""} aria-label={isMuted ? "Réactiver le micro" : "Couper le micro"} aria-pressed={isMuted}>{isMuted ? <MicrophoneSlash size={25} weight="fill" /> : <Microphone size={25} weight="fill" />}<span>{isMuted ? "Micro coupé" : "Micro"}</span></button>
+        <button type="button" onClick={finishCall} className="hangup-button" aria-label="Raccrocher"><PhoneDisconnect size={27} weight="fill" /><span>{phase === "outgoing-ringing" ? "Annuler" : "Raccrocher"}</span></button>
+        <button type="button" onClick={toggleCamera} className={isCameraOff ? "is-off" : ""} aria-label={isCameraOff ? "Réactiver la caméra" : "Couper la caméra"} aria-pressed={isCameraOff}>{isCameraOff ? <VideoCameraSlash size={25} weight="fill" /> : <VideoCamera size={25} weight="fill" />}<span>{isCameraOff ? "Caméra coupée" : "Caméra"}</span></button>
+      </div>
+    </section>
+  );
+}
+
+function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage, onSendMedia, onInviteGame, onOpenGames, onStartCall }) {
   const [draft, setDraft] = useState("");
   const [sentMessages, setSentMessages] = useState([]);
   const [mediaError, setMediaError] = useState("");
@@ -1800,11 +2485,14 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   const mediaInputRef = useRef(null);
   const mediaUrlsRef = useRef([]);
   const messagePolicy = getChannelPolicy(schedule, "messages");
+  const audioCallPolicy = getChannelPolicy(schedule, "calls");
+  const videoCallPolicy = getChannelPolicy(schedule, "video");
   const autoReply = schedule.autoReply ?? defaultCommunicationSchedule.autoReply;
   const autoReplyIsActive = !messagePolicy.allowed && autoReply.enabled && autoReply.message.trim();
   const nextMessageTime = schedule.messages.start.replace(":", " h ");
   const { typingName, notifyTyping, stopTyping } = useTypingIndicator(conversation.id, Boolean(conversation.serverBacked));
   const canInviteToGame = Boolean(conversation.contactId && (conversation.serverBacked || onInviteGame));
+  const canCall = Boolean(conversation.serverBacked && onStartCall);
   const {
     games: conversationGames,
     busyAction: gameBusyAction,
@@ -1820,14 +2508,6 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
     mediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
   }, []);
 
-  useEffect(() => {
-    if (!sentMessages.some((message) => message.status === "received")) return undefined;
-    const seenTimer = window.setTimeout(() => {
-      setSentMessages((current) => current.map((message) => message.status === "received" ? { ...message, status: "seen" } : message));
-    }, 1400);
-    return () => window.clearTimeout(seenTimer);
-  }, [sentMessages]);
-
   const sendMessage = async () => {
     if (!messagePolicy.allowed) return;
     const message = draft.trim();
@@ -1836,7 +2516,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
     try {
       const sent = await onSendMessage?.(conversation.id, message);
       if (!conversation.serverBacked) {
-        setSentMessages((current) => [...current, { id: sent?.id ?? `message-${Date.now()}`, type: "text", text: message, status: "received" }]);
+        setSentMessages((current) => [...current, { id: sent?.id ?? `message-${Date.now()}`, type: "text", text: message, status: "sent" }]);
       }
       setDraft("");
       stopTyping();
@@ -1866,7 +2546,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         const mediaMessages = supportedFiles.map((file, index) => {
           const url = URL.createObjectURL(file);
           mediaUrlsRef.current.push(url);
-          return { id: `media-${Date.now()}-${index}`, direction: "sent", type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "received" };
+          return { id: `media-${Date.now()}-${index}`, direction: "sent", type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "sent" };
         });
         setSentMessages((current) => [...current, ...mediaMessages]);
       }
@@ -1894,7 +2574,11 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
           <strong>{conversation.name}</strong>
           <span><ShieldCheck size={13} weight="fill" /> {conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
         </div>
-        {canInviteToGame && <button className="chat-game-button" type="button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${conversation.name} à jouer`}><GameController size={20} weight="fill" /><span>Jouer</span></button>}
+        <div className="conversation-actions">
+          {canCall && <button className={`icon-button audio-call-button ${audioCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "audio", audioCallPolicy)} disabled={!audioCallPolicy.allowed} aria-label={`Appeler ${conversation.name} en audio`}><Phone size={21} weight="fill" /></button>}
+          {canCall && <button className={`icon-button video-call-button ${videoCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "video", videoCallPolicy)} disabled={!videoCallPolicy.allowed} aria-label={`Appeler ${conversation.name} en vidéo`}><VideoCamera size={21} weight="fill" /></button>}
+          {canInviteToGame && <button className="chat-game-button" type="button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${conversation.name} à jouer`}><GameController size={20} weight="fill" /><span>Jouer</span></button>}
+        </div>
       </header>
 
       <div className="chat-body" aria-live="polite">
@@ -1906,9 +2590,9 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
           ? <ConversationVoiceMessage key={message.id} message={message} />
           : message.type === "image" || message.type === "video"
             ? <ConversationMediaMessage key={message.id} message={message} />
-            : <p className={`bubble bubble--${message.direction}`} key={message.id}>{message.text}{message.direction === "sent" && <MessageStatus status={message.status ?? "received"} />}</p>) : <>
+            : <p className={`bubble bubble--${message.direction} ${message.messageKind === "automatic" ? "bubble--automatic" : ""}`} key={message.id}><span>{message.text}</span>{message.messageKind === "automatic" && <small>Automatique</small>}{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</p>) : <>
           {conversation.received.map((message) => <p className="bubble bubble--received" key={message}>{message}</p>)}
-          {conversation.sent && <p className="bubble bubble--sent">{conversation.sent}<MessageStatus status="seen" /></p>}
+          {conversation.sent && <p className="bubble bubble--sent">{conversation.sent}<MessageStatus status="sent" /></p>}
         </>}
         {sentMessages.map((message) => {
           if (message.type === "text") return <p className="bubble bubble--sent" key={message.id}>{message.text}<MessageStatus status={message.status} /></p>;
@@ -1919,7 +2603,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         {autoReplyIsActive && (
           <div className="automatic-reply-group">
             <span><Clock size={13} weight="fill" /> Réponse automatique envoyée</span>
-            <p className="bubble bubble--sent bubble--automatic"><span>{autoReply.message}</span><small>Automatique</small><MessageStatus status="received" /></p>
+            <p className="bubble bubble--sent bubble--automatic"><span>{autoReply.message}</span><small>Automatique</small></p>
           </div>
         )}
         <TypingIndicator name={typingName} />
@@ -1949,21 +2633,66 @@ function ClubhouseScreen({ child }) {
   const [filter, setFilter] = useState("all");
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [phase, setPhase] = useState("intro");
-  const [completedActivities, setCompletedActivities] = useState(() => new Set());
-  const [stars, setStars] = useState(120);
+  const [clubhouse, setClubhouse] = useState(null);
+  const [clubhouseError, setClubhouseError] = useState("");
+  const [isClubhouseLoading, setIsClubhouseLoading] = useState(true);
+  const [isCompletionSaving, setIsCompletionSaving] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [rewardEarned, setRewardEarned] = useState(false);
+  const [awardedReward, setAwardedReward] = useState(0);
   const [sessionQuestions, setSessionQuestions] = useState([]);
   const questionDecksRef = useRef({});
+  const completionPendingRef = useRef(false);
   const featuredActivity = clubhouseActivities.find((activity) => activity.featured);
   const visibleActivities = clubhouseActivities.filter((activity) => !activity.featured && (
     filter === "all"
     || (filter === "multiplayer" ? activity.multiplayer : activity.type === filter)
   ));
   const currentQuestion = sessionQuestions[questionIndex] ?? null;
-  const progress = Math.round((completedActivities.size / clubhouseActivities.length) * 100);
+  const completedActivities = useMemo(() => new Set(clubhouse?.completedActivities ?? []), [clubhouse?.completedActivities]);
+  const rewardByActivity = useMemo(
+    () => new Map((clubhouse?.catalog ?? []).map((activity) => [activity.activityId, activity.reward])),
+    [clubhouse?.catalog],
+  );
+  const stars = clubhouse?.stars ?? 0;
+  const streak = clubhouse?.streak ?? 0;
+  const totalActivities = clubhouse?.totalActivities ?? 0;
+  const progress = totalActivities > 0 ? Math.round(((clubhouse?.completedCount ?? 0) / totalActivities) * 100) : 0;
+  const activityReward = (activityId) => rewardByActivity.get(activityId) ?? 0;
+
+  const loadClubhouse = async () => {
+    setIsClubhouseLoading(true);
+    setClubhouseError("");
+    try {
+      const result = await api.clubhouse();
+      setClubhouse(result.clubhouse);
+    } catch (error) {
+      setClubhouseError(error.message || "Ta progression ne peut pas être chargée.");
+    } finally {
+      setIsClubhouseLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let isCurrent = true;
+    setIsClubhouseLoading(true);
+    setClubhouseError("");
+    api.clubhouse()
+      .then((result) => {
+        if (isCurrent) setClubhouse(result.clubhouse);
+      })
+      .catch((error) => {
+        if (isCurrent) setClubhouseError(error.message || "Ta progression ne peut pas être chargée.");
+      })
+      .finally(() => {
+        if (isCurrent) setIsClubhouseLoading(false);
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [child.id]);
 
   useEffect(() => {
     if (phase !== "active" || selectedActivity?.type !== "challenge") return undefined;
@@ -1999,6 +2728,8 @@ function ClubhouseScreen({ child }) {
     setQuestionIndex(0);
     setSelectedAnswer(null);
     setRewardEarned(false);
+    setAwardedReward(0);
+    setClubhouseError("");
     setSecondsLeft(activity.duration * 60);
   };
 
@@ -2014,14 +2745,23 @@ function ClubhouseScreen({ child }) {
     setSecondsLeft(selectedActivity.duration * 60);
   };
 
-  const completeActivity = () => {
-    const alreadyCompleted = completedActivities.has(selectedActivity.id);
-    setRewardEarned(!alreadyCompleted);
-    if (!alreadyCompleted) {
-      setCompletedActivities((current) => new Set([...current, selectedActivity.id]));
-      setStars((current) => current + selectedActivity.reward);
+  const completeActivity = async () => {
+    if (!selectedActivity || completionPendingRef.current) return;
+    completionPendingRef.current = true;
+    setIsCompletionSaving(true);
+    setClubhouseError("");
+    try {
+      const result = await api.completeClubhouseActivity(selectedActivity.id);
+      setClubhouse(result.clubhouse);
+      setRewardEarned(Boolean(result.rewardEarned));
+      setAwardedReward(Number(result.reward) || 0);
+      setPhase("complete");
+    } catch (error) {
+      setClubhouseError(error.message || "La fin de l’activité n’a pas pu être enregistrée.");
+    } finally {
+      completionPendingRef.current = false;
+      setIsCompletionSaving(false);
     }
-    setPhase("complete");
   };
 
   const selectQuizAnswer = (answerIndex) => {
@@ -2044,6 +2784,23 @@ function ClubhouseScreen({ child }) {
 
   const formattedTimer = `${Math.floor(secondsLeft / 60)}:${(secondsLeft % 60).toString().padStart(2, "0")}`;
 
+  if (!clubhouse) {
+    return (
+      <section className="clubhouse-screen" aria-labelledby="clubhouse-title">
+        <header className="clubhouse-header">
+          <span className="clubhouse-header__icon"><House size={25} weight="fill" /></span>
+          <div><span>Ton espace entre amis</span><h1 id="clubhouse-title">Le Clubhouse</h1></div>
+          <span className="clubhouse-stars" aria-label="Étoiles en cours de chargement"><Star size={18} weight="fill" /> —</span>
+        </header>
+        <div className="clubhouse-state" role={clubhouseError ? "alert" : "status"}>
+          <House size={30} weight="fill" />
+          <strong>{clubhouseError || (isClubhouseLoading ? "Chargement de ta progression…" : "Ta progression est temporairement indisponible.")}</strong>
+          {clubhouseError && <button type="button" onClick={loadClubhouse}>Réessayer</button>}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="clubhouse-screen" aria-labelledby="clubhouse-title">
       <header className="clubhouse-header">
@@ -2055,14 +2812,16 @@ function ClubhouseScreen({ child }) {
       <div className="clubhouse-content">
         <section className="clubhouse-welcome" aria-label="Progression du Clubhouse">
           <div><span>Salut {child.name} !</span><strong>Prête pour une nouvelle mission ?</strong></div>
-          <div className="clubhouse-streak"><Lightning size={17} weight="fill" /><span><strong>3 jours</strong><small>de suite</small></span></div>
-          <div className="clubhouse-progress"><span style={{ width: `${Math.max(8, progress)}%` }} /><small>{completedActivities.size}/{clubhouseActivities.length} activités terminées</small></div>
+          <div className="clubhouse-streak"><Lightning size={17} weight="fill" /><span><strong>{streak} jour{streak > 1 ? "s" : ""}</strong><small>de suite</small></span></div>
+          <div className="clubhouse-progress"><span style={{ width: `${progress}%` }} /><small>{clubhouse?.completedCount ?? 0}/{totalActivities} activités terminées</small></div>
         </section>
+
+        {clubhouseError && <div className="clubhouse-state clubhouse-state--inline" role="alert"><strong>{clubhouseError}</strong><button type="button" onClick={loadClubhouse}>Resynchroniser</button></div>}
 
         <button type="button" className="clubhouse-featured" onClick={() => openActivity(featuredActivity)}>
           <span className="clubhouse-featured__badge">Défi du jour</span>
           <span className="clubhouse-featured__icon"><featuredActivity.Icon size={32} weight="fill" /></span>
-          <span className="clubhouse-featured__copy"><strong>{featuredActivity.title}</strong><small>{featuredActivity.description}</small><span><Timer size={14} weight="bold" /> {featuredActivity.duration} min <Star size={14} weight="fill" /> +{featuredActivity.reward}</span></span>
+          <span className="clubhouse-featured__copy"><strong>{featuredActivity.title}</strong><small>{featuredActivity.description}</small><span><Timer size={14} weight="bold" /> {featuredActivity.duration} min <Star size={14} weight="fill" /> +{activityReward(featuredActivity.id)}</span></span>
           {completedActivities.has(featuredActivity.id) ? <CheckCircle className="clubhouse-featured__arrow is-complete" size={25} weight="fill" /> : <CaretRight className="clubhouse-featured__arrow" size={23} weight="bold" />}
         </button>
 
@@ -2083,7 +2842,7 @@ function ClubhouseScreen({ child }) {
                 <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.multiplayer ? "Multijoueur" : activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
                 <strong>{activity.title}</strong>
                 <small>{activity.description}</small>
-                <span className="clubhouse-card__meta"><span><Timer size={13} weight="bold" /> {activity.duration} min</span><span><Star size={13} weight="fill" /> +{activity.reward}</span></span>
+                <span className="clubhouse-card__meta"><span><Timer size={13} weight="bold" /> {activity.duration} min</span><span><Star size={13} weight="fill" /> +{activityReward(activity.id)}</span></span>
               </button>
             );
           })}
@@ -2099,7 +2858,7 @@ function ClubhouseScreen({ child }) {
                 <span><Trophy size={42} weight="fill" /></span>
                 <small>Mission terminée</small>
                 <h2 id="clubhouse-activity-title">Bravo, {child.name} !</h2>
-                <p>{rewardEarned ? `Tu gagnes ${selectedActivity.reward} nouvelles étoiles.` : "Tu avais déjà gagné les étoiles de cette activité, mais tu peux la rejouer quand tu veux."}</p>
+                <p>{rewardEarned ? `Tu gagnes ${awardedReward} nouvelles étoiles.` : "Tu avais déjà gagné les étoiles de cette activité, mais tu peux la rejouer quand tu veux."}</p>
                 <div><Star size={22} weight="fill" /><strong>{stars}</strong><span>étoiles au total</span></div>
                 <button type="button" className="clubhouse-modal__primary" onClick={closeActivity}>Continuer</button>
               </div>
@@ -2113,7 +2872,7 @@ function ClubhouseScreen({ child }) {
                 {phase === "intro" && (
                   <div className="clubhouse-modal__intro">
                     <p>{selectedActivity.description}</p>
-                    <div className="clubhouse-modal__facts"><span><Timer size={18} weight="fill" /><strong>{selectedActivity.duration} min</strong><small>durée</small></span><span><Star size={18} weight="fill" /><strong>+{selectedActivity.reward}</strong><small>étoiles</small></span><span><ShieldCheck size={18} weight="fill" /><strong>Privé</strong><small>rien n’est publié</small></span></div>
+                    <div className="clubhouse-modal__facts"><span><Timer size={18} weight="fill" /><strong>{selectedActivity.duration} min</strong><small>durée</small></span><span><Star size={18} weight="fill" /><strong>+{activityReward(selectedActivity.id)}</strong><small>étoiles</small></span><span><ShieldCheck size={18} weight="fill" /><strong>Privé</strong><small>rien n’est publié</small></span></div>
                     <button type="button" className="clubhouse-modal__primary" onClick={startActivity}><Sparkle size={18} weight="fill" /> Commencer</button>
                   </div>
                 )}
@@ -2122,7 +2881,7 @@ function ClubhouseScreen({ child }) {
                   <div className="clubhouse-challenge">
                     <div className="clubhouse-timer"><Timer size={20} weight="fill" /><span><small>Temps restant</small><strong>{formattedTimer}</strong></span></div>
                     <ol>{selectedActivity.steps.map((step, index) => <li key={step}><span>{index + 1}</span>{step}</li>)}</ol>
-                    <button type="button" className="clubhouse-modal__primary" onClick={completeActivity}><CheckCircle size={19} weight="fill" /> J’ai terminé</button>
+                    <button type="button" className="clubhouse-modal__primary" onClick={completeActivity} disabled={isCompletionSaving}><CheckCircle size={19} weight="fill" /> {isCompletionSaving ? "Enregistrement…" : "J’ai terminé"}</button>
                   </div>
                 )}
 
@@ -2156,7 +2915,191 @@ function ClubhouseScreen({ child }) {
   );
 }
 
-function ProfileScreen({ child, onOpenPreferences, onLogout }) {
+const privacyRightLabels = {
+  access: "Accéder à mes données",
+  rectification: "Faire corriger une donnée",
+  erasure: "Demander l’effacement",
+  restriction: "Limiter l’utilisation",
+  objection: "M’opposer à une utilisation",
+};
+
+const privacyStatusLabels = {
+  submitted: "Reçue",
+  in_review: "En cours",
+  completed: "Terminée",
+  rejected: "Refus motivé",
+  cancelled: "Annulée",
+};
+
+function DataRightsModal({ account, family, children = [], onClose, onDeleted }) {
+  const isChild = account.role === "child";
+  const subjects = isChild
+    ? [account]
+    : [account, ...children];
+  const [subjectId, setSubjectId] = useState(account.id);
+  const [requestType, setRequestType] = useState("access");
+  const [details, setDetails] = useState("");
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const isPrimaryParent = !isChild && family?.role === "primary";
+  const deletionPhrase = isPrimaryParent ? "SUPPRIMER MA FAMILLE" : "SUPPRIMER MON COMPTE";
+
+  const refresh = async () => {
+    const payload = await api.privacyRequests();
+    setRequests(payload.requests ?? []);
+  };
+
+  useEffect(() => {
+    let current = true;
+    refresh()
+      .catch((loadError) => { if (current) setError(loadError.message || "Impossible de charger vos demandes."); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, []);
+
+  const submitRequest = async (event) => {
+    event.preventDefault();
+    setBusy("request");
+    setError("");
+    setNotice("");
+    try {
+      const payload = await api.submitPrivacyRequest({ subjectId, type: requestType, details });
+      setDetails("");
+      setNotice(payload.acknowledgement);
+      await refresh();
+    } catch (submitError) {
+      setError(submitError.message || "La demande n’a pas pu être enregistrée.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const downloadExport = async () => {
+    setBusy("export");
+    setError("");
+    setNotice("");
+    try {
+      const payload = await api.privacyExport(subjectId);
+      const subject = subjects.find((item) => item.id === subjectId) ?? account;
+      const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `secret-clubhouse-donnees-${String(subject.name || subject.role).toLowerCase().replace(/[^a-z0-9]+/g, "-")}.json`;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+      setNotice("L’export lisible a été téléchargé sur cet appareil.");
+    } catch (exportError) {
+      setError(exportError.message || "L’export n’a pas pu être préparé.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const deleteAccount = async (event) => {
+    event.preventDefault();
+    if (confirmation !== deletionPhrase) return;
+    setBusy("delete");
+    setError("");
+    try {
+      const payload = { confirmation, currentPassword: password };
+      if (isPrimaryParent) await api.deleteFamily(payload);
+      else await api.deleteParentAccount(payload);
+      onDeleted();
+    } catch (deleteError) {
+      setError(deleteError.message || "La suppression n’a pas pu être effectuée.");
+      setBusy("");
+    }
+  };
+
+  return createPortal((
+    <div className="modal-backdrop data-rights-backdrop" role="presentation">
+      <section className="data-rights-modal" role="dialog" aria-modal="true" aria-labelledby="data-rights-title">
+        <header>
+          <span className="data-rights-modal__icon"><ShieldCheck size={25} weight="fill" /></span>
+          <div><small>{isChild ? "Tes informations" : "Espace protégé"}</small><h2 id="data-rights-title">{isChild ? "Mes données et mes droits" : "Données et droits RGPD"}</h2></div>
+          <button type="button" onClick={onClose} aria-label="Fermer"><X size={21} weight="bold" /></button>
+        </header>
+
+        <div className="data-rights-modal__body">
+          <p className="data-rights-intro">{isChild
+            ? "Tes droits sont aussi les tiens. Tu peux faire une demande ici, seul ou avec l’aide de ton parent, avec des mots simples."
+            : "Téléchargez les données lisibles de votre compte ou d’un enfant, puis suivez chaque demande jusqu’à sa réponse sous un mois."}</p>
+          {account.processingRestrictedAt && <p className="data-rights-restriction"><LockKey size={17} weight="fill" /> L’utilisation de ce compte est limitée. Les fonctions ordinaires restent bloquées ; vos droits, l’export et la suppression restent disponibles.</p>}
+
+          <label className="data-rights-field">
+            <span>Personne concernée</span>
+            <select value={subjectId} onChange={(event) => setSubjectId(event.target.value)}>
+              {subjects.map((subject) => <option key={subject.id} value={subject.id}>{subject.id === account.id ? `${subject.name} (moi)` : subject.name}</option>)}
+            </select>
+          </label>
+
+          <button type="button" className="data-rights-export" onClick={downloadExport} disabled={Boolean(busy)}>
+            <DownloadSimple size={20} weight="bold" />
+            <span><strong>{busy === "export" ? "Préparation…" : "Télécharger les données lisibles"}</strong><small>Compte, contacts, messages envoyés, jeux, appels et réglages · JSON</small></span>
+          </button>
+          {!isChild && <p className="data-rights-privacy-note"><LockKey size={16} weight="fill" /> Les messages enfant–ami restent masqués si le parent ne participe pas à la conversation.</p>}
+
+          <form className="data-rights-form" onSubmit={submitRequest}>
+            <h3>Faire une demande</h3>
+            <label className="data-rights-field">
+              <span>Mon droit</span>
+              <select value={requestType} onChange={(event) => setRequestType(event.target.value)}>
+                {Object.entries(privacyRightLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className="data-rights-field">
+              <span>{isChild ? "Explique ce que tu souhaites" : "Précisez votre demande"}</span>
+              <textarea value={details} onChange={(event) => setDetails(event.target.value.slice(0, 2000))} minLength={10} maxLength={2000} required placeholder={isChild ? "Par exemple : je veux corriger mon prénom…" : "Décrivez la donnée ou le traitement concerné…"} />
+              <small>{details.length}/2 000</small>
+            </label>
+            <button type="submit" className="primary-button" disabled={Boolean(busy) || details.trim().length < 10}><PaperPlaneTilt size={18} weight="fill" /> {busy === "request" ? "Enregistrement…" : "Envoyer ma demande"}</button>
+          </form>
+
+          {(notice || error) && <p className={`data-rights-feedback ${error ? "is-error" : ""}`} role={error ? "alert" : "status"}>{error || notice}</p>}
+
+          <section className="data-rights-followup" aria-labelledby="data-rights-followup-title">
+            <h3 id="data-rights-followup-title">Suivi de mes demandes</h3>
+            {loading && <p>Chargement…</p>}
+            {!loading && requests.length === 0 && <p>Aucune demande enregistrée.</p>}
+            {requests.map((request) => (
+              <article key={request.id}>
+                <span className={`data-rights-status data-rights-status--${request.status}`}>{privacyStatusLabels[request.status] ?? request.status}</span>
+                <strong>{privacyRightLabels[request.type] ?? request.type} · {request.subject.name}</strong>
+                <small>Reçue le {new Date(request.createdAt).toLocaleDateString("fr-FR")} · réponse avant le {new Date(request.dueAt).toLocaleDateString("fr-FR")}</small>
+                {request.response && <p>{request.response}</p>}
+              </article>
+            ))}
+          </section>
+
+          <aside className="data-rights-contact">
+            <Shield size={19} weight="fill" />
+            <span><strong>Besoin d’aide ou d’un autre format ?</strong><small>Écrivez au contact RGPD. Une réponse est suivie sous un mois.</small></span>
+            <a href="mailto:contact@secret-clubhouse.fr">contact@secret-clubhouse.fr</a>
+          </aside>
+
+          {!isChild && (
+            <form className="data-rights-delete" onSubmit={deleteAccount}>
+              <h3>{isPrimaryParent ? "Supprimer toute la famille" : "Supprimer mon compte parent"}</h3>
+              <p>{isPrimaryParent
+                ? "Cette action supprime définitivement tous les parents, enfants, conversations, médias, contacts, appels et jeux de la famille."
+                : "Votre compte disparaîtra sans supprimer les autres membres ni les données de la famille."} Les sauvegardes expirent sous sept jours et l’effacement est réappliqué en cas de restauration.</p>
+              <label className="data-rights-field"><span>Mot de passe actuel</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /></label>
+              <label className="data-rights-field"><span>Recopiez {deletionPhrase}</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label>
+              <button type="submit" disabled={Boolean(busy) || password.length < 8 || confirmation !== deletionPhrase}><Trash size={18} weight="bold" /> {busy === "delete" ? "Suppression…" : "Supprimer définitivement"}</button>
+            </form>
+          )}
+        </div>
+      </section>
+    </div>
+  ), document.body);
+}
+
+function ProfileScreen({ child, onOpenPreferences, onOpenDataRights, onLogout }) {
   const [idCopied, setIdCopied] = useState(false);
 
   const copyOwnId = async () => {
@@ -2181,6 +3124,7 @@ function ProfileScreen({ child, onOpenPreferences, onLogout }) {
       </div>
       <PushNotificationButton />
       <button type="button" className="secondary-button" onClick={onOpenPreferences}><GearSix size={19} weight="bold" /> Mes préférences</button>
+      <button type="button" className="secondary-button child-data-rights-button" onClick={onOpenDataRights}><ShieldCheck size={19} weight="fill" /> Mes données et mes droits</button>
       <button type="button" className="child-logout-button" onClick={onLogout}><SignOut size={18} weight="bold" /> Se déconnecter</button>
     </section>
   );
@@ -2573,9 +3517,16 @@ function ParentModeNavigation({ active, unreadMessages = 0, onHome, onManagement
   );
 }
 
-function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onEditSchedule, onLogout }) {
+function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, contactRequests = [], contactRelationships = [], contactRequestBusyId = "", contactRequestError = "", onRespondToContactRequest, onRetryContactRequests, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onOpenDataRights, onEditSchedule, onLogout }) {
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
   const isHome = activeSection === "home";
+  const pendingRequests = contactRequests.filter((request) => request.status === "pending");
+  const selectedChildRequests = child
+    ? pendingRequests.filter((request) => request.requester.id === child.id || request.target.id === child.id)
+    : [];
+  const selectedChildContacts = child
+    ? contactRelationships.filter((relationship) => relationship.account.id === child.id)
+    : [];
 
   return (
     <section className="parent-dashboard" aria-labelledby="parent-dashboard-title">
@@ -2610,8 +3561,8 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
         </section>
 
         <div className="parent-stats" aria-label="Résumé du compte">
-          <div><UsersThree size={22} weight="fill" /><strong>0</strong><span>amis</span></div>
-          <div><UserPlus size={22} weight="fill" /><strong>0</strong><span>demande</span></div>
+          <div><UsersThree size={22} weight="fill" /><strong>{selectedChildContacts.length}</strong><span>ami{selectedChildContacts.length === 1 ? "" : "s"}</span></div>
+          <div><UserPlus size={22} weight="fill" /><strong>{selectedChildRequests.length}</strong><span>demande{selectedChildRequests.length === 1 ? "" : "s"}</span></div>
           <div><Shield size={22} weight="fill" /><strong>3</strong><span>protections</span></div>
         </div>
         </>}
@@ -2639,6 +3590,37 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
 
         <ChildProfilesPanel children={children} activeChildId={child?.id} onSelectChild={onSelectChild} onAddChild={onAddChild} />
 
+        <section className="parent-section" aria-labelledby="requests-title">
+          <div className="parent-section__title">
+            <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Approuvez les contacts de votre famille.</p></div></div>
+            {pendingRequests.length > 0 && <span className="status-pill">{pendingRequests.length}</span>}
+          </div>
+          {contactRequestError && <div className="request-sync-error" role="alert"><Shield size={17} weight="fill" /><span>{contactRequestError}</span><button type="button" onClick={onRetryContactRequests}>Réessayer</button></div>}
+          {pendingRequests.map((request) => {
+            const isIncoming = request.direction === "incoming";
+            const displayedContact = isIncoming ? request.requester : request.target;
+            const familyProfile = isIncoming ? request.target : request.requester;
+            const isBusy = contactRequestBusyId === request.id;
+            return (
+              <article className="friend-request" key={request.id}>
+                <span className="request-avatar" aria-hidden="true">{displayedContact.name?.trim().charAt(0).toUpperCase() || "?"}</span>
+                <div className="request-copy">
+                  <strong>{displayedContact.name}</strong>
+                  <span>{displayedContact.contactId}</span>
+                  <small>{isIncoming ? `Demande pour ${familyProfile.name}` : `Envoyée pour ${familyProfile.name}`}</small>
+                </div>
+                {isIncoming && request.canRespond
+                  ? <div className="request-actions">
+                      <button type="button" className="decline-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "decline")}><X size={16} weight="bold" /> Refuser</button>
+                      <button type="button" className="approve-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "accept")}><Check size={16} weight="bold" /> {isBusy ? "Traitement…" : "Accepter"}</button>
+                    </div>
+                  : <div className="request-pending-note"><Clock size={15} weight="fill" /> En attente de l’autre famille</div>}
+              </article>
+            );
+          })}
+          {pendingRequests.length === 0 && !contactRequestError && <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>}
+        </section>
+
         <button type="button" className="family-parents-entry" onClick={onOpenFamilyParents}>
           <span><UsersThree size={23} weight="fill" /></span>
           <span><strong>Parents de la famille</strong><small>{family?.role === "primary" ? "Invitez et gérez les co-parents autorisés." : "Consultez les adultes autorisés de la famille."}</small></span>
@@ -2659,6 +3641,12 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
 
+        <button type="button" className="parent-data-rights-entry" onClick={onOpenDataRights}>
+          <span><ShieldCheck size={22} weight="fill" /></span>
+          <span><strong>Données et droits RGPD</strong><small>Exporter, corriger, limiter, s’opposer ou supprimer.</small></span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </button>
+
         <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
           <span><DownloadSimple size={23} weight="bold" /></span>
           <span><strong>Installer sur Android</strong><small>Télécharger l’application Secret Clubhouse · APK · 12,7 Mo</small></span>
@@ -2675,13 +3663,6 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
         )}
 
         {child && <>
-        <section className="parent-section" aria-labelledby="requests-title">
-          <div className="parent-section__title">
-            <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Vous décidez qui peut parler à {child.name}.</p></div></div>
-          </div>
-          <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>
-        </section>
-
         <section className="parent-section" aria-labelledby="safety-title">
           <div className="parent-section__title">
             <div><span className="section-icon section-icon--violet"><ShieldCheck size={19} weight="fill" /></span><div><h2 id="safety-title">Règles de sécurité</h2><p>Réglages appliqués au compte de {child.name}.</p></div></div>
@@ -2693,6 +3674,7 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
               <span className="setting-copy"><strong>Mode calme</strong><small>{scheduleDetail}</small></span>
               <span className="schedule-setting__tail" aria-hidden="true"><span className={`toggle ${schedule.enabled ? "is-on" : ""}`}><span /></span><CaretRight size={16} weight="bold" /></span>
             </button>
+            <ChildNotificationConsentSetting child={child} />
           </div>
         </section>
 
@@ -2712,13 +3694,23 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
   );
 }
 
-function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onHome, onManagement, onSend, onSendMedia, onInviteGame, onOpenGames, onOpenFamilyConversation, conversationSyncError = "", onRetryConversationSync, initialContactId = "", onContactHandled }) {
+function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onHome, onManagement, onSend, onSendMedia, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
+  const availableRequesterIds = [parentContactId, ...familyChildren.map((child) => child.contactId)].filter(Boolean);
+  const requesterProfileMismatch = Boolean(
+    initialContactId
+    && initialRequesterContactId
+    && !availableRequesterIds.includes(initialRequesterContactId),
+  );
+  const initialRequester = initialContactId
+    ? availableRequesterIds.includes(initialRequesterContactId) ? initialRequesterContactId : ""
+    : parentContactId;
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
   const [isGameInviteOpen, setIsGameInviteOpen] = useState(false);
   const [isAddingContact, setIsAddingContact] = useState(Boolean(initialContactId));
   const [contactId, setContactId] = useState(initialContactId);
+  const [requesterContactId, setRequesterContactId] = useState(initialRequester);
   const [contactFeedback, setContactFeedback] = useState(null);
   const [isSubmittingContact, setIsSubmittingContact] = useState(false);
   const [messageError, setMessageError] = useState("");
@@ -2739,10 +3731,40 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
   });
 
   useEffect(() => setIsGameInviteOpen(false), [selectedThreadId]);
+  useEffect(() => {
+    if (!initialContactId) return;
+    setContactId(initialContactId);
+    setRequesterContactId(availableRequesterIds.includes(initialRequesterContactId) ? initialRequesterContactId : "");
+    setContactFeedback(null);
+    setIsAddingContact(true);
+  }, [familyChildren, initialContactId, initialRequesterContactId, parentContactId, requesterProfileMismatch]);
+
+  useEffect(() => {
+    if (requesterProfileMismatch) return;
+    if (availableRequesterIds.includes(requesterContactId)) return;
+    setRequesterContactId(initialContactId ? "" : parentContactId || "");
+  }, [familyChildren, initialContactId, parentContactId, requesterContactId, requesterProfileMismatch]);
+
+  const closeContactModal = () => {
+    setIsAddingContact(false);
+    setContactFeedback(null);
+    if (initialContactId) {
+      clearContactRequestFromUrl();
+      onContactHandled?.();
+    }
+  };
 
   const submitContact = async (event) => {
     event.preventDefault();
     const normalizedId = contactId.trim().toUpperCase();
+    if (requesterProfileMismatch) {
+      setContactFeedback({ type: "error", text: "Connectez un parent de la famille du profil qui a lancé cette demande." });
+      return;
+    }
+    if (!requesterContactId) {
+      setContactFeedback({ type: "error", text: "Choisissez le membre de votre famille qui souhaite ajouter ce contact." });
+      return;
+    }
     if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(normalizedId)) {
       setContactFeedback({ type: "error", text: "Utilisez le format SC-123-456-789." });
       return;
@@ -2755,14 +3777,15 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         await onOpenFamilyConversation(normalizedId);
         setContactId("");
         setIsAddingContact(false);
-        if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
+        clearContactRequestFromUrl();
         onContactHandled?.();
         return;
       }
-      await api.addContact(normalizedId);
+      await api.addContact(normalizedId, requesterContactId);
+      await Promise.resolve(onContactRequestCreated?.()).catch(() => undefined);
       setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
       setContactId("");
-      if (window.location.search) window.history.replaceState({}, "", window.location.pathname);
+      clearContactRequestFromUrl();
       onContactHandled?.();
     } catch (error) {
       setContactFeedback({ type: "error", text: error.message });
@@ -2807,7 +3830,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         const media = supportedFiles.map((file) => {
           const url = URL.createObjectURL(file);
           parentMediaUrlsRef.current.push(url);
-          return { id: `parent-media-${Date.now()}-${file.name}`, direction: "sent", type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "received" };
+          return { id: `parent-media-${Date.now()}-${file.name}`, direction: "sent", type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "sent" };
         });
         setMediaByThread((current) => ({ ...current, [selectedThread.id]: [...(current[selectedThread.id] ?? []), ...media] }));
       }
@@ -2831,7 +3854,11 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
           <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
           <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
-          {canInviteToGame && <button type="button" className="parent-thread-game-button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${selectedThread.name} à jouer`}><GameController size={19} weight="fill" /><span>Jouer</span></button>}
+          <div className="conversation-actions conversation-actions--parent">
+            <button type="button" className="icon-button audio-call-button" onClick={() => onStartCall(selectedThread, "audio")} aria-label={`Appeler ${selectedThread.name} en audio`}><Phone size={20} weight="fill" /></button>
+            <button type="button" className="icon-button video-call-button" onClick={() => onStartCall(selectedThread, "video")} aria-label={`Appeler ${selectedThread.name} en vidéo`}><VideoCamera size={20} weight="fill" /></button>
+            {canInviteToGame && <button type="button" className="parent-thread-game-button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${selectedThread.name} à jouer`}><GameController size={19} weight="fill" /><span>Jouer</span></button>}
+          </div>
         </header>
         <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
@@ -2840,8 +3867,8 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
             ? <ConversationVoiceMessage key={message.id} message={message} parent />
             : message.type === "image" || message.type === "video"
               ? <ConversationMediaMessage key={message.id} message={message} parent />
-              : <div className={`parent-message-bubble parent-message-bubble--${message.direction}`} key={message.id}>
-                  <p>{message.text}</p><span className="parent-message-meta"><time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "seen"} />}</span>
+              : <div className={`parent-message-bubble parent-message-bubble--${message.direction} ${message.messageKind === "automatic" ? "is-automatic" : ""}`} key={message.id}>
+                  <p>{message.text}</p><span className="parent-message-meta">{message.messageKind === "automatic" && <em>Automatique</em>}<time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</span>
                 </div>)}
           {(mediaByThread[selectedThread.id] ?? []).map((media) => media.type === "audio"
             ? <VoiceMessage key={media.id} url={media.url} duration={media.duration} status={media.status} parent />
@@ -2873,7 +3900,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
       <div className="parent-messages-content">
         <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à l’autre parent de la famille, à vos enfants ou aux parents de leurs contacts, sans voir les discussions entre enfants.</p></div></div>
         {conversationSyncError && <div className="family-conversation-warning" role="alert"><Shield size={18} weight="fill" /><span>{conversationSyncError}</span><button type="button" onClick={onRetryConversationSync}>Réessayer</button></div>}
-        <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
+        <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setRequesterContactId(parentContactId || familyChildren[0]?.contactId || ""); setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
             <button type="button" className="parent-thread-row" key={thread.id} onClick={() => onSelectThread(thread.id)} aria-label={`Ouvrir la conversation avec ${thread.name}`}>
@@ -2886,16 +3913,23 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         </div>
       </div>
       <ParentModeNavigation active="conversations" unreadMessages={threads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onManagement={onManagement} onConversations={() => {}} />
-      {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsAddingContact(false)}>
+      {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={closeContactModal}>
         <section className="add-contact-modal" role="dialog" aria-modal="true" aria-labelledby="add-contact-title" onMouseDown={(event) => event.stopPropagation()}>
           <span className="add-contact-icon"><UserPlus size={27} weight="fill" /></span>
           <h2 id="add-contact-title">Ajouter un contact</h2>
           <p>Un enfant de votre famille s’ouvre directement. Pour un contact extérieur, son parent devra approuver la demande.</p>
           <form onSubmit={submitContact}>
+            <label htmlFor="contact-requester-id">Ajouter pour</label>
+            <select id="contact-requester-id" value={requesterContactId} disabled={requesterProfileMismatch} onChange={(event) => { setRequesterContactId(event.target.value); setContactFeedback(null); }}>
+              <option value="" disabled>Choisir un profil</option>
+              <option value={parentContactId}>{parentName} · parent</option>
+              {familyChildren.map((child) => <option key={child.id} value={child.contactId}>{child.name} · enfant</option>)}
+            </select>
             <label htmlFor="new-contact-id">Identifiant du contact</label>
             <input id="new-contact-id" value={contactId} onChange={(event) => { setContactId(event.target.value.toUpperCase().slice(0, 14)); setContactFeedback(null); }} placeholder="SC-123-456-789" autoComplete="off" autoFocus />
-            {contactFeedback && <div className={`contact-feedback contact-feedback--${contactFeedback.type}`} role="status">{contactFeedback.type === "success" ? <CheckCircle size={17} weight="fill" /> : <Shield size={17} weight="fill" />}<span>{contactFeedback.text}</span></div>}
-            <div className="add-contact-actions"><button type="button" onClick={() => setIsAddingContact(false)}>Annuler</button><button type="submit" disabled={isSubmittingContact}>{isSubmittingContact ? "Ouverture…" : "Continuer"}</button></div>
+            {requesterProfileMismatch && <div className="contact-feedback contact-feedback--error" role="alert"><Shield size={17} weight="fill" /><span>Connectez un parent de la famille du profil qui a lancé cette demande.</span></div>}
+            {!requesterProfileMismatch && contactFeedback && <div className={`contact-feedback contact-feedback--${contactFeedback.type}`} role="status">{contactFeedback.type === "success" ? <CheckCircle size={17} weight="fill" /> : <Shield size={17} weight="fill" />}<span>{contactFeedback.text}</span></div>}
+            <div className="add-contact-actions"><button type="button" onClick={closeContactModal}>Annuler</button><button type="submit" disabled={isSubmittingContact || requesterProfileMismatch}>{isSubmittingContact ? "Ouverture…" : "Continuer"}</button></div>
           </form>
         </section>
       </div>}
@@ -3245,7 +4279,7 @@ function QrModal({ child, onClose, onRequestAdd }) {
 export function App() {
   const dragScrollRef = useMouseDragScroll();
   const [session, setSession] = useState(null);
-  const [isRestoringSession, setIsRestoringSession] = useState(() => Boolean(getToken()));
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [familyOwner, setFamilyOwner] = useState({ name: "", email: "", contactId: "" });
   const [family, setFamily] = useState(null);
   const [isFamilyParentsOpen, setIsFamilyParentsOpen] = useState(false);
@@ -3265,20 +4299,47 @@ export function App() {
   const [scheduleModalChildId, setScheduleModalChildId] = useState(null);
   const [isContactIdsOpen, setIsContactIdsOpen] = useState(false);
   const [isParentPasswordOpen, setIsParentPasswordOpen] = useState(false);
+  const [isDataRightsOpen, setIsDataRightsOpen] = useState(false);
   const [isAvatarPreferencesOpen, setIsAvatarPreferencesOpen] = useState(false);
   const [parentThreads, setParentThreads] = useState([]);
   const [serverConversations, setServerConversations] = useState([]);
   const [familyConversationSyncError, setFamilyConversationSyncError] = useState("");
+  const [contactRequests, setContactRequests] = useState([]);
+  const [contactRelationships, setContactRelationships] = useState([]);
+  const [contactRequestBusyId, setContactRequestBusyId] = useState("");
+  const [contactRequestError, setContactRequestError] = useState("");
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
   const [presenceByContactId, setPresenceByContactId] = useState({});
+  const [callOverlay, setCallOverlay] = useState(null);
+  const callOverlayRef = useRef(null);
+  const nativeContextRef = useRef({ session: null, parentThreads: [], serverConversations: [] });
   const [pendingContactId, setPendingContactId] = useState(() => {
     const value = new URLSearchParams(window.location.search).get("contact")?.trim().toUpperCase() ?? "";
+    return /^SC-\d{3}-\d{3}-\d{3}$/.test(value) ? value : "";
+  });
+  const [pendingRequesterContactId, setPendingRequesterContactId] = useState(() => {
+    const value = new URLSearchParams(window.location.search).get("requester")?.trim().toUpperCase() ?? "";
     return /^SC-\d{3}-\d{3}-\d{3}$/.test(value) ? value : "";
   });
   const activeChild = children.find((child) => child.id === activeChildId) ?? children[0] ?? null;
   const activeSettings = activeChild ? settingsByChild[activeChild.id] ?? defaultSafetySettings : defaultSafetySettings;
   const activeSchedule = activeChild ? schedulesByChild[activeChild.id] ?? defaultCommunicationSchedule : defaultCommunicationSchedule;
   const parentUnreadMessages = parentThreads.reduce((total, thread) => total + thread.unread, 0);
+  nativeContextRef.current = { session, parentThreads, serverConversations };
+
+  useEffect(() => {
+    callOverlayRef.current = callOverlay;
+  }, [callOverlay]);
+
+  useEffect(() => {
+    if (!session) setCallOverlay(null);
+  }, [session]);
+
+  useEffect(() => {
+    const openRightsForRestriction = () => setIsDataRightsOpen(true);
+    window.addEventListener("secret-clubhouse:processing-restricted", openRightsForRestriction);
+    return () => window.removeEventListener("secret-clubhouse:processing-restricted", openRightsForRestriction);
+  }, []);
 
   useEffect(() => {
     if (!familyInviteToken) {
@@ -3302,15 +4363,10 @@ export function App() {
   }, [familyInviteToken]);
 
   useEffect(() => {
-    if (!getToken()) {
-      setIsRestoringSession(false);
-      return;
-    }
     api.me()
       .then(({ account }) => {
         if (account.role === "child" && familyInviteToken) {
-          clearToken();
-          return undefined;
+          return api.logout().catch(() => clearToken());
         }
         return account.role === "child" ? openChildSession(account) : openAuthenticatedSession(account);
       })
@@ -3319,15 +4375,33 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (session?.role === "parent" && pendingContactId) {
+    if (!session || !pendingContactId) return;
+    if (session.role === "parent") {
       setSelectedParentThreadId(null);
       setParentView("messages");
+      return;
     }
-  }, [pendingContactId, session]);
+    const requesterContactId = activeChild?.contactId || session.contactId || "";
+    if (!requesterContactId) return;
+    setPendingRequesterContactId(requesterContactId);
+    const params = new URLSearchParams(window.location.search);
+    params.set("contact", pendingContactId);
+    params.set("requester", requesterContactId);
+    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}${window.location.hash}`);
+    void api.logout().catch(() => clearToken());
+    setSession(null);
+    setParentView(null);
+    setSelectedConversation(null);
+  }, [activeChild?.contactId, pendingContactId, session]);
 
   const requestFriendWithParent = (contactId) => {
+    const requesterContactId = activeChild?.contactId ?? "";
     setPendingContactId(contactId);
-    window.history.replaceState({}, "", `${window.location.pathname}?contact=${encodeURIComponent(contactId)}`);
+    setPendingRequesterContactId(requesterContactId);
+    const params = new URLSearchParams();
+    params.set("contact", contactId);
+    if (requesterContactId) params.set("requester", requesterContactId);
+    window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
     setIsQrOpen(false);
     setSelectedConversation(null);
     if (session?.role === "parent") {
@@ -3335,13 +4409,14 @@ export function App() {
       setParentView("messages");
       return;
     }
-    clearToken();
+    void api.logout().catch(() => clearToken());
     setSession(null);
     setParentView(null);
   };
 
   useEffect(() => {
-    if (!session || !getToken()) return undefined;
+    if (!session) return undefined;
+    if (session.role === "child" && activeChild?.status !== "active") return undefined;
     const contactIds = [...parentThreads, ...serverConversations].map((contact) => contact.contactId).filter(Boolean);
     const refreshPresence = async () => {
       try {
@@ -3355,7 +4430,7 @@ export function App() {
     refreshPresence();
     const timer = window.setInterval(refreshPresence, 30000);
     return () => window.clearInterval(timer);
-  }, [session, parentThreads, serverConversations]);
+  }, [activeChild?.status, session, parentThreads, serverConversations]);
 
   const applyFamilyChildren = (familyChildren) => {
     setChildren(familyChildren);
@@ -3377,6 +4452,64 @@ export function App() {
     }
     return mapped;
   };
+
+  const applyContactRequestPayload = (payload) => {
+    setContactRequests(Array.isArray(payload?.requests) ? payload.requests : []);
+    setContactRelationships(Array.isArray(payload?.contacts) ? payload.contacts : []);
+  };
+
+  const refreshContactRequests = async () => {
+    const payload = await api.contactRequests();
+    applyContactRequestPayload(payload);
+    setContactRequestError("");
+    return payload;
+  };
+
+  const refreshConversationState = async () => {
+    if (!session) return;
+    try {
+      const result = await api.conversations();
+      applyServerConversations(session, result.conversations);
+    } catch {
+      // La synchronisation périodique reprendra si la connexion vient de tomber.
+    }
+  };
+
+  const openConversationForReceipts = session?.role === "parent"
+    ? parentThreads.find((thread) => thread.id === selectedParentThreadId) ?? null
+    : selectedConversation;
+  const latestIncomingMessageId = openConversationForReceipts?.messages
+    ?.filter((message) => message.direction === "received")
+    .at(-1)?.id ?? "";
+
+  useEffect(() => {
+    if (!session || !openConversationForReceipts?.serverBacked) return undefined;
+    let isCurrent = true;
+    api.markConversationRead(openConversationForReceipts.id)
+      .then(() => {
+        if (isCurrent) return refreshConversationState();
+        return undefined;
+      })
+      .catch(() => {
+        // L’accusé sera repris lors de la prochaine synchronisation.
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [latestIncomingMessageId, openConversationForReceipts?.id, session?.id]);
+
+  const openRealtimeCall = (conversation, callType, policy = null) => {
+    setCallOverlay({
+      key: `outgoing-${conversation.id}-${callType}-${Date.now()}`,
+      direction: "outgoing",
+      conversation,
+      callType,
+      policy,
+      call: null,
+    });
+  };
+
+  const closeRealtimeCall = () => setCallOverlay(null);
 
   const syncFamilyConversations = async (familyChildren, initialConversationData = null) => {
     let conversationData = initialConversationData ?? await api.conversations();
@@ -3407,10 +4540,32 @@ export function App() {
   const openAuthenticatedSession = async (parent) => {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     applyFamilyChildren([]);
-    const [childrenData, familyData] = await Promise.all([api.children(), api.family()]);
+    if (parentWithId.processingRestrictedAt) {
+      setFamily(null);
+      setFamilyOwner(parentWithId);
+      setSession({ ...parentWithId, role: "parent" });
+      setParentView("management");
+      setSelectedConversation(null);
+      setIsDataRightsOpen(true);
+      return;
+    }
+    const [childrenData, familyData, contactRequestOutcome] = await Promise.all([
+      api.children(),
+      api.family(),
+      api.contactRequests()
+        .then((data) => ({ data, error: null }))
+        .catch((error) => ({ data: null, error })),
+    ]);
     const conversationData = await syncFamilyConversations(childrenData.children);
     applyFamilyChildren(childrenData.children);
     applyServerConversations({ ...parentWithId, role: "parent" }, conversationData.conversations);
+    if (contactRequestOutcome.data) {
+      applyContactRequestPayload(contactRequestOutcome.data);
+      setContactRequestError("");
+    } else {
+      applyContactRequestPayload({ requests: [], contacts: [] });
+      setContactRequestError(contactRequestOutcome.error?.message || "Les demandes de contact sont temporairement indisponibles.");
+    }
     setFamily(normalizeFamily(familyData, parentWithId));
     setFamilyOwner(parentWithId);
     setSession({ ...parentWithId, role: "parent" });
@@ -3420,14 +4575,15 @@ export function App() {
 
   const openChildSession = async (child) => {
     applyFamilyChildren([child]);
-    const conversationData = await api.conversations();
+    const conversationData = child.status === "paused" || child.processingRestrictedAt ? { conversations: [] } : await api.conversations();
     applyServerConversations({ ...child, role: "child" }, conversationData.conversations);
     setFamilyOwner({ name: "Compte parent", email: "", contactId: "" });
     setSession({ ...child, role: "child", childId: child.id });
     setActiveChildId(child.id);
     setParentView(null);
     setSelectedConversation(null);
-    setActiveTab("conversations");
+    setActiveTab(child.processingRestrictedAt ? "profile" : "conversations");
+    if (child.processingRestrictedAt) setIsDataRightsOpen(true);
   };
 
   const loginParent = async (credentials) => {
@@ -3442,14 +4598,19 @@ export function App() {
         setFamilyInvitation(null);
       }
     } catch (error) {
-      clearToken();
+      await api.logout().catch(() => clearToken());
       throw error;
     }
   };
 
   const registerParent = async (parent) => {
     const { account } = familyInviteToken
-      ? await api.registerWithFamilyInvite({ token: familyInviteToken, name: parent.name, password: parent.password })
+      ? await api.registerWithFamilyInvite({
+          token: familyInviteToken,
+          name: parent.name,
+          password: parent.password,
+          legal: parent.legal,
+        })
       : await api.register(parent);
     localStorage.setItem(rememberedParentEmailKey, parent.email.trim().toLowerCase());
     await openAuthenticatedSession(account);
@@ -3474,7 +4635,19 @@ export function App() {
   };
 
   const logoutParent = () => {
-    clearToken();
+    if (Capacitor.isNativePlatform() && hasNativeSession()) {
+      void (async () => {
+        await Promise.allSettled([
+          api.deleteNativePushToken({ deviceId: getNativeInstallationId() }),
+          PushNotifications.unregister(),
+        ]);
+        await NativeCallNotifications.clearPendingState().catch(() => undefined);
+        await api.logout().catch(() => clearToken());
+      })();
+      localStorage.setItem(nativePushOptInKey, "false");
+    } else {
+      void api.logout().catch(() => clearToken());
+    }
     setSession(null);
     setFamilyOwner({ name: "", email: "", contactId: "" });
     setFamily(null);
@@ -3485,16 +4658,24 @@ export function App() {
     setParentThreads([]);
     setServerConversations([]);
     setFamilyConversationSyncError("");
+    setContactRequests([]);
+    setContactRelationships([]);
+    setContactRequestBusyId("");
+    setContactRequestError("");
     setParentView(null);
     setChildModal(null);
     setScheduleModalChildId(null);
     setIsContactIdsOpen(false);
     setIsParentPasswordOpen(false);
+    setIsDataRightsOpen(false);
     setIsFamilyParentsOpen(false);
     setIsAvatarPreferencesOpen(false);
     setSelectedParentThreadId(null);
     setSelectedConversation(null);
     setActiveTab("conversations");
+    setPendingContactId("");
+    setPendingRequesterContactId("");
+    clearContactRequestFromUrl();
   };
 
   const dismissFamilyInvitation = () => {
@@ -3653,6 +4834,36 @@ export function App() {
     setParentThreads((current) => current.map((thread) => thread.id === threadId ? { ...thread, unread: 0 } : thread));
   };
 
+  const respondToContactRequest = async (requestId, action) => {
+    setContactRequestBusyId(requestId);
+    setContactRequestError("");
+    try {
+      const result = await api.respondToContactRequest(requestId, action);
+      setContactRequests((current) => current.map((request) => request.id === requestId ? {
+        ...request,
+        status: result.request.status,
+        conversationId: result.request.conversationId,
+        resolvedAt: result.request.resolvedAt,
+      } : request));
+      const [requestRefresh, conversationRefresh] = await Promise.allSettled([
+        api.contactRequests(),
+        api.conversations(),
+      ]);
+      if (requestRefresh.status === "fulfilled") applyContactRequestPayload(requestRefresh.value);
+      if (conversationRefresh.status === "fulfilled") {
+        applyServerConversations(session, conversationRefresh.value.conversations);
+      }
+      if (requestRefresh.status === "rejected" || conversationRefresh.status === "rejected") {
+        setContactRequestError("La réponse est enregistrée. L’affichage complet se resynchronisera automatiquement.");
+      }
+    } catch (error) {
+      setContactRequestError(error.message || "La demande n’a pas pu être mise à jour.");
+      throw error;
+    } finally {
+      setContactRequestBusyId("");
+    }
+  };
+
   const sendParentMessage = async (threadId, text) => {
     const result = await api.sendMessage(threadId, text);
     const messageId = result.message.id;
@@ -3660,7 +4871,7 @@ export function App() {
       ...thread,
       preview: text,
       time: "À l’instant",
-      messages: [...thread.messages, { id: messageId, direction: "sent", type: "text", text, time: "Maintenant", status: "received" }],
+      messages: [...thread.messages, { id: messageId, direction: "sent", type: "text", text, time: "Maintenant", status: "sent" }],
     } : thread));
     return result.message;
   };
@@ -3682,7 +4893,7 @@ export function App() {
 
   const sendChildMessage = async (conversationId, text) => {
     const { message } = await api.sendMessage(conversationId, text);
-    const nextMessage = { id: message.id, direction: "sent", type: "text", text, time: formatServerMessageTime(message.created_at), status: "received" };
+    const nextMessage = { id: message.id, direction: "sent", type: "text", text, time: formatServerMessageTime(message.created_at), status: "sent" };
     setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
       ...conversation,
       preview: text,
@@ -3721,7 +4932,8 @@ export function App() {
   };
 
   useEffect(() => {
-    if (!session || !getToken()) return undefined;
+    if (!session) return undefined;
+    if (session.role === "child" && activeChild?.status !== "active") return undefined;
     const refreshConversations = async () => {
       try {
         const result = await api.conversations();
@@ -3732,7 +4944,270 @@ export function App() {
     };
     const timer = window.setInterval(refreshConversations, 15000);
     return () => window.clearInterval(timer);
+  }, [activeChild?.status, session?.id, session?.role]);
+
+  useEffect(() => {
+    if (session?.role !== "parent") return undefined;
+    const refresh = async () => {
+      try {
+        await refreshContactRequests();
+      } catch {
+        setContactRequestError("Les demandes de contact ne peuvent pas être actualisées pour le moment.");
+      }
+    };
+    const timer = window.setInterval(refresh, 15000);
+    return () => window.clearInterval(timer);
   }, [session?.id, session?.role]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !session || !hasNativeSession()) return undefined;
+    let disposed = false;
+    let nativeDeliveryEnabled = false;
+    const listenerHandles = [];
+    const platform = Capacitor.getPlatform();
+
+    const rememberHandle = async (handlePromise) => {
+      const handle = await handlePromise;
+      if (disposed) await handle.remove();
+      else listenerHandles.push(handle);
+    };
+
+    const syncToken = async (tokenPayload) => {
+      const token = String(tokenPayload?.token ?? tokenPayload?.value ?? "").trim();
+      if (!token || disposed || !nativeDeliveryEnabled) return false;
+      const tokenPlatform = tokenPayload?.platform ?? platform;
+      if (tokenPayload?.deviceId) localStorage.setItem(nativeInstallationKey, String(tokenPayload.deviceId));
+      if (tokenPayload?.environment) localStorage.setItem(nativeApnsEnvironmentKey, String(tokenPayload.environment));
+      await api.saveNativePushToken(token, nativeTokenDetails(tokenPlatform, {
+        tokenKind: tokenPayload?.tokenKind ?? (tokenPlatform === "ios" ? "apns_alert" : "fcm"),
+        ...(tokenPayload?.deviceId ? { deviceId: String(tokenPayload.deviceId) } : {}),
+        ...(tokenPayload?.environment ? { environment: tokenPayload.environment } : {}),
+        ...(tokenPayload?.topic ? { topic: tokenPayload.topic } : {}),
+      }));
+      window.dispatchEvent(new Event("secretclubhouse:native-push-synced"));
+      return true;
+    };
+
+    const normalizeNativePayload = (rawPayload) => {
+      const source = rawPayload?.notification?.data
+        ?? rawPayload?.data
+        ?? rawPayload?.detail
+        ?? rawPayload
+        ?? {};
+      return {
+        ...source,
+        notificationType: String(source.notificationType ?? source.notification_type ?? source.type ?? "").replaceAll("_", "-"),
+        callId: String(source.callId ?? source.call_id ?? ""),
+        conversationId: String(source.conversationId ?? source.conversation_id ?? ""),
+        action: String(source.action ?? rawPayload?.actionId ?? rawPayload?.action ?? "open").toLowerCase(),
+      };
+    };
+
+    const openNativeCall = async (payload) => {
+      if (!payload.callId) return false;
+      const existingOverlay = callOverlayRef.current;
+      if (existingOverlay?.call?.id && existingOverlay.call.id !== payload.callId) return true;
+      const result = await api.call(payload.callId);
+      const incoming = result.call;
+      if (incoming.direction !== "incoming") return true;
+      if (["decline", "declined", "cancel", "cancelled"].includes(payload.action) || ["declined", "cancelled", "ended", "missed"].includes(incoming.status)) {
+        if (existingOverlay?.call?.id === incoming.id) setCallOverlay(null);
+        await refreshConversationState();
+        return true;
+      }
+      const acceptedNatively = ["accept", "answer"].includes(payload.action) && incoming.status === "accepted";
+      if (existingOverlay?.call?.id === incoming.id && incoming.status === "accepted" && !acceptedNatively) {
+        return true;
+      }
+      if (incoming.status !== "ringing" && !acceptedNatively) return true;
+      if (existingOverlay?.call?.id === incoming.id) {
+        if (acceptedNatively) {
+          setCallOverlay((current) => current?.call?.id === incoming.id ? {
+            ...current,
+            call: incoming,
+            initialIceServers: result.iceServers ?? [],
+            acceptedNatively: true,
+          } : current);
+        }
+        return true;
+      }
+      const context = nativeContextRef.current;
+      const knownConversation = [...context.parentThreads, ...context.serverConversations]
+        .find((conversation) => conversation.id === incoming.conversationId);
+      const conversation = knownConversation ?? {
+        id: incoming.conversationId,
+        name: incoming.peer?.name ?? "Contact autorisé",
+        contactId: incoming.peer?.contactId ?? "",
+        contactRole: incoming.peer?.role ?? "",
+        serverBacked: true,
+      };
+      setCallOverlay({
+        key: `native-${incoming.id}-${acceptedNatively ? "accepted" : "ringing"}`,
+        direction: "incoming",
+        conversation,
+        callType: incoming.callType,
+        policy: { allowed: true, detail: "Appel autorisé par le serveur familial." },
+        call: incoming,
+        initialIceServers: result.iceServers ?? [],
+        acceptedNatively,
+      });
+      return true;
+    };
+
+    const openNativeNotification = async (rawPayload, receivedInForeground = false) => {
+      const payload = normalizeNativePayload(rawPayload);
+      if (payload.notificationType === "incoming-call" || payload.callId) {
+        return openNativeCall(payload);
+      }
+      if (receivedInForeground) return false;
+
+      const context = nativeContextRef.current;
+      if (payload.notificationType === "message" && payload.conversationId) {
+        let conversations = context.session?.role === "parent" ? context.parentThreads : context.serverConversations;
+        let conversation = conversations.find((item) => item.id === payload.conversationId);
+        if (!conversation) {
+          const latest = await api.conversations();
+          conversations = applyServerConversations(context.session, latest.conversations);
+          conversation = conversations.find((item) => item.id === payload.conversationId);
+        }
+        if (!conversation) return false;
+        if (context.session?.role === "parent") {
+          setSelectedParentThreadId(conversation.id);
+          setParentView("messages");
+        } else {
+          setActiveTab("conversations");
+          setSelectedConversation(conversation);
+        }
+        return true;
+      }
+      if (payload.notificationType === "contact-request" && context.session?.role === "parent") {
+        await refreshContactRequests();
+        setSelectedParentThreadId(null);
+        setParentView("management");
+        return true;
+      }
+      if (payload.notificationType === "game") {
+        if (context.session?.role === "parent") setParentView("games");
+        else {
+          setSelectedConversation(null);
+          setActiveTab("clubhouse");
+        }
+        return true;
+      }
+      return false;
+    };
+
+    const handleNativeCallEvent = (event) => {
+      void openNativeNotification(event)
+        .then((handled) => handled ? NativeCallNotifications.clearPendingState().catch(() => undefined) : undefined)
+        .catch(() => undefined);
+    };
+    const handleNativeTokenEvent = (event) => {
+      void syncToken(event?.detail ?? event).catch(() => undefined);
+    };
+    window.addEventListener("secretclubhouse:native-call-action", handleNativeCallEvent);
+    window.addEventListener("secretclubhouse:native-push-token", handleNativeTokenEvent);
+
+    void rememberHandle(PushNotifications.addListener("registration", (token) => {
+      void syncToken(token).catch(() => undefined);
+    }));
+    void rememberHandle(PushNotifications.addListener("pushNotificationReceived", (notification) => {
+      void openNativeNotification(notification, true).catch(() => undefined);
+    }));
+    void rememberHandle(PushNotifications.addListener("pushNotificationActionPerformed", (action) => {
+      void openNativeNotification(action).catch(() => undefined);
+    }));
+
+    void (async () => {
+      const pendingState = await NativeCallNotifications.getPendingState().catch(() => ({}));
+      if (disposed) return;
+      if (pendingState.deviceId) localStorage.setItem(nativeInstallationKey, String(pendingState.deviceId));
+      if (pendingState.environment) localStorage.setItem(nativeApnsEnvironmentKey, String(pendingState.environment));
+      const permission = await PushNotifications.checkPermissions();
+      const consentResult = await api.notificationConsent().catch(() => ({ consent: { active: false } }));
+      nativeDeliveryEnabled = permission.receive === "granted"
+        && localStorage.getItem(nativePushOptInKey) !== "false"
+        && consentResult.consent.active;
+      if (nativeDeliveryEnabled && pendingState.voipToken) {
+        await syncToken({
+          token: pendingState.voipToken,
+          platform: "ios",
+          tokenKind: "apns_voip",
+          deviceId: pendingState.deviceId,
+          environment: pendingState.environment,
+          topic: pendingState.topic,
+        }).catch(() => undefined);
+      }
+      if (nativeDeliveryEnabled && pendingState.fcmToken) {
+        await syncToken({ token: pendingState.fcmToken, platform: "android", tokenKind: "fcm" }).catch(() => undefined);
+      }
+      if (nativeDeliveryEnabled && pendingState.token) {
+        await syncToken(pendingState).catch(() => undefined);
+      }
+      if (nativeDeliveryEnabled && !disposed) await PushNotifications.register();
+      if (pendingState.callId) {
+        const handled = await openNativeNotification(pendingState).catch(() => false);
+        if (handled) await NativeCallNotifications.clearPendingState().catch(() => undefined);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("secretclubhouse:native-call-action", handleNativeCallEvent);
+      window.removeEventListener("secretclubhouse:native-push-token", handleNativeTokenEvent);
+      listenerHandles.forEach((handle) => { void handle.remove(); });
+    };
+  }, [session?.id, session?.role]);
+
+  useEffect(() => {
+    if (!session) return undefined;
+    if (session.role === "child" && activeChild?.status !== "active") return undefined;
+    let active = true;
+    let openingIncomingCall = false;
+    const refreshCalls = async () => {
+      if (!active || openingIncomingCall || callOverlayRef.current) return;
+      try {
+        const result = await api.calls();
+        const incoming = (result.calls ?? []).find((item) => item.direction === "incoming" && item.status === "ringing");
+        if (!incoming || !active || callOverlayRef.current) return;
+        openingIncomingCall = true;
+        const knownConversation = [...parentThreads, ...serverConversations]
+          .find((conversation) => conversation.id === incoming.conversationId);
+        const conversation = knownConversation ?? {
+          id: incoming.conversationId,
+          name: incoming.peer?.name ?? "Contact autorisé",
+          contactId: incoming.peer?.contactId ?? "",
+          contactRole: incoming.peer?.role ?? "",
+          serverBacked: true,
+        };
+        setCallOverlay({
+          key: incoming.id,
+          direction: "incoming",
+          conversation,
+          callType: incoming.callType,
+          policy: { allowed: true, detail: "Appel autorisé par le serveur familial." },
+          call: incoming,
+        });
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("notification") === "call") {
+          params.delete("notification");
+          params.delete("call");
+          const query = params.toString();
+          window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+        }
+      } catch {
+        // La sonnerie réapparaîtra à la prochaine synchronisation si le réseau revient.
+      } finally {
+        openingIncomingCall = false;
+      }
+    };
+    void refreshCalls();
+    const timer = window.setInterval(refreshCalls, 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [activeChild?.status, parentThreads, serverConversations, session?.id, session?.role]);
 
   useEffect(() => {
     if (!session) return;
@@ -3757,6 +5232,9 @@ export function App() {
         handled = true;
       }
     } else if (notificationType === "contact-request" && session.role === "parent") {
+      void refreshContactRequests().catch(() => {
+        setContactRequestError("Les demandes de contact ne peuvent pas être actualisées pour le moment.");
+      });
       setSelectedParentThreadId(null);
       setParentView("management");
       handled = true;
@@ -3785,7 +5263,7 @@ export function App() {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={openRealtimeCall} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
@@ -3806,12 +5284,21 @@ export function App() {
           settings={activeSettings}
           onToggleSetting={(key) => activeChild && void toggleChildSetting(activeChild.id, key)}
           schedule={activeSchedule}
+          contactRequests={contactRequests}
+          contactRelationships={contactRelationships}
+          contactRequestBusyId={contactRequestBusyId}
+          contactRequestError={contactRequestError}
+          onRespondToContactRequest={(requestId, action) => void respondToContactRequest(requestId, action).catch(() => undefined)}
+          onRetryContactRequests={() => void refreshContactRequests().catch(() => {
+            setContactRequestError("Les demandes de contact ne peuvent pas être actualisées pour le moment.");
+          })}
           unreadMessages={parentUnreadMessages}
           onOpenMessages={() => { setSelectedParentThreadId(null); setParentView("messages"); }}
           onOpenGames={() => setParentView("games")}
           onOpenFamilyParents={() => setIsFamilyParentsOpen(true)}
           onOpenContactIds={() => setIsContactIdsOpen(true)}
           onOpenPassword={() => setIsParentPasswordOpen(true)}
+          onOpenDataRights={() => setIsDataRightsOpen(true)}
           onEditSchedule={() => activeChild && setScheduleModalChildId(activeChild.id)}
           onLogout={logoutParent}
         />
@@ -3824,17 +5311,17 @@ export function App() {
       return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
     if (selectedConversation) {
-      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} onStartCall={openRealtimeCall} />;
     }
     if (activeTab === "clubhouse") {
       return <ClubhouseScreen child={activeChild} />;
     }
     if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
-    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onLogout={logoutParent} />;
+    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onOpenDataRights={() => setIsDataRightsOpen(true)} onLogout={logoutParent} />;
     const availableConversations = serverConversations.map((conversation) => ({ ...conversation, online: presenceByContactId[conversation.contactId] ?? false }));
     const approvedFriends = availableConversations.filter((conversation) => !conversation.isFamily && conversation.contactRole !== "parent");
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeSchedule, activeSettings, activeTab, children, family, familyConversationSyncError, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
+  }, [activeChild, activeSchedule, activeSettings, activeTab, children, contactRelationships, contactRequestBusyId, contactRequestError, contactRequests, family, familyConversationSyncError, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, pendingContactId, pendingRequesterContactId, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
@@ -3849,9 +5336,25 @@ export function App() {
       <div className="mobile-prototype" ref={dragScrollRef}>
         <div className={`screen-scroll ${activeTab === "profile" && session && !parentView ? "screen-scroll--profile" : ""} ${!session || selectedConversation || parentView || isAvatarPreferencesOpen || activeChild?.status === "paused" || !activeChild ? "screen-scroll--full" : ""}`}>{screen}</div>
         {session && !selectedConversation && !parentView && !isAvatarPreferencesOpen && activeChild?.status === "active" && <BottomNavigation active={activeTab} onChange={changeTab} />}
+        {session && callOverlay && <div className="realtime-call-layer">
+          <RealtimeCallScreen
+            key={callOverlay.key}
+            account={{ ...session, name: session.name || familyOwner.name || "Vous" }}
+            conversation={callOverlay.conversation}
+            callType={callOverlay.callType}
+            direction={callOverlay.direction}
+            initialCall={callOverlay.call}
+            initialIceServers={callOverlay.initialIceServers}
+            acceptedNatively={callOverlay.acceptedNatively}
+            policy={callOverlay.policy}
+            onConversationRefresh={refreshConversationState}
+            onClose={closeRealtimeCall}
+          />
+        </div>}
         {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
         {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} family={family} children={children} onClose={() => setIsContactIdsOpen(false)} />}
         {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}
+        {session && isDataRightsOpen && <DataRightsModal account={session.role === "child" ? activeChild : session} family={family} children={children} onClose={() => setIsDataRightsOpen(false)} onDeleted={logoutParent} />}
         {session?.role === "parent" && isFamilyParentsOpen && family && <FamilyParentsModal family={family} currentParent={session} onClose={() => setIsFamilyParentsOpen(false)} onInvite={inviteFamilyParent} onRevoke={revokeFamilyInvitation} onRemove={removeFamilyParent} />}
         {session && childModal && (
           <ChildAccountModal

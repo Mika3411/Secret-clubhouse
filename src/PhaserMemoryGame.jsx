@@ -103,7 +103,12 @@ export default function PhaserMemoryGame({ onComplete }) {
       setStatus("fallback");
     };
 
-    import("phaser").then(({ default: Phaser }) => {
+    import("phaser/dist/phaser-arcade-physics.min.js").then((phaserModule) => {
+      const Phaser = phaserModule.default ?? phaserModule.Phaser ?? window.Phaser;
+      if (!Phaser) {
+        useCompatibleGame();
+        return;
+      }
       if (cancelled || !hostRef.current) return;
 
       class MemoryScene extends Phaser.Scene {
