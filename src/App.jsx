@@ -13,6 +13,7 @@ import {
   Clock,
   Copy,
   DotsThree,
+  DownloadSimple,
   Eye,
   EyeSlash,
   FlagPennant,
@@ -2383,6 +2384,13 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
           <span><strong>Mot de passe parent</strong><small>Modifier vos informations de connexion.</small></span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
+
+        <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
+          <span><DownloadSimple size={23} weight="bold" /></span>
+          <span><strong>Installer sur Android</strong><small>Télécharger l’application Secret Clubhouse · APK · 12,7 Mo</small></span>
+          <span className="parent-apk-badge">APK</span>
+          <CaretRight size={18} weight="bold" aria-hidden="true" />
+        </a>
 
         {!child && (
           <section className="empty-family-card" aria-labelledby="empty-family-title">

@@ -1254,6 +1254,9 @@ app.use((error, _req, res, _next) => {
 });
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+app.get("/downloads/Secret-Clubhouse.apk", (_req, res) => {
+  res.download(path.join(root, "Secret-Clubhouse-debug.apk"), "Secret-Clubhouse.apk");
+});
 app.use(express.static(path.join(root, "dist")));
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(root, "dist", "index.html")));
 
