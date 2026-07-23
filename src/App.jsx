@@ -878,7 +878,7 @@ function TypingIndicator({ name }) {
   return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
 }
 
-const PUSH_WORKER_VERSION = "2026-07-23.1";
+const PUSH_WORKER_VERSION = "2026-07-23.2";
 
 const sendWorkerCommand = (worker, message, timeout = 1000) => new Promise((resolve) => {
   if (!worker) {
@@ -999,7 +999,7 @@ function PushNotificationButton({ isDemo = false }) {
         throw new Error("Les notifications ne sont pas autorisées dans ce navigateur.");
       }
       const registration = await navigator.serviceWorker.ready;
-      const pushWorker = isDemo ? null : await waitForCurrentPushWorker(registration);
+      if (!isDemo) await waitForCurrentPushWorker(registration);
       if (isDemo) {
         const tag = "secret-clubhouse-demo-test";
         const previousNotifications = await registration.getNotifications({ tag });
@@ -1072,32 +1072,9 @@ function PushNotificationButton({ isDemo = false }) {
           encryptedWaiter.cancel();
         }
 
-        const payloadlessRequestId = crypto.randomUUID();
-        const payloadlessWaiter = waitForPushDiagnostic({ requestId: payloadlessRequestId });
-        let payloadlessResult;
-        try {
-          const preparation = await sendWorkerCommand(pushWorker, {
-            type: "secret-clubhouse:prepare-payloadless-test",
-            requestId: payloadlessRequestId,
-          });
-          if (!preparation?.prepared) throw new Error("Edge n’a pas pu préparer le diagnostic du canal Windows.");
-          payloadlessResult = await api.testPush(subscription.endpoint, payloadlessRequestId, "payloadless");
-          if (!payloadlessResult?.accepted) throw new Error("Le canal de diagnostic Edge n’a pas accepté le second test.");
-          payloadlessWaiter.startTimeout();
-          const payloadlessDiagnostic = await payloadlessWaiter.promise;
-          if (payloadlessDiagnostic?.stage === "shown") {
-            throw new Error("Le canal atteint Edge sans contenu, mais le message chiffré n’arrive pas. Réactivez les notifications pour renouveler ses clés.");
-          }
-          if (payloadlessDiagnostic) throw new Error(describeDiagnosticError(payloadlessDiagnostic));
-        } finally {
-          payloadlessWaiter.cancel();
-          await sendWorkerCommand(pushWorker, {
-            type: "secret-clubhouse:cancel-payloadless-test",
-            requestId: payloadlessRequestId,
-          });
-        }
         const transport = encryptedResult?.transportStatus ? ` (HTTP ${encryptedResult.transportStatus})` : "";
-        throw new Error(`Le service Push accepte le test${transport}, mais le canal Windows d’Edge ne le reçoit pas.`);
+        const provider = encryptedResult?.providerStatus ? `, statut WNS ${encryptedResult.providerStatus}` : "";
+        throw new Error(`WNS a accepté le test${transport}${provider}, mais le client Windows d’Edge ne l’a pas transmis à l’application.`);
       }
       setFeedback(isDemo
         ? "Notification persistante créée dans Edge. Vérifiez la bannière ou le centre de notifications."

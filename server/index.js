@@ -886,6 +886,7 @@ const describePushAttempt = (row, response, error = null) => {
     messageId: readPushHeader(headers, "x-wns-msg-id"),
     debugTrace: readPushHeader(headers, "x-wns-debug-trace"),
     correlationVector: readPushHeader(headers, "ms-cv"),
+    providerError: readPushHeader(headers, "x-wns-error-description"),
     error: error?.message ?? null,
   };
 };
@@ -928,10 +929,18 @@ async function notifyConversation(conversationId, senderId, payload) {
 app.post("/api/push/test", requireAuth, async (req, res) => {
   const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint.trim() : "";
   const requestId = typeof req.body?.requestId === "string" ? req.body.requestId.trim() : "";
-  const mode = req.body?.mode === "payloadless" ? "payloadless" : "encrypted";
+  const mode = req.body?.mode ?? "encrypted";
   if (!endpoint.startsWith("https://") || endpoint.length > 2048) return res.status(400).json({ error: "Abonnement de test invalide." });
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return res.status(400).json({ error: "Identifiant de test invalide." });
+  if (mode !== "encrypted") return res.status(400).json({ error: "Mode de test invalide." });
   const subscriptions = await pool.query("select id,subscription from push_subscriptions where account_id=$1 and endpoint=$2", [req.auth.sub, endpoint]);
+  if (!subscriptions.rowCount) {
+    return res.status(409).json({
+      error: "Cet abonnement Edge n’est plus enregistré. Désactivez puis réactivez les notifications.",
+      code: "subscription_missing",
+      mode,
+    });
+  }
   const diagnostics = [];
   const encryptedPayload = {
     title: "Secret Clubhouse est prêt",
@@ -941,13 +950,31 @@ app.post("/api/push/test", requireAuth, async (req, res) => {
     url: "/?notification=test",
     requestId,
   };
-  const accepted = await deliverWebPush(subscriptions.rows, mode === "payloadless" ? null : encryptedPayload, diagnostics, { ttl: mode === "payloadless" ? 0 : 30 });
-  if (!accepted) return res.status(409).json({ error: "Cet Edge n’a pas accepté la notification de test." });
+  const accepted = await deliverWebPush(subscriptions.rows, encryptedPayload, diagnostics, { ttl: 30 });
+  const transport = diagnostics[0] ?? null;
+  if (!accepted) {
+    const providerStatus = transport?.providerStatus?.toLowerCase();
+    const expired = transport?.statusCode === 404 || transport?.statusCode === 410;
+    const error = expired
+      ? "L’abonnement de cet Edge a expiré. Désactivez puis réactivez les notifications."
+      : providerStatus === "channelthrottled"
+        ? "WNS limite temporairement les tests de cet Edge. Patientez quelques minutes avant de recommencer."
+        : providerStatus === "dropped"
+          ? "WNS a rejeté la notification destinée à cet Edge."
+          : "Le service Push a refusé la notification destinée à cet Edge.";
+    return res.status(409).json({
+      error,
+      code: expired ? "subscription_expired" : providerStatus === "channelthrottled" ? "provider_throttled" : "transport_rejected",
+      mode,
+      transportStatus: transport?.statusCode ?? null,
+      providerStatus: transport?.providerStatus ?? null,
+    });
+  }
   res.json({
     accepted: true,
     mode,
-    transportStatus: diagnostics[0]?.statusCode ?? null,
-    providerStatus: diagnostics[0]?.providerStatus ?? null,
+    transportStatus: transport?.statusCode ?? null,
+    providerStatus: transport?.providerStatus ?? null,
   });
 });
 
