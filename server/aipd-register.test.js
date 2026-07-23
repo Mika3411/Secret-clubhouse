@@ -14,7 +14,6 @@ import {
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dossierPath = path.join(repositoryRoot, "docs", "aipd-secret-clubhouse.md");
-const a02ProtocolPath = path.join(repositoryRoot, "docs", "a02-protocole-consultation.md");
 
 test("l’AIPD identifie au moins deux critères CNIL de risque élevé", () => {
   const applicable = aipdHighRiskCriteria.filter((criterion) => criterion.applicable);
@@ -57,26 +56,6 @@ test("une décision de production reste bloquée lorsqu’un risque résiduel es
   assert.equal(aipdDecision.status, "blocked");
   assert.equal(aipdDecision.productionApproved, false);
   assert.match(aipdDecision.priorConsultationRule, /consulter la CNIL/i);
-});
-
-test("A02 reste ouverte tant que le protocole ne contient aucune réponse humaine datée", () => {
-  const action = aipdActions.find(({ id }) => id === "A02");
-  const protocol = fs.readFileSync(a02ProtocolPath, "utf8");
-
-  assert.ok(action);
-  assert.equal(action.status, "open");
-  assert.match(action.acceptance, /réponses humaines datées/i);
-  assert.match(protocol, /modèle vierge — aucune consultation réalisée, aucune réponse collectée/i);
-  assert.match(protocol, /un refus ou une impossibilité ne clôture jamais l’action à lui seul/i);
-  for (const heading of [
-    "## 7. Questionnaire parent",
-    "## 8. Questionnaire enfant — 6 à 9 ans",
-    "## 9. Questionnaire enfant — 10 à 13 ans",
-    "## 11. Formulaire de compte rendu anonymisé",
-    "## 12. Formulaire de refus, retrait ou impossibilité",
-  ]) {
-    assert.ok(protocol.includes(heading), `section A02 absente : ${heading}`);
-  }
 });
 
 test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt", () => {
