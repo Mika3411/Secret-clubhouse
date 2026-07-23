@@ -878,8 +878,6 @@ function TypingIndicator({ name }) {
   return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
 }
 
-const PUSH_WORKER_VERSION = "2026-07-23.2";
-
 const sendWorkerCommand = (worker, message, timeout = 1000) => new Promise((resolve) => {
   if (!worker) {
     resolve(null);
@@ -905,14 +903,22 @@ const sendWorkerCommand = (worker, message, timeout = 1000) => new Promise((reso
 
 const waitForCurrentPushWorker = async (registration) => {
   await registration.update().catch(() => {});
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    const worker = registration.active;
-    const response = await sendWorkerCommand(worker, { type: "secret-clubhouse:get-worker-version" }, 500);
-    if (response?.workerVersion === PUSH_WORKER_VERSION) return worker;
+    registration = await navigator.serviceWorker.getRegistration("/") ?? registration;
+    if (registration.waiting) {
+      try {
+        registration.waiting.postMessage({ type: "secret-clubhouse:activate-update" });
+      } catch {}
+    }
+    const workers = [...new Set([registration.active, navigator.serviceWorker.controller].filter(Boolean))];
+    for (const worker of workers) {
+      const response = await sendWorkerCommand(worker, { type: "secret-clubhouse:get-worker-capabilities" }, 500);
+      if (response?.protocolVersion >= 1 && response.capabilities?.includes("push-diagnostics")) return worker;
+    }
     await new Promise((resolve) => window.setTimeout(resolve, 250));
   }
-  throw new Error("La mise à jour des notifications Edge n’est pas encore active. Actualisez la page puis recommencez.");
+  return registration.active ?? navigator.serviceWorker.controller ?? null;
 };
 
 function PushNotificationButton({ isDemo = false }) {

@@ -1339,6 +1339,15 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 app.get("/downloads/Secret-Clubhouse.apk", (_req, res) => {
   res.download(path.join(root, "Secret-Clubhouse-debug.apk"), "Secret-Clubhouse.apk");
 });
+app.get("/sw.js", (_req, res) => {
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+    "Service-Worker-Allowed": "/",
+  });
+  res.sendFile(path.join(root, "dist", "sw.js"));
+});
 app.use(express.static(path.join(root, "dist")));
 app.get("/{*path}", (_req, res) => res.sendFile(path.join(root, "dist", "index.html")));
 
