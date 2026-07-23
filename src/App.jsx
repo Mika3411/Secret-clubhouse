@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import {
   ArrowLeft,
@@ -748,6 +749,7 @@ function MessageStatus({ status = "received" }) {
 function ConversationMediaMessage({ message, parent = false }) {
   const [mediaUrl, setMediaUrl] = useState(message.url ?? "");
   const [loadError, setLoadError] = useState("");
+  const [isPhotoOpen, setIsPhotoOpen] = useState(false);
   const isReceived = message.direction === "received";
   const isVideo = message.type === "video";
 
@@ -776,6 +778,20 @@ function ConversationMediaMessage({ message, parent = false }) {
     };
   }, [message.id, message.url]);
 
+  useEffect(() => {
+    if (!isPhotoOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setIsPhotoOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isPhotoOpen]);
+
   const className = parent
     ? `parent-media-message ${isReceived ? "parent-media-message--received" : ""}`
     : `media-message ${isReceived ? "media-message--received" : ""}`;
@@ -783,11 +799,16 @@ function ConversationMediaMessage({ message, parent = false }) {
   const description = `${isVideo ? "Vidéo" : "Photo"} ${isReceived ? "reçue" : "envoyée"}`;
 
   return (
+    <>
     <figure className={className}>
       {mediaUrl ? (
         isVideo
           ? <video src={mediaUrl} controls playsInline aria-label={`${description} : ${message.name || "vidéo"}`} />
-          : <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} />
+          : (
+            <button type="button" className="media-message__photo-button" onClick={() => setIsPhotoOpen(true)} aria-label="Afficher la photo en plein écran">
+              <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} />
+            </button>
+          )
       ) : (
         <div className={`${placeholderClassName} ${loadError ? "has-error" : ""}`} role={loadError ? "alert" : "status"}>
           {loadError || `Chargement de la ${isVideo ? "vidéo" : "photo"}…`}
@@ -798,6 +819,15 @@ function ConversationMediaMessage({ message, parent = false }) {
         {!isReceived && <MessageStatus status={message.status ?? "received"} />}
       </figcaption>
     </figure>
+    {isPhotoOpen && createPortal((
+      <div className="photo-lightbox" role="dialog" aria-modal="true" aria-label="Photo en plein écran" onClick={() => setIsPhotoOpen(false)}>
+        <button type="button" className="photo-lightbox__close" onClick={() => setIsPhotoOpen(false)} aria-label="Fermer la photo">
+          <X size={28} weight="bold" />
+        </button>
+        <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} onClick={(event) => event.stopPropagation()} />
+      </div>
+    ), document.body)}
+    </>
   );
 }
 

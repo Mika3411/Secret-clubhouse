@@ -3,3 +3,4 @@ dist/
 .npm-cache/
 .prototype-bootstrap/
 .vite-server*.log
+.codex-*.log
