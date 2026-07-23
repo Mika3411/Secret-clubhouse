@@ -125,6 +125,76 @@ async function getParentFamilyMembership(parentId, executor = pool) {
   return result.rows[0] ?? null;
 }
 
+async function repairFamilyChildrenForAccount(accountId, executor = null) {
+  const client = executor ?? await pool.connect();
+  const ownsTransaction = !executor;
+  try {
+    if (ownsTransaction) await client.query("begin");
+
+    // accounts.parent_id is the legacy ownership source of truth. Lock every
+    // candidate owner's current membership so a concurrent co-parent removal
+    // cannot change the family boundary while an orphaned link is repaired.
+    const ownersResult = await client.query(
+      `select owner.family_id,owner.parent_id
+       from family_memberships owner
+       where owner.parent_id=(
+         select child.parent_id from accounts child where child.id=$1 and child.role='child'
+       )
+       or exists(
+         select 1 from family_memberships current
+         where current.parent_id=$1 and current.family_id=owner.family_id
+       )
+       order by owner.parent_id
+       for key share of owner`,
+      [accountId],
+    );
+    if (!ownersResult.rowCount) {
+      if (ownsTransaction) await client.query("commit");
+      return;
+    }
+
+    const ownerIds = ownersResult.rows.map((owner) => owner.parent_id);
+    const familyIds = ownersResult.rows.map((owner) => owner.family_id);
+    const childrenResult = await client.query(
+      `select child.id,child.created_at,owner.family_id
+       from accounts child
+       join unnest($1::uuid[],$2::uuid[]) owner(parent_id,family_id)
+         on owner.parent_id=child.parent_id
+       left join family_children existing on existing.child_id=child.id
+       where child.role='child' and existing.child_id is null
+       for key share of child`,
+      [ownerIds, familyIds],
+    );
+    if (childrenResult.rowCount) {
+      const childIds = childrenResult.rows.map((child) => child.id);
+      const expectedFamilyIds = childrenResult.rows.map((child) => child.family_id);
+      const addedDates = childrenResult.rows.map((child) => child.created_at);
+      await client.query(
+        `insert into family_children(family_id,child_id,added_at)
+         select family_id,child_id,added_at
+         from unnest($1::uuid[],$2::uuid[],$3::timestamptz[]) repaired(child_id,family_id,added_at)
+         on conflict(child_id) do nothing`,
+        [childIds, expectedFamilyIds, addedDates],
+      );
+      const confirmedResult = await client.query(
+        "select child_id,family_id from family_children where child_id=any($1::uuid[])",
+        [childIds],
+      );
+      const confirmedFamilies = new Map(confirmedResult.rows.map((row) => [row.child_id, row.family_id]));
+      if (childrenResult.rows.some((child) => confirmedFamilies.get(child.id) !== child.family_id)) {
+        throw httpError(409, "Le rattachement familial d’un compte enfant est incohérent.");
+      }
+    }
+
+    if (ownsTransaction) await client.query("commit");
+  } catch (error) {
+    if (ownsTransaction) await client.query("rollback");
+    throw error;
+  } finally {
+    if (ownsTransaction) client.release();
+  }
+}
+
 async function serializeFamilyForParent(parentId, executor = pool) {
   const membership = await getParentFamilyMembership(parentId, executor);
   if (!membership) return null;
@@ -209,20 +279,36 @@ async function acceptFamilyInvitation(token, parentId) {
       throw httpError(403, "Connectez-vous avec l’adresse e-mail à laquelle cette invitation a été envoyée.");
     }
 
+    const legacyChildrenResult = await client.query(
+      `select child.id
+       from accounts child
+       where child.role='child' and child.parent_id=$1
+         and not exists(select 1 from family_children linked where linked.child_id=child.id)
+       for key share of child`,
+      [parentId],
+    );
+    await repairFamilyChildrenForAccount(parentId, client);
     const membershipResult = await client.query(
       `select fm.family_id,fm.role,
         (select count(*)::int from family_memberships members where members.family_id=fm.family_id) as member_count,
         (select count(*)::int from family_children children where children.family_id=fm.family_id) as child_count,
+        (select count(*)::int from accounts legacy_child
+          where legacy_child.role='child' and legacy_child.parent_id=fm.parent_id
+            and not exists(select 1 from family_children linked where linked.child_id=legacy_child.id)) as legacy_child_count,
         (select count(*)::int from family_parent_invitations pending
           where pending.family_id=fm.family_id and pending.status='pending' and pending.expires_at>now()) as pending_count
        from family_memberships fm where fm.parent_id=$1 for update`,
       [parentId],
     );
     const currentMembership = membershipResult.rows[0];
+    if (!currentMembership && legacyChildrenResult.rowCount) {
+      throw httpError(409, "Ce compte parent possède déjà des profils enfants et ne peut pas rejoindre une autre famille.");
+    }
     if (currentMembership && currentMembership.family_id !== invitation.family_id) {
       const disposableEmptyFamily = currentMembership.role === "primary"
         && Number(currentMembership.member_count) === 1
         && Number(currentMembership.child_count) === 0
+        && Number(currentMembership.legacy_child_count) === 0
         && Number(currentMembership.pending_count) === 0;
       if (!disposableEmptyFamily) {
         throw httpError(409, "Ce compte parent gère déjà une autre famille et ne peut pas rejoindre celle-ci.");
@@ -611,21 +697,20 @@ app.delete("/api/family/members/:id", requireAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const requesterResult = await client.query(
-      "select family_id,role from family_memberships where parent_id=$1 for update",
-      [req.auth.sub],
+    if (req.params.id === req.auth.sub) throw httpError(400, "Le parent principal ne peut pas se retirer lui-même.");
+    const membershipsResult = await client.query(
+      `select family_id,parent_id,role
+       from family_memberships
+       where parent_id=any($1::uuid[])
+       order by parent_id
+       for update`,
+      [[req.auth.sub, req.params.id]],
     );
-    const requester = requesterResult.rows[0];
+    const requester = membershipsResult.rows.find((membership) => membership.parent_id === req.auth.sub);
     if (!requester) throw httpError(404, "Ce compte parent n’est rattaché à aucune famille.");
     if (requester.role !== "primary") throw httpError(403, "Seul le parent principal peut retirer un co-parent.");
-    if (req.params.id === req.auth.sub) throw httpError(400, "Le parent principal ne peut pas se retirer lui-même.");
-
-    const targetResult = await client.query(
-      "select role from family_memberships where family_id=$1 and parent_id=$2 for update",
-      [requester.family_id, req.params.id],
-    );
-    const target = targetResult.rows[0];
-    if (!target) throw httpError(404, "Co-parent introuvable dans votre famille.");
+    const target = membershipsResult.rows.find((membership) => membership.parent_id === req.params.id);
+    if (!target || target.family_id !== requester.family_id) throw httpError(404, "Co-parent introuvable dans votre famille.");
     if (target.role !== "coparent") throw httpError(400, "Le parent principal ne peut pas être retiré.");
 
     await client.query(
@@ -669,6 +754,7 @@ app.delete("/api/family/members/:id", requireAuth, async (req, res) => {
 
 app.get("/api/children", requireAuth, async (req, res) => {
   if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
+  await repairFamilyChildrenForAccount(req.auth.sub);
   const result = await pool.query(
     `select child.*
      from family_memberships membership
@@ -691,16 +777,32 @@ app.post("/api/children", requireAuth, async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query("begin");
+      await client.query(
+        "select id from accounts where id=$1 and role='parent' for update",
+        [req.auth.sub],
+      );
       const membershipResult = await client.query(
         `select mine.family_id,primary_member.parent_id as primary_parent_id
          from family_memberships mine
          join family_memberships primary_member on primary_member.family_id=mine.family_id and primary_member.role='primary'
-         where mine.parent_id=$1
-         for share of mine,primary_member`,
+         where mine.parent_id=$1`,
         [req.auth.sub],
       );
       const membership = membershipResult.rows[0];
       if (!membership) throw httpError(404, "Ce compte parent n’est rattaché à aucune famille.");
+      const lockedMemberships = await client.query(
+        `select parent_id,role
+         from family_memberships
+         where family_id=$1 and parent_id=any($2::uuid[])
+         order by parent_id
+         for share`,
+        [membership.family_id, [...new Set([req.auth.sub, membership.primary_parent_id])]],
+      );
+      const requesterMembership = lockedMemberships.rows.find((member) => member.parent_id === req.auth.sub);
+      const primaryMembership = lockedMemberships.rows.find((member) => member.parent_id === membership.primary_parent_id && member.role === "primary");
+      if (!requesterMembership || !primaryMembership) {
+        throw httpError(409, "La composition de cette famille a changé. Réessayez.");
+      }
       const result = await client.query(
         `insert into accounts(role,contact_id,password_hash,display_name,parent_id,age,username,avatar_color,status,safety_settings,communication_schedule)
          values('child',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb) returning *`,
@@ -718,9 +820,16 @@ app.post("/api/children", requireAuth, async (req, res) => {
         ],
       );
       await client.query(
-        "insert into family_children(family_id,child_id) values($1,$2)",
+        "insert into family_children(family_id,child_id) values($1,$2) on conflict(child_id) do nothing",
         [membership.family_id, result.rows[0].id],
       );
+      const childFamilyResult = await client.query(
+        "select family_id from family_children where child_id=$1 for share",
+        [result.rows[0].id],
+      );
+      if (childFamilyResult.rows[0]?.family_id !== membership.family_id) {
+        throw httpError(409, "Le profil enfant n’a pas pu être rattaché à cette famille.");
+      }
       await client.query("commit");
       return res.status(201).json({ child: await serializeAccount(result.rows[0]) });
     } catch (error) {
@@ -910,6 +1019,7 @@ app.post("/api/family-conversations", requireAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("begin");
+    await repairFamilyChildrenForAccount(req.auth.sub, client);
     const childResult = await client.query(
       `select child.id,child.display_name,child.contact_id
        from family_memberships membership
@@ -958,6 +1068,7 @@ app.post("/api/family-conversations", requireAuth, async (req, res) => {
 });
 
 async function ensureFamilyConversations(accountId) {
+  await repairFamilyChildrenForAccount(accountId);
   const pairs = await pool.query(
     `select membership.parent_id,child.child_id
      from family_memberships membership
@@ -1130,6 +1241,70 @@ app.post("/api/contact-requests", requireAuth, async (req, res) => {
 });
 
 const emptyConnectFourBoard = () => Array(42).fill(0);
+const emptyTicTacToeBoard = () => Array(9).fill(0);
+const navalBattleGridSize = 5;
+const navalBattleShipLengths = [3, 2, 2];
+const supportedGameTypes = new Set(["connect_four", "tic_tac_toe", "naval_battle"]);
+const gameNames = {
+  connect_four: "Puissance 4",
+  tic_tac_toe: "Morpion",
+  naval_battle: "Bataille navale",
+};
+
+const navalShipCandidates = (length, occupied) => {
+  const candidates = [];
+  for (let row = 0; row < navalBattleGridSize; row += 1) {
+    for (let column = 0; column < navalBattleGridSize; column += 1) {
+      if (column + length <= navalBattleGridSize) {
+        const horizontal = Array.from(
+          { length },
+          (_, offset) => row * navalBattleGridSize + column + offset,
+        );
+        if (horizontal.every((cell) => !occupied.has(cell))) candidates.push(horizontal);
+      }
+      if (row + length <= navalBattleGridSize) {
+        const vertical = Array.from(
+          { length },
+          (_, offset) => (row + offset) * navalBattleGridSize + column,
+        );
+        if (vertical.every((cell) => !occupied.has(cell))) candidates.push(vertical);
+      }
+    }
+  }
+  return candidates;
+};
+
+const generateNavalFleet = () => {
+  const occupied = new Set();
+  const fleet = [];
+  for (const length of navalBattleShipLengths) {
+    const candidates = navalShipCandidates(length, occupied);
+    if (!candidates.length) throw new Error("Impossible de générer la flotte de bataille navale.");
+    const ship = candidates[crypto.randomInt(0, candidates.length)];
+    fleet.push(ship);
+    ship.forEach((cell) => occupied.add(cell));
+  }
+  return fleet;
+};
+
+const emptyNavalBattleBoard = () => ({
+  size: navalBattleGridSize,
+  fleets: {
+    1: generateNavalFleet(),
+    2: generateNavalFleet(),
+  },
+  shots: {
+    1: [],
+    2: [],
+  },
+});
+
+const emptyBoardForGame = (gameType) => {
+  if (gameType === "tic_tac_toe") return emptyTicTacToeBoard();
+  if (gameType === "naval_battle") return emptyNavalBattleBoard();
+  return emptyConnectFourBoard();
+};
+
 const connectFourWinner = (board) => {
   const directions = [[1, 0], [0, 1], [1, 1], [1, -1]];
   for (let row = 0; row < 6; row += 1) {
@@ -1151,18 +1326,136 @@ const connectFourWinner = (board) => {
   return 0;
 };
 
+const ticTacToeWinner = (board) => {
+  const winningLines = [
+    [0, 1, 2],
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6],
+    [1, 4, 7],
+    [2, 5, 8],
+    [0, 4, 8],
+    [2, 4, 6],
+  ];
+  for (const [first, second, third] of winningLines) {
+    if (board[first] && board[first] === board[second] && board[first] === board[third]) {
+      return board[first];
+    }
+  }
+  return 0;
+};
+
+const gameWinner = (gameType, board) => {
+  if (gameType === "tic_tac_toe") return ticTacToeWinner(board);
+  if (gameType === "connect_four") return connectFourWinner(board);
+  return 0;
+};
+
+const isValidNavalShip = (ship, expectedLength) => {
+  if (!Array.isArray(ship)
+    || ship.length !== expectedLength
+    || !ship.every((cell) => Number.isInteger(cell) && cell >= 0 && cell < navalBattleGridSize ** 2)
+    || new Set(ship).size !== ship.length) return false;
+  const sorted = [...ship].sort((first, second) => first - second);
+  const sameRow = sorted.every((cell) => Math.floor(cell / navalBattleGridSize) === Math.floor(sorted[0] / navalBattleGridSize));
+  const horizontal = sameRow && sorted.every((cell, index) => cell === sorted[0] + index);
+  const vertical = sorted.every((cell, index) => cell === sorted[0] + index * navalBattleGridSize);
+  return horizontal || vertical;
+};
+
+const isValidNavalFleet = (fleet) => {
+  if (!Array.isArray(fleet) || fleet.length !== navalBattleShipLengths.length) return false;
+  const lengths = fleet.map((ship) => ship?.length).sort((first, second) => second - first);
+  const expectedLengths = [...navalBattleShipLengths].sort((first, second) => second - first);
+  if (!lengths.every((length, index) => length === expectedLengths[index])) return false;
+  if (!fleet.every((ship) => isValidNavalShip(ship, ship.length))) return false;
+  const cells = fleet.flat();
+  return new Set(cells).size === cells.length;
+};
+
+const isValidNavalShots = (shots) => Array.isArray(shots)
+  && shots.every((cell) => Number.isInteger(cell) && cell >= 0 && cell < navalBattleGridSize ** 2)
+  && new Set(shots).size === shots.length;
+
+const isValidNavalBattleBoard = (board) => Boolean(
+  board
+  && !Array.isArray(board)
+  && board.size === navalBattleGridSize
+  && isValidNavalFleet(board.fleets?.["1"])
+  && isValidNavalFleet(board.fleets?.["2"])
+  && isValidNavalShots(board.shots?.["1"])
+  && isValidNavalShots(board.shots?.["2"]),
+);
+
+const isValidGameBoard = (gameType, board) => {
+  if (gameType === "naval_battle") return isValidNavalBattleBoard(board);
+  const expectedLength = gameType === "tic_tac_toe" ? 9 : 42;
+  return Array.isArray(board)
+    && board.length === expectedLength
+    && board.every((cell) => cell === 0 || cell === 1 || cell === 2);
+};
+
+const navalShotResults = (shots, targetFleet) => {
+  const targetCells = new Set(targetFleet.flat());
+  return shots.map((cell) => ({ cell, result: targetCells.has(cell) ? "hit" : "miss" }));
+};
+
+const serializeGameForViewer = (game, viewerId) => {
+  if (game.game_type !== "naval_battle") return game;
+  const viewerNumber = viewerId === game.player_one_id ? 1 : viewerId === game.player_two_id ? 2 : 0;
+  if (!viewerNumber || !isValidNavalBattleBoard(game.board)) {
+    return { ...game, board: null };
+  }
+  const opponentNumber = viewerNumber === 1 ? 2 : 1;
+  const ownFleet = game.board.fleets[String(viewerNumber)];
+  const opponentFleet = game.board.fleets[String(opponentNumber)];
+  const ownShots = game.board.shots[String(viewerNumber)];
+  const opponentShots = game.board.shots[String(opponentNumber)];
+  const incomingShotResults = navalShotResults(opponentShots, ownFleet);
+  const shotResults = navalShotResults(ownShots, opponentFleet);
+  return {
+    ...game,
+    board: {
+      size: navalBattleGridSize,
+      ownFleet: ownFleet.map((cells) => ({
+        cells: [...cells],
+        hits: cells.filter((cell) => opponentShots.includes(cell)),
+      })),
+      incomingShots: incomingShotResults,
+      shots: shotResults,
+      hitsScored: shotResults.filter((shot) => shot.result === "hit").length,
+      damageTaken: incomingShotResults.filter((shot) => shot.result === "hit").length,
+      fleetSegments: navalBattleShipLengths.reduce((total, length) => total + length, 0),
+    },
+  };
+};
+
 const gameSelect = `select g.*, p1.display_name as player_one_name, p1.contact_id as player_one_contact_id,
   p1.role as player_one_role, p2.display_name as player_two_name, p2.contact_id as player_two_contact_id, p2.role as player_two_role
   from game_sessions g join accounts p1 on p1.id=g.player_one_id join accounts p2 on p2.id=g.player_two_id`;
 
-async function canPlayTogether(accountId, opponentId) {
-  const result = await pool.query(`select 1 where
+const currentGameRelationship = `(
+  exists(select 1 from conversation_members mine join conversation_members other using(conversation_id)
+    where mine.account_id=g.player_one_id and other.account_id=g.player_two_id)
+  or exists(select 1 from family_memberships parent join family_children child using(family_id)
+    where (parent.parent_id=g.player_one_id and child.child_id=g.player_two_id)
+      or (parent.parent_id=g.player_two_id and child.child_id=g.player_one_id))
+  or exists(select 1 from family_memberships mine join family_memberships other using(family_id)
+    where mine.parent_id=g.player_one_id and other.parent_id=g.player_two_id)
+  or exists(select 1 from family_children mine join family_children other using(family_id)
+    where mine.child_id=g.player_one_id and other.child_id=g.player_two_id)
+)`;
+
+async function canPlayTogether(accountId, opponentId, executor = pool) {
+  const result = await executor.query(`select 1 where
     exists(select 1 from conversation_members mine join conversation_members other using(conversation_id)
       where mine.account_id=$1 and other.account_id=$2)
     or exists(select 1 from family_memberships parent join family_children child using(family_id)
       where (parent.parent_id=$1 and child.child_id=$2) or (parent.parent_id=$2 and child.child_id=$1))
     or exists(select 1 from family_memberships mine join family_memberships other using(family_id)
-      where mine.parent_id=$1 and other.parent_id=$2)`, [accountId, opponentId]);
+      where mine.parent_id=$1 and other.parent_id=$2)
+    or exists(select 1 from family_children mine join family_children other using(family_id)
+      where mine.child_id=$1 and other.child_id=$2)`, [accountId, opponentId]);
   return Boolean(result.rowCount);
 }
 
@@ -1175,75 +1468,190 @@ app.get("/api/game-contacts", requireAuth, async (req, res) => {
         where (parent.parent_id=$1 and child.child_id=account.id) or (parent.parent_id=account.id and child.child_id=$1))
       or exists(select 1 from family_memberships mine join family_memberships other using(family_id)
         where mine.parent_id=$1 and other.parent_id=account.id)
+      or exists(select 1 from family_children mine join family_children other using(family_id)
+        where mine.child_id=$1 and other.child_id=account.id)
     ) order by account.role desc,account.display_name`, [req.auth.sub]);
   res.json({ contacts: result.rows.map((row) => ({ id: row.id, role: row.role, name: row.display_name, contactId: row.contact_id })) });
 });
 
 app.get("/api/games", requireAuth, async (req, res) => {
-  const result = await pool.query(`${gameSelect} where g.player_one_id=$1 or g.player_two_id=$1 order by g.updated_at desc limit 20`, [req.auth.sub]);
-  res.json({ games: result.rows });
+  const participantFilter = "(g.player_one_id=$1 or g.player_two_id=$1)";
+  const [openGames, recentGames] = await Promise.all([
+    pool.query(
+      `${gameSelect} where ${participantFilter} and g.status in ('pending','active')
+       and ${currentGameRelationship} order by g.updated_at desc`,
+      [req.auth.sub],
+    ),
+    pool.query(
+      `${gameSelect} where ${participantFilter} and g.status in ('declined','completed')
+       and ${currentGameRelationship} order by g.updated_at desc limit 20`,
+      [req.auth.sub],
+    ),
+  ]);
+  res.json({ games: [...openGames.rows, ...recentGames.rows].map((game) => serializeGameForViewer(game, req.auth.sub)) });
 });
 
 app.post("/api/games", requireAuth, async (req, res) => {
   const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
+  const gameType = String(req.body?.gameType ?? "connect_four").trim().toLowerCase();
+  if (!supportedGameTypes.has(gameType)) return res.status(400).json({ error: "Type de jeu invalide." });
   const opponentResult = await pool.query("select id,role from accounts where contact_id=$1", [contactId]);
   const opponent = opponentResult.rows[0];
   if (!opponent || opponent.id === req.auth.sub) return res.status(404).json({ error: "Contact introuvable." });
   if (!await canPlayTogether(req.auth.sub, opponent.id)) return res.status(403).json({ error: "Ce contact doit appartenir à votre famille ou être approuvé avant de jouer." });
   const result = await pool.query(`insert into game_sessions(game_type,player_one_id,player_two_id,invited_by,board)
-    values('connect_four',$1,$2,$1,$3::jsonb) returning id`, [req.auth.sub, opponent.id, JSON.stringify(emptyConnectFourBoard())]);
+    values($1,$2,$3,$2,$4::jsonb) returning id`, [gameType, req.auth.sub, opponent.id, JSON.stringify(emptyBoardForGame(gameType))]);
   const game = await pool.query(`${gameSelect} where g.id=$1`, [result.rows[0].id]);
   const inviter = await pool.query("select display_name from accounts where id=$1", [req.auth.sub]);
   await notifyAccounts([opponent.id], {
     title: "Invitation à jouer",
-    body: `${inviter.rows[0]?.display_name || "Un ami"} t’invite à jouer à Puissance 4.`,
+    body: `${inviter.rows[0]?.display_name || "Un ami"} t’invite pour une partie de ${gameNames[gameType]}.`,
     notificationType: "game",
     tag: `game-${result.rows[0].id}`,
     url: "/?notification=game",
   });
-  res.status(201).json({ game: game.rows[0] });
+  res.status(201).json({ game: serializeGameForViewer(game.rows[0], req.auth.sub) });
 });
 
 app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
   const action = req.body?.action;
   if (!["accept", "decline"].includes(action)) return res.status(400).json({ error: "Action de partie invalide." });
-  const gameResult = await pool.query("select * from game_sessions where id=$1 and player_two_id=$2", [req.params.gameId, req.auth.sub]);
-  const game = gameResult.rows[0];
-  if (!game || game.status !== "pending") return res.status(409).json({ error: "Cette invitation n’est plus disponible." });
-  const status = action === "accept" ? "active" : "declined";
-  const currentPlayerId = action === "accept" ? game.player_one_id : null;
-  await pool.query("update game_sessions set status=$1,current_player_id=$2,updated_at=now() where id=$3", [status, currentPlayerId, game.id]);
-  const updated = await pool.query(`${gameSelect} where g.id=$1`, [game.id]);
-  res.json({ game: updated.rows[0] });
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const gameResult = await client.query(
+      "select * from game_sessions where id=$1 and player_two_id=$2 for update",
+      [req.params.gameId, req.auth.sub],
+    );
+    const game = gameResult.rows[0];
+    if (!game || game.status !== "pending") {
+      await client.query("rollback");
+      return res.status(409).json({ error: "Cette invitation n’est plus disponible." });
+    }
+    if (!await canPlayTogether(game.player_one_id, game.player_two_id, client)) {
+      await client.query("rollback");
+      return res.status(403).json({ error: "Cette invitation n’est plus autorisée." });
+    }
+    const status = action === "accept" ? "active" : "declined";
+    const currentPlayerId = action === "accept" ? game.player_one_id : null;
+    await client.query(
+      "update game_sessions set status=$1,current_player_id=$2,updated_at=now() where id=$3",
+      [status, currentPlayerId, game.id],
+    );
+    const updated = await client.query(`${gameSelect} where g.id=$1`, [game.id]);
+    await client.query("commit");
+    return res.json({ game: serializeGameForViewer(updated.rows[0], req.auth.sub) });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
-  const column = Number(req.body?.column);
-  if (!Number.isInteger(column) || column < 0 || column > 6) return res.status(400).json({ error: "Colonne invalide." });
   const client = await pool.connect();
+  let nextPlayerId = null;
+  let gameType = null;
+  let playerName = "Un ami";
+  let committed = false;
   try {
     await client.query("begin");
     const result = await client.query("select * from game_sessions where id=$1 for update", [req.params.gameId]);
     const game = result.rows[0];
     if (!game || ![game.player_one_id, game.player_two_id].includes(req.auth.sub)) { await client.query("rollback"); return res.status(404).json({ error: "Partie introuvable." }); }
     if (game.status !== "active" || game.current_player_id !== req.auth.sub) { await client.query("rollback"); return res.status(409).json({ error: "Ce n’est pas votre tour." }); }
-    const board = Array.isArray(game.board) ? [...game.board] : emptyConnectFourBoard();
-    let targetIndex = -1;
-    for (let row = 5; row >= 0; row -= 1) if (!board[row * 7 + column]) { targetIndex = row * 7 + column; break; }
-    if (targetIndex < 0) { await client.query("rollback"); return res.status(409).json({ error: "Cette colonne est pleine." }); }
+    if (!await canPlayTogether(game.player_one_id, game.player_two_id, client)) {
+      await client.query("rollback");
+      return res.status(403).json({ error: "Cette partie n’est plus autorisée." });
+    }
+    if (!supportedGameTypes.has(game.game_type) || !isValidGameBoard(game.game_type, game.board)) {
+      await client.query("rollback");
+      return res.status(409).json({ error: "L’état de cette partie est invalide." });
+    }
+
+    gameType = game.game_type;
+    const move = req.body?.move ?? (gameType === "connect_four" ? req.body?.column : undefined);
+    const maximumMove = gameType === "naval_battle" ? 24 : gameType === "tic_tac_toe" ? 8 : 6;
+    if (!Number.isInteger(move) || move < 0 || move > maximumMove) {
+      await client.query("rollback");
+      return res.status(400).json({ error: gameType === "connect_four" ? "Colonne invalide." : "Case invalide." });
+    }
+
+    const board = gameType === "naval_battle"
+      ? {
+        ...game.board,
+        fleets: {
+          1: game.board.fleets["1"].map((ship) => [...ship]),
+          2: game.board.fleets["2"].map((ship) => [...ship]),
+        },
+        shots: {
+          1: [...game.board.shots["1"]],
+          2: [...game.board.shots["2"]],
+        },
+      }
+      : [...game.board];
+    let targetIndex = move;
+    if (gameType === "connect_four") {
+      targetIndex = -1;
+      for (let row = 5; row >= 0; row -= 1) {
+        if (!board[row * 7 + move]) {
+          targetIndex = row * 7 + move;
+          break;
+        }
+      }
+      if (targetIndex < 0) {
+        await client.query("rollback");
+        return res.status(409).json({ error: "Cette colonne est pleine." });
+      }
+    } else if (gameType === "tic_tac_toe" && board[targetIndex]) {
+      await client.query("rollback");
+      return res.status(409).json({ error: "Cette case est déjà occupée." });
+    }
+
     const playerValue = req.auth.sub === game.player_one_id ? 1 : 2;
-    board[targetIndex] = playerValue;
-    const winnerValue = connectFourWinner(board);
-    const isDraw = !winnerValue && board.every(Boolean);
-    const winnerId = winnerValue === 1 ? game.player_one_id : winnerValue === 2 ? game.player_two_id : null;
-    const status = winnerValue || isDraw ? "completed" : "active";
-    const nextPlayerId = status === "active" ? (req.auth.sub === game.player_one_id ? game.player_two_id : game.player_one_id) : null;
+    let winnerId = null;
+    let status = "active";
+    if (gameType === "naval_battle") {
+      const navalBoard = board;
+      const playerShots = navalBoard.shots[String(playerValue)];
+      if (playerShots.includes(move)) {
+        await client.query("rollback");
+        return res.status(409).json({ error: "Vous avez déjà visé cette case." });
+      }
+      playerShots.push(move);
+      const opponentValue = playerValue === 1 ? 2 : 1;
+      const opponentFleetCells = navalBoard.fleets[String(opponentValue)].flat();
+      if (opponentFleetCells.every((cell) => playerShots.includes(cell))) {
+        winnerId = req.auth.sub;
+        status = "completed";
+      }
+    } else {
+      board[targetIndex] = playerValue;
+      const winnerValue = gameWinner(gameType, board);
+      const isDraw = !winnerValue && board.every(Boolean);
+      winnerId = winnerValue === 1 ? game.player_one_id : winnerValue === 2 ? game.player_two_id : null;
+      status = winnerValue || isDraw ? "completed" : "active";
+    }
+    nextPlayerId = status === "active" ? (req.auth.sub === game.player_one_id ? game.player_two_id : game.player_one_id) : null;
+    const player = await client.query("select display_name from accounts where id=$1", [req.auth.sub]);
+    playerName = player.rows[0]?.display_name || "Un ami";
     await client.query("update game_sessions set board=$1::jsonb,status=$2,current_player_id=$3,winner_id=$4,updated_at=now() where id=$5", [JSON.stringify(board), status, nextPlayerId, winnerId, game.id]);
     await client.query("commit");
+    committed = true;
     const updated = await pool.query(`${gameSelect} where g.id=$1`, [game.id]);
-    res.json({ game: updated.rows[0] });
+    if (nextPlayerId) {
+      await notifyAccounts([nextPlayerId], {
+        title: "À toi de jouer",
+        body: `${playerName} vient de jouer dans votre partie de ${gameNames[gameType]}.`,
+        notificationType: "game",
+        tag: `game-${game.id}`,
+        url: "/?notification=game",
+      });
+    }
+    res.json({ game: serializeGameForViewer(updated.rows[0], req.auth.sub) });
   } catch (error) {
-    await client.query("rollback");
+    if (!committed) await client.query("rollback");
     throw error;
   } finally {
     client.release();

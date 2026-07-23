@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const CARD_SYMBOLS = ["★", "●", "▲", "◆", "♥", "✦"];
 const CARD_COLORS = [0xffd66b, 0x76e2c3, 0xff8fb5, 0x8fb8ff, 0xb69cff, 0xffa873];
@@ -12,9 +12,80 @@ function shuffle(values) {
   return result;
 }
 
+function CompatibleMemoryGame({ onComplete }) {
+  const deck = useMemo(() => shuffle(CARD_SYMBOLS.flatMap((symbol, pairIndex) => [
+    { id: `${pairIndex}-a`, symbol, pairIndex },
+    { id: `${pairIndex}-b`, symbol, pairIndex },
+  ])), []);
+  const [openCards, setOpenCards] = useState([]);
+  const [matchedPairs, setMatchedPairs] = useState([]);
+  const [moves, setMoves] = useState(0);
+  const [locked, setLocked] = useState(false);
+  const completionSentRef = useRef(false);
+  const closeCardsTimerRef = useRef(null);
+
+  useEffect(() => () => window.clearTimeout(closeCardsTimerRef.current), []);
+
+  useEffect(() => {
+    if (matchedPairs.length !== CARD_SYMBOLS.length || completionSentRef.current) return undefined;
+    completionSentRef.current = true;
+    const completionTimer = window.setTimeout(() => onComplete?.(), 350);
+    return () => window.clearTimeout(completionTimer);
+  }, [matchedPairs, onComplete]);
+
+  const revealCard = (index) => {
+    const card = deck[index];
+    if (locked || openCards.includes(index) || matchedPairs.includes(card.pairIndex)) return;
+    const nextOpenCards = [...openCards, index];
+    setOpenCards(nextOpenCards);
+    if (nextOpenCards.length < 2) return;
+
+    setMoves((current) => current + 1);
+    const [firstIndex, secondIndex] = nextOpenCards;
+    if (deck[firstIndex].pairIndex === deck[secondIndex].pairIndex) {
+      setMatchedPairs((current) => [...current, card.pairIndex]);
+      setOpenCards([]);
+      return;
+    }
+
+    setLocked(true);
+    closeCardsTimerRef.current = window.setTimeout(() => {
+      setOpenCards([]);
+      setLocked(false);
+    }, 650);
+  };
+
+  return (
+    <div className="compatible-memory" aria-label="Jeu de Memory, retrouve les six paires">
+      <strong>Retrouve les 6 paires</strong>
+      <span>{matchedPairs.length} paire{matchedPairs.length > 1 ? "s" : ""} · {moves} essai{moves > 1 ? "s" : ""}</span>
+      <div className="compatible-memory__grid">
+        {deck.map((card, index) => {
+          const isVisible = openCards.includes(index) || matchedPairs.includes(card.pairIndex);
+          return (
+            <button
+              type="button"
+              key={card.id}
+              className={`${isVisible ? "is-visible" : ""} ${matchedPairs.includes(card.pairIndex) ? "is-matched" : ""}`}
+              onClick={() => revealCard(index)}
+              disabled={locked || matchedPairs.includes(card.pairIndex)}
+              aria-label={isVisible ? `Carte ${card.symbol}` : "Carte cachée"}
+              aria-pressed={isVisible}
+              style={isVisible ? { "--memory-card-color": `#${CARD_COLORS[card.pairIndex].toString(16).padStart(6, "0")}` } : undefined}
+            >
+              <span>{isVisible ? card.symbol : "?"}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function PhaserMemoryGame({ onComplete }) {
   const hostRef = useRef(null);
   const onCompleteRef = useRef(onComplete);
+  const [status, setStatus] = useState("loading");
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -23,12 +94,21 @@ export default function PhaserMemoryGame({ onComplete }) {
   useEffect(() => {
     let game;
     let cancelled = false;
+    let fallbackTimer;
+
+    const useCompatibleGame = () => {
+      if (cancelled) return;
+      game?.destroy(true);
+      game = undefined;
+      setStatus("fallback");
+    };
 
     import("phaser").then(({ default: Phaser }) => {
       if (cancelled || !hostRef.current) return;
 
       class MemoryScene extends Phaser.Scene {
         create() {
+          if (cancelled) return;
           this.cameras.main.setBackgroundColor("#f7f4ff");
           this.add.text(150, 23, "Retrouve les 6 paires", {
             fontFamily: "Nunito, sans-serif",
@@ -57,6 +137,8 @@ export default function PhaserMemoryGame({ onComplete }) {
             const row = Math.floor(index / 4);
             this.createCard(45 + column * 70, 102 + row * 78, card);
           });
+          window.clearTimeout(fallbackTimer);
+          setStatus("ready");
         }
 
         createCard(x, y, data) {
@@ -123,24 +205,38 @@ export default function PhaserMemoryGame({ onComplete }) {
         }
       }
 
-      game = new Phaser.Game({
-        type: Phaser.AUTO,
-        parent: hostRef.current,
-        width: 300,
-        height: 350,
-        transparent: true,
-        scene: MemoryScene,
-        scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-        render: { antialias: true, pixelArt: false },
-        audio: { noAudio: true },
-      });
-    });
+      try {
+        game = new Phaser.Game({
+          type: Phaser.CANVAS,
+          parent: hostRef.current,
+          width: 300,
+          height: 350,
+          transparent: false,
+          backgroundColor: "#f7f4ff",
+          scene: MemoryScene,
+          scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+          render: { antialias: true, pixelArt: false, roundPixels: true },
+          audio: { noAudio: true },
+        });
+      } catch {
+        useCompatibleGame();
+      }
+    }).catch(useCompatibleGame);
+
+    fallbackTimer = window.setTimeout(useCompatibleGame, 7000);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(fallbackTimer);
       game?.destroy(true);
     };
   }, []);
 
-  return <div className="phaser-memory-game" ref={hostRef} aria-label="Jeu de Memory, retrouve les six paires" />;
+  return (
+    <div className={`phaser-memory-game phaser-memory-game--${status}`}>
+      {status !== "fallback" && <div className="phaser-memory-game__host" ref={hostRef} aria-label="Jeu de Memory, retrouve les six paires" />}
+      {status === "loading" && <div className="phaser-memory-game__loading" role="status"><span /><strong>Préparation du jeu…</strong></div>}
+      {status === "fallback" && <CompatibleMemoryGame onComplete={onComplete} />}
+    </div>
+  );
 }

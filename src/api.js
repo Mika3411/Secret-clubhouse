@@ -1,19 +1,26 @@
 const TOKEN_KEY = "secret-clubhouse-session";
+const TOKEN_CLEARED_KEY = `${TOKEN_KEY}-cleared`;
 const API_ORIGIN = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
 export const getToken = () => {
+  const tabToken = sessionStorage.getItem(TOKEN_KEY);
+  if (tabToken) return tabToken;
+  if (sessionStorage.getItem(TOKEN_CLEARED_KEY)) return null;
   const persistentToken = localStorage.getItem(TOKEN_KEY);
-  if (persistentToken) return persistentToken;
-  const legacyToken = sessionStorage.getItem(TOKEN_KEY);
-  if (legacyToken) {
-    localStorage.setItem(TOKEN_KEY, legacyToken);
-    sessionStorage.removeItem(TOKEN_KEY);
-  }
-  return legacyToken;
+  if (persistentToken) sessionStorage.setItem(TOKEN_KEY, persistentToken);
+  return persistentToken;
 };
 export const clearToken = () => {
-  localStorage.removeItem(TOKEN_KEY);
+  const tabToken = sessionStorage.getItem(TOKEN_KEY);
   sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.setItem(TOKEN_CLEARED_KEY, "1");
+  if (tabToken && localStorage.getItem(TOKEN_KEY) === tabToken) localStorage.removeItem(TOKEN_KEY);
+};
+
+const storeToken = (token) => {
+  sessionStorage.removeItem(TOKEN_CLEARED_KEY);
+  sessionStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(TOKEN_KEY, token);
 };
 
 async function request(path, options = {}) {
@@ -24,7 +31,7 @@ async function request(path, options = {}) {
   const response = await fetch(`${API_ORIGIN}/api${path}`, { ...options, headers });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || "Le serveur est indisponible.");
-  if (payload.token) localStorage.setItem(TOKEN_KEY, payload.token);
+  if (payload.token) storeToken(payload.token);
   return payload;
 }
 
@@ -56,9 +63,9 @@ export const api = {
   addContact: (contactId) => request("/contact-requests", { method: "POST", body: JSON.stringify({ contactId }) }),
   games: () => request("/games"),
   gameContacts: () => request("/game-contacts"),
-  inviteGame: (contactId) => request("/games", { method: "POST", body: JSON.stringify({ contactId }) }),
+  inviteGame: (contactId, gameType = "connect_four") => request("/games", { method: "POST", body: JSON.stringify({ contactId, gameType }) }),
   respondToGame: (gameId, action) => request(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify({ action }) }),
-  playGameMove: (gameId, column) => request(`/games/${encodeURIComponent(gameId)}/moves`, { method: "POST", body: JSON.stringify({ column }) }),
+  playGameMove: (gameId, move) => request(`/games/${encodeURIComponent(gameId)}/moves`, { method: "POST", body: JSON.stringify({ move }) }),
   sendMessage: (conversationId, text) => request(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   typing: (conversationId) => request(`/conversations/${encodeURIComponent(conversationId)}/typing`),
   setTyping: (conversationId, active) => request(`/conversations/${encodeURIComponent(conversationId)}/typing`, { method: "POST", body: JSON.stringify({ active }) }),

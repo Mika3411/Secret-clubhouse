@@ -3218,16 +3218,109 @@ input:focus-visible {
 }
 
 .phaser-memory-game {
+  position: relative;
   width: min(100%, 300px);
   aspect-ratio: 6 / 7;
   overflow: hidden;
   border-radius: 18px;
+  background: #f7f4ff;
 }
 
-.phaser-memory-game canvas {
+.phaser-memory-game__host {
+  width: 100%;
+  height: 100%;
+}
+
+.phaser-memory-game__host canvas {
   display: block;
   max-width: 100%;
   touch-action: manipulation;
+}
+
+.phaser-memory-game__loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: #6549ce;
+  background: #f7f4ff;
+  font-size: 11px;
+}
+
+.phaser-memory-game__loading > span {
+  width: 34px;
+  height: 34px;
+  border: 4px solid #dcd4fa;
+  border-top-color: #6549ce;
+  border-radius: 50%;
+  animation: memory-loading-spin .75s linear infinite;
+}
+
+@keyframes memory-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+.compatible-memory {
+  display: grid;
+  height: 100%;
+  align-content: start;
+  justify-items: center;
+  gap: 3px;
+  padding: 14px 10px 10px;
+}
+
+.compatible-memory > strong {
+  color: #120966;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 18px;
+}
+
+.compatible-memory > span {
+  color: #716b80;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.compatible-memory__grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.compatible-memory__grid > button {
+  display: grid;
+  min-width: 0;
+  aspect-ratio: 58 / 66;
+  place-items: center;
+  color: #dffff5;
+  border: 2px solid #fff;
+  border-radius: 11px;
+  background: #6549ce;
+  box-shadow: 0 4px 9px rgba(18, 9, 102, 0.14);
+  touch-action: manipulation;
+}
+
+.compatible-memory__grid > button span {
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.compatible-memory__grid > button.is-visible {
+  color: #120966;
+  background: var(--memory-card-color);
+}
+
+.compatible-memory__grid > button.is-matched {
+  border-color: #76e2c3;
+  opacity: .78;
+}
+
+.compatible-memory__grid > button:disabled {
+  cursor: default;
 }
 
 .clubhouse-memory > p {
@@ -3358,6 +3451,492 @@ input:focus-visible {
 .game-back-lobby { min-height: 38px; padding: 0 13px; color: #6549ce; border-radius: 15px; background: #ebe6ff; font-size: 9px; font-weight: 900; }
 .game-error { margin: 0; color: #b42352; font-size: 10px; font-weight: 900; text-align: center; }
 .game-empty-contacts { display: flex; align-items: center; gap: 6px; padding: 10px; border-radius: 12px; background: #eefbf7; }
+
+.multiplayer-hub,
+.multiplayer-game {
+  width: 100%;
+  align-content: start;
+}
+
+.multiplayer-game-picker {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.multiplayer-game-picker__option {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 82px;
+  grid-template-columns: 29px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 10px 9px;
+  color: #4f4770;
+  border: 2px solid #ded7f3;
+  border-radius: 16px;
+  background: #fff;
+  text-align: left;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.multiplayer-game-picker__option > em {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  min-width: 19px;
+  height: 19px;
+  place-items: center;
+  padding: 0 5px;
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 10px;
+  background: #a83f69;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.multiplayer-game-picker__option > svg {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  padding: 5px;
+  color: #6549ce;
+  border-radius: 10px;
+  background: #eee9ff;
+}
+
+.multiplayer-game-picker__option > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding-right: 12px;
+}
+
+.multiplayer-game-picker__option strong {
+  color: #120966;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 13px;
+  line-height: 1.05;
+}
+
+.multiplayer-game-picker__option small {
+  color: #746d84;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.multiplayer-game-picker__option.is-selected {
+  color: #120966;
+  border-color: #31caa4;
+  background: #dcfff5;
+  box-shadow: 0 6px 14px rgba(36, 173, 136, .12);
+}
+
+.multiplayer-game-picker__option.is-selected > svg {
+  color: #120966;
+  background: var(--mint);
+}
+
+.multiplayer-game-picker__option:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.multiplayer-game-picker__option:nth-child(3):last-child {
+  min-height: 68px;
+  grid-column: 1 / -1;
+  align-items: center;
+}
+
+.multiplayer-game-list,
+.multiplayer-invite-panel {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+}
+
+.multiplayer-game-list h4,
+.multiplayer-invite-panel h4 {
+  margin: 0;
+  color: #34276d;
+  font-size: 10px;
+  font-weight: 900;
+  text-align: left;
+}
+
+.multiplayer-game-card {
+  border: 1px solid #ded7f3;
+  box-shadow: 0 5px 13px rgba(36, 26, 94, .08);
+}
+
+.multiplayer-resume-card {
+  display: grid;
+  width: 100%;
+  min-height: 54px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  color: #120966;
+  border: 1px solid #d9d2ef;
+  border-radius: 15px;
+  background: #fff;
+  text-align: left;
+  box-shadow: 0 5px 13px rgba(36, 26, 94, .07);
+}
+
+.multiplayer-resume-card > span:first-child {
+  display: grid;
+  min-width: 0;
+}
+
+.multiplayer-resume-card strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiplayer-resume-card small {
+  color: #746d84;
+  font-size: 8px;
+}
+
+.multiplayer-resume-card > span:last-child {
+  padding: 6px 8px;
+  color: #075f4c;
+  border-radius: 10px;
+  background: #d8fff4;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.multiplayer-invite-panel {
+  padding: 11px;
+  border: 1px solid #e0daf2;
+  border-radius: 17px;
+  background: #fff;
+}
+
+.multiplayer-contact-picker {
+  justify-content: flex-start;
+  max-height: 128px;
+  overflow-y: auto;
+}
+
+.multiplayer-invite-panel .clubhouse-modal__primary {
+  width: 100%;
+}
+
+.multiplayer-game__status {
+  gap: 1px;
+}
+
+.multiplayer-game__status small {
+  color: #24ad88;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.multiplayer-board {
+  grid-template-columns: repeat(var(--game-columns), minmax(0, 1fr));
+}
+
+.multiplayer-board--connect_four {
+  max-width: 310px;
+}
+
+.multiplayer-board--tic_tac_toe {
+  width: min(100%, 270px);
+  gap: 8px;
+  padding: 10px;
+  border: 2px solid #afa2ea;
+  border-radius: 22px;
+  background: #dcd5ff;
+  box-shadow: 0 10px 24px rgba(43, 31, 115, .17);
+}
+
+.multiplayer-board--tic_tac_toe .multiplayer-board__cell {
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(32, 24, 91, .1);
+}
+
+.multiplayer-board--tic_tac_toe .multiplayer-board__cell > span {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: #120966;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: none;
+  font-family: "Baloo 2", sans-serif;
+  font-size: clamp(32px, 12vw, 48px);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.multiplayer-board--tic_tac_toe .multiplayer-board__cell.player-1 > span {
+  color: #8a5b00;
+  background: #fff1bd;
+}
+
+.multiplayer-board--tic_tac_toe .multiplayer-board__cell.player-2 > span {
+  color: #9d315a;
+  background: #ffe0eb;
+}
+
+.multiplayer-board__cell:disabled {
+  cursor: default;
+}
+
+.multiplayer-game__legend {
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.multiplayer-game__back {
+  min-height: 42px;
+}
+
+.multiplayer-game--naval_battle {
+  gap: 14px;
+}
+
+.naval-battle {
+  display: grid;
+  width: min(100%, 360px);
+  justify-items: center;
+  gap: 16px;
+}
+
+.naval-battle__zone {
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  gap: 7px;
+  padding: 11px;
+  border: 2px solid #a99bea;
+  border-radius: 20px;
+  background: #e8e3ff;
+  box-shadow: 0 9px 20px rgba(43, 31, 115, .12);
+}
+
+.naval-battle__zone--own {
+  width: min(100%, 290px);
+  border-color: #8ddfcb;
+  background: #e3fff7;
+  box-shadow: 0 9px 20px rgba(19, 119, 94, .1);
+}
+
+.naval-battle__zone-heading {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #120966;
+  text-align: left;
+}
+
+.naval-battle__zone-heading > span {
+  display: grid;
+  min-width: 0;
+}
+
+.naval-battle__zone-heading strong {
+  font-family: "Baloo 2", sans-serif;
+  font-size: 13px;
+  line-height: 1.05;
+}
+
+.naval-battle__zone-heading small {
+  color: #6e6780;
+  font-size: 7px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.naval-battle__zone-heading em {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  color: #075f4c;
+  border-radius: 10px;
+  background: #c9faed;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.naval-grid {
+  display: grid;
+  width: min(100%, 300px);
+  grid-template-columns: repeat(var(--naval-size), minmax(0, 1fr));
+  gap: 4px;
+  padding: 7px;
+  border: 2px solid #5140aa;
+  border-radius: 17px;
+  background: #6d5bd1;
+}
+
+.naval-grid--fleet {
+  width: min(100%, 235px);
+  border-color: #1f8d75;
+  background: #60cfb3;
+}
+
+.naval-cell {
+  position: relative;
+  display: grid;
+  aspect-ratio: 1;
+  min-width: 0;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+  color: #120966;
+  border: 0;
+  border-radius: 10px;
+  background: #eef0ff;
+  box-shadow: inset 0 0 0 1px rgba(33, 28, 95, .09);
+}
+
+.naval-cell > small {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  color: #625b88;
+  font-size: 6px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.naval-cell > span {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: #120966;
+  font-family: "Baloo 2", sans-serif;
+  font-size: clamp(20px, 7vw, 34px);
+  font-weight: 900;
+  line-height: 1;
+}
+
+.naval-cell--target {
+  min-height: 44px;
+  transition: transform .14s ease, background .14s ease;
+}
+
+.naval-cell--target:not(:disabled):hover {
+  transform: translateY(-2px);
+  background: #fff;
+}
+
+.naval-cell--target:not(:disabled):focus-visible {
+  outline: 3px solid #31caa4;
+  outline-offset: 2px;
+}
+
+.naval-cell.has-ship {
+  background: #cec4ff;
+  box-shadow: inset 0 0 0 3px #6549ce;
+}
+
+.naval-cell.has-ship > span {
+  color: #4b38ad;
+  font-size: clamp(14px, 5vw, 23px);
+}
+
+.naval-cell.is-hit {
+  color: #701b3d;
+  background: #ffc5d9;
+  box-shadow: inset 0 0 0 3px #d14d7f;
+}
+
+.naval-cell.is-hit > span {
+  color: #8f2850;
+}
+
+.naval-cell.is-miss {
+  color: #185d84;
+  background: #d7f3ff;
+  box-shadow: inset 0 0 0 2px #72bee1;
+}
+
+.naval-cell.is-miss > span {
+  color: #267ca7;
+}
+
+.naval-cell:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.naval-battle__legend {
+  display: flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 13px;
+  color: #615b73;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.naval-battle__legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.naval-battle__legend i {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  color: #120966;
+  border-radius: 5px;
+  background: #cec4ff;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1;
+}
+
+.naval-battle__legend i.is-ship {
+  box-shadow: inset 0 0 0 2px #6549ce;
+}
+
+.naval-battle__legend i.is-hit {
+  color: #8f2850;
+  background: #ffc5d9;
+}
+
+.naval-battle__legend i.is-miss {
+  color: #267ca7;
+  background: #d7f3ff;
+}
+
+@media (min-width: 700px) {
+  .multiplayer-game-picker {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .multiplayer-game-picker__option:nth-child(3):last-child {
+    min-height: 82px;
+    grid-column: auto;
+    align-items: start;
+  }
+}
 
 .clubhouse-complete {
   justify-items: center;
@@ -3745,6 +4324,31 @@ input:focus-visible {
   color: #596b68;
   font-size: 9px;
   line-height: 1.35;
+}
+
+.family-conversation-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #f2ced9;
+  border-radius: 14px;
+  color: #8b3150;
+  background: #fff2f6;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.family-conversation-warning button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 11px;
+  color: #fff;
+  background: #7256d9;
+  font: inherit;
+  cursor: pointer;
 }
 
 .parent-inbox-title {

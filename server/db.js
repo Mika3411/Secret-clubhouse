@@ -103,12 +103,32 @@ export async function initializeDatabase() {
     where not exists (select 1 from family_memberships fm where fm.parent_id = f.legacy_owner_id)
     on conflict (parent_id) do nothing;
 
-    insert into family_children(family_id, child_id)
-    select fm.family_id, child.id
+    insert into family_children(family_id, child_id, added_at)
+    select fm.family_id, child.id, child.created_at
     from accounts child
-    join family_memberships fm on fm.parent_id = child.parent_id and fm.role = 'primary'
+    join family_memberships fm on fm.parent_id = child.parent_id
     where child.role = 'child'
     on conflict (child_id) do nothing;
+
+    -- During a rolling deploy an older service can still create a child without
+    -- inserting family_children. Attach that account to its owner's current
+    -- family immediately, whether the owner is primary or co-parent.
+    create or replace function attach_new_child_to_current_family()
+    returns trigger language plpgsql as $$
+    begin
+      insert into family_children(family_id, child_id, added_at)
+      select membership.family_id, new.id, new.created_at
+      from family_memberships membership
+      where membership.parent_id = new.parent_id
+      on conflict (child_id) do nothing;
+      return new;
+    end;
+    $$;
+    drop trigger if exists accounts_attach_new_child_to_family on accounts;
+    create trigger accounts_attach_new_child_to_family
+    after insert on accounts
+    for each row when (new.role = 'child')
+    execute function attach_new_child_to_current_family();
 
     create table if not exists conversations (
       id uuid primary key default gen_random_uuid(),
@@ -171,7 +191,7 @@ export async function initializeDatabase() {
 
     create table if not exists game_sessions (
       id uuid primary key default gen_random_uuid(),
-      game_type text not null check (game_type in ('connect_four')),
+      game_type text not null check (game_type in ('connect_four','tic_tac_toe','naval_battle')),
       player_one_id uuid not null references accounts(id) on delete cascade,
       player_two_id uuid not null references accounts(id) on delete cascade,
       invited_by uuid not null references accounts(id) on delete cascade,
@@ -183,6 +203,9 @@ export async function initializeDatabase() {
       updated_at timestamptz not null default now(),
       check (player_one_id <> player_two_id)
     );
+    alter table game_sessions drop constraint if exists game_sessions_game_type_check;
+    alter table game_sessions add constraint game_sessions_game_type_check
+      check (game_type in ('connect_four','tic_tac_toe','naval_battle'));
     create index if not exists game_sessions_players_idx on game_sessions(player_one_id, player_two_id, updated_at desc);
 
     create table if not exists presence (

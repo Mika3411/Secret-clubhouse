@@ -164,11 +164,12 @@ const clubhouseActivities = [
     steps: ["Choisis une activité secrète", "Mime-la pendant trente secondes", "Laisse les autres proposer une réponse"],
   },
   {
-    id: "connect-four",
+    id: "multiplayer-games",
     type: "game",
-    variant: "connect-four",
-    title: "Puissance 4 à deux",
-    description: "Invite un contact approuvé et joue chacun ton tour.",
+    multiplayer: true,
+    variant: "multiplayer",
+    title: "Jeux multijoueurs",
+    description: "Invite un contact approuvé à Puissance 4, au Morpion ou à la Bataille navale.",
     duration: 8,
     reward: 40,
     Icon: UsersThree,
@@ -1645,7 +1646,10 @@ function ClubhouseScreen({ child }) {
   const [sessionQuestions, setSessionQuestions] = useState([]);
   const questionDecksRef = useRef({});
   const featuredActivity = clubhouseActivities.find((activity) => activity.featured);
-  const visibleActivities = clubhouseActivities.filter((activity) => !activity.featured && (filter === "all" || activity.type === filter));
+  const visibleActivities = clubhouseActivities.filter((activity) => !activity.featured && (
+    filter === "all"
+    || (filter === "multiplayer" ? activity.multiplayer : activity.type === filter)
+  ));
   const currentQuestion = sessionQuestions[questionIndex] ?? null;
   const progress = Math.round((completedActivities.size / clubhouseActivities.length) * 100);
 
@@ -1753,7 +1757,7 @@ function ClubhouseScreen({ child }) {
         <div className="clubhouse-section-title"><div><span>À toi de jouer</span><h2>Défis et mini-jeux</h2></div><GameController size={25} weight="fill" /></div>
 
         <div className="clubhouse-filters" role="tablist" aria-label="Filtrer les activités">
-          {[{ id: "all", label: "Tout" }, { id: "challenge", label: "Défis" }, { id: "game", label: "Jeux" }].map((item) => (
+          {[{ id: "all", label: "Tout" }, { id: "challenge", label: "Défis" }, { id: "game", label: "Jeux" }, { id: "multiplayer", label: "Multi" }].map((item) => (
             <button key={item.id} type="button" role="tab" aria-selected={filter === item.id} className={filter === item.id ? "is-active" : ""} onClick={() => setFilter(item.id)}>{item.label}</button>
           ))}
         </div>
@@ -1764,7 +1768,7 @@ function ClubhouseScreen({ child }) {
             const isComplete = completedActivities.has(activity.id);
             return (
               <button type="button" className={`clubhouse-card clubhouse-card--${activity.tone}`} key={activity.id} onClick={() => openActivity(activity)}>
-                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
+                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.multiplayer ? "Multijoueur" : activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
                 <strong>{activity.title}</strong>
                 <small>{activity.description}</small>
                 <span className="clubhouse-card__meta"><span><Timer size={13} weight="bold" /> {activity.duration} min</span><span><Star size={13} weight="fill" /> +{activity.reward}</span></span>
@@ -1791,7 +1795,7 @@ function ClubhouseScreen({ child }) {
               <>
                 <div className={`clubhouse-modal__hero clubhouse-modal__hero--${selectedActivity.tone}`}>
                   <span><selectedActivity.Icon size={34} weight="fill" /></span>
-                  <div><small>{selectedActivity.type === "game" ? "Mini-jeu" : "Défi créatif"}</small><h2 id="clubhouse-activity-title">{selectedActivity.title}</h2></div>
+                  <div><small>{selectedActivity.multiplayer ? "Multijoueur privé" : selectedActivity.type === "game" ? "Mini-jeu" : "Défi créatif"}</small><h2 id="clubhouse-activity-title">{selectedActivity.title}</h2></div>
                 </div>
 
                 {phase === "intro" && (
@@ -1828,7 +1832,7 @@ function ClubhouseScreen({ child }) {
                   <div className="clubhouse-memory"><PhaserMemoryGame onComplete={completeActivity} /><p><ShieldCheck size={15} weight="fill" /> Le jeu reste entièrement dans Secret Clubhouse.</p></div>
                 )}
 
-                {phase === "active" && selectedActivity.variant === "connect-four" && (
+                {phase === "active" && selectedActivity.variant === "multiplayer" && (
                   <ConnectFourGame child={child} onComplete={completeActivity} />
                 )}
               </>
@@ -2227,11 +2231,11 @@ function ParentGamesScreen({ parent, onBack }) {
     <section className="parent-games-screen" aria-labelledby="parent-games-title">
       <header className="parent-messages-header">
         <button type="button" className="parent-back-button" onClick={onBack} aria-label="Retour au tableau de bord parent"><ArrowLeft size={22} weight="bold" /></button>
-        <div><span>Mode parent</span><h1 id="parent-games-title">Jeux en famille</h1></div>
+        <div><span>Mode parent</span><h1 id="parent-games-title">Multijoueur</h1></div>
         <span className="parent-games-screen__icon"><GameController size={25} weight="fill" /></span>
       </header>
       <div className="parent-games-screen__content">
-        <div className="parent-games-intro"><ShieldCheck size={20} weight="fill" /><span><strong>Un espace de jeu privé</strong><small>Jouez avec vos enfants, vos co-parents et vos contacts approuvés.</small></span></div>
+        <div className="parent-games-intro"><ShieldCheck size={20} weight="fill" /><span><strong>Un espace de jeu privé</strong><small>Puissance 4, Morpion et Bataille navale avec vos enfants, vos co-parents et vos contacts approuvés.</small></span></div>
         <ConnectFourGame child={parent} />
       </div>
     </section>
@@ -2267,7 +2271,7 @@ function ParentDashboard({ parentName, family, children, child, onSelectChild, o
 
         <button type="button" className="parent-games-entry" onClick={onOpenGames}>
           <span className="parent-games-entry__icon"><GameController size={24} weight="fill" /></span>
-          <span><strong>Jeux en famille</strong><small>Acceptez une invitation ou lancez une partie avec vos enfants.</small></span>
+          <span><strong>Jeux multijoueurs</strong><small>Invitez un proche à Puissance 4, au Morpion ou à la Bataille navale.</small></span>
           <CaretRight size={18} weight="bold" aria-hidden="true" />
         </button>
 
@@ -2360,7 +2364,7 @@ function ParentDashboard({ parentName, family, children, child, onSelectChild, o
   );
 }
 
-function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onSendMedia, onOpenFamilyConversation, initialContactId = "", onContactHandled }) {
+function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onSendMedia, onOpenFamilyConversation, conversationSyncError = "", onRetryConversationSync, initialContactId = "", onContactHandled }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
@@ -2504,6 +2508,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
 
       <div className="parent-messages-content">
         <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à l’autre parent de la famille, à vos enfants ou aux parents de leurs contacts, sans voir les discussions entre enfants.</p></div></div>
+        {conversationSyncError && <div className="family-conversation-warning" role="alert"><Shield size={18} weight="fill" /><span>{conversationSyncError}</span><button type="button" onClick={onRetryConversationSync}>Réessayer</button></div>}
         <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter un contact</span></button></div>
         <div className="parent-thread-list">
           {threads.map((thread) => (
@@ -2898,6 +2903,7 @@ export function App() {
   const [isAvatarPreferencesOpen, setIsAvatarPreferencesOpen] = useState(false);
   const [parentThreads, setParentThreads] = useState([]);
   const [serverConversations, setServerConversations] = useState([]);
+  const [familyConversationSyncError, setFamilyConversationSyncError] = useState("");
   const [selectedParentThreadId, setSelectedParentThreadId] = useState(null);
   const [presenceByContactId, setPresenceByContactId] = useState({});
   const [pendingContactId, setPendingContactId] = useState(() => {
@@ -3007,10 +3013,37 @@ export function App() {
     return mapped;
   };
 
+  const syncFamilyConversations = async (familyChildren, initialConversationData = null) => {
+    let conversationData = initialConversationData ?? await api.conversations();
+    const findMissingChildren = () => {
+      const familyConversationIds = new Set(conversationData.conversations
+        .filter((conversation) => conversation.kind === "child" && conversation.contact_role === "child")
+        .map((conversation) => conversation.contact_id));
+      return familyChildren.filter((child) => !familyConversationIds.has(child.contactId));
+    };
+
+    let missingChildren = findMissingChildren();
+    if (missingChildren.length) {
+      await Promise.allSettled(missingChildren.map((child) => api.openFamilyConversation(child.contactId)));
+      try {
+        conversationData = await api.conversations();
+      } catch {
+        setFamilyConversationSyncError("Certaines conversations familiales sont temporairement indisponibles.");
+        return conversationData;
+      }
+      missingChildren = findMissingChildren();
+    }
+    setFamilyConversationSyncError(missingChildren.length
+      ? `Conversation temporairement indisponible avec ${missingChildren.map((child) => child.name).join(", ")}.`
+      : "");
+    return conversationData;
+  };
+
   const openAuthenticatedSession = async (parent) => {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     applyFamilyChildren([]);
-    const [childrenData, conversationData, familyData] = await Promise.all([api.children(), api.conversations(), api.family()]);
+    const [childrenData, familyData] = await Promise.all([api.children(), api.family()]);
+    const conversationData = await syncFamilyConversations(childrenData.children);
     applyFamilyChildren(childrenData.children);
     applyServerConversations({ ...parentWithId, role: "parent" }, conversationData.conversations);
     setFamily(normalizeFamily(familyData, parentWithId));
@@ -3086,6 +3119,7 @@ export function App() {
     setSchedulesByChild({});
     setParentThreads([]);
     setServerConversations([]);
+    setFamilyConversationSyncError("");
     setParentView(null);
     setChildModal(null);
     setScheduleModalChildId(null);
@@ -3172,13 +3206,30 @@ export function App() {
       ? await api.updateChild(childData.id, profile)
       : await api.createChild(profile);
     const savedChild = result.child;
-    setChildren((current) => childData.id
-      ? current.map((item) => item.id === savedChild.id ? savedChild : item)
-      : [...current, savedChild]);
+    const nextChildren = childData.id
+      ? children.map((item) => item.id === savedChild.id ? savedChild : item)
+      : [...children, savedChild];
+    setChildren(nextChildren);
     setActiveChildId(savedChild.id);
     setSettingsByChild((current) => ({ ...current, [savedChild.id]: cloneSafetySettings(savedChild.settings) }));
     setSchedulesByChild((current) => ({ ...current, [savedChild.id]: cloneCommunicationSchedule(savedChild.schedule) }));
     setChildModal(null);
+
+    try {
+      const refreshedConversations = await syncFamilyConversations(nextChildren);
+      applyServerConversations(session, refreshedConversations.conversations);
+    } catch {
+      setFamilyConversationSyncError(`Le profil de ${savedChild.name} est enregistré, mais sa conversation est temporairement indisponible.`);
+    }
+  };
+
+  const retryFamilyConversationSync = async () => {
+    try {
+      const conversationData = await syncFamilyConversations(children);
+      applyServerConversations(session, conversationData.conversations);
+    } catch {
+      setFamilyConversationSyncError("La resynchronisation est indisponible pour le moment. Réessayez plus tard.");
+    }
   };
 
   const deleteChild = async (childId) => {
@@ -3369,7 +3420,7 @@ export function App() {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenFamilyConversation={openFamilyConversation} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenFamilyConversation={openFamilyConversation} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
@@ -3416,7 +3467,7 @@ export function App() {
     const availableConversations = serverConversations.map((conversation) => ({ ...conversation, online: presenceByContactId[conversation.contactId] ?? false }));
     const approvedFriends = availableConversations.filter((conversation) => !conversation.isFamily && conversation.contactRole !== "parent");
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeSchedule, activeSettings, activeTab, children, family, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
+  }, [activeChild, activeSchedule, activeSettings, activeTab, children, family, familyConversationSyncError, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
