@@ -932,7 +932,16 @@ app.post("/api/push/test", requireAuth, async (req, res) => {
   const mode = req.body?.mode ?? "encrypted";
   if (!endpoint.startsWith("https://") || endpoint.length > 2048) return res.status(400).json({ error: "Abonnement de test invalide." });
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return res.status(400).json({ error: "Identifiant de test invalide." });
-  if (mode !== "encrypted") return res.status(400).json({ error: "Mode de test invalide." });
+  if (!["encrypted", "payloadless"].includes(mode)) return res.status(400).json({ error: "Mode de test invalide." });
+  if (mode === "payloadless") {
+    return res.json({
+      accepted: true,
+      mode,
+      skipped: true,
+      transportStatus: null,
+      providerStatus: "legacy_skipped",
+    });
+  }
   const subscriptions = await pool.query("select id,subscription from push_subscriptions where account_id=$1 and endpoint=$2", [req.auth.sub, endpoint]);
   if (!subscriptions.rowCount) {
     return res.status(409).json({
