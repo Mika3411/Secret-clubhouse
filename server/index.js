@@ -894,15 +894,18 @@ async function notifyConversation(conversationId, senderId, payload) {
 }
 
 app.post("/api/push/test", requireAuth, async (req, res) => {
-  const delivered = await notifyAccounts([req.auth.sub], {
+  const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint.trim() : "";
+  if (!endpoint.startsWith("https://") || endpoint.length > 2048) return res.status(400).json({ error: "Abonnement de test invalide." });
+  const subscriptions = await pool.query("select id,subscription from push_subscriptions where account_id=$1 and endpoint=$2", [req.auth.sub, endpoint]);
+  const accepted = await deliverWebPush(subscriptions.rows, {
     title: "Secret Clubhouse est prêt",
-    body: "Les notifications Windows fonctionnent sur cet appareil.",
+    body: "Votre notification de test a été envoyée.",
     notificationType: "test",
     tag: "secret-clubhouse-test",
     url: "/?notification=test",
   });
-  if (!delivered) return res.status(409).json({ error: "Aucun abonnement actif n’a reçu la notification de test." });
-  res.json({ delivered });
+  if (!accepted) return res.status(409).json({ error: "Cet Edge n’a pas accepté la notification de test." });
+  res.json({ accepted });
 });
 
 app.post("/api/family-conversations", requireAuth, async (req, res) => {

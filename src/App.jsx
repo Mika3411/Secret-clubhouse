@@ -958,33 +958,33 @@ function PushNotificationButton({ isDemo = false }) {
         setStatus(Notification.permission === "denied" ? "denied" : "disabled");
         throw new Error("Les notifications ne sont pas autorisées dans ce navigateur.");
       }
+      const registration = await navigator.serviceWorker.ready;
       if (isDemo) {
-        const notification = new Notification("Secret Clubhouse est prêt", {
-          body: "Les notifications Windows fonctionnent sur cet appareil.",
-          tag: "secret-clubhouse-demo-test",
+        const tag = "secret-clubhouse-demo-test";
+        const previousNotifications = await registration.getNotifications({ tag });
+        previousNotifications.forEach((notification) => notification.close());
+        await registration.showNotification("Secret Clubhouse est prêt", {
+          body: "Voici votre notification de test Secret Clubhouse.",
+          tag,
           renotify: true,
           requireInteraction: true,
+          silent: false,
+          data: { notificationType: "test", url: "/?notification=test" },
         });
-        notification.onclick = () => {
-          window.focus();
-          notification.close();
-        };
-        await new Promise((resolve, reject) => {
-          const timeout = window.setTimeout(() => reject(new Error("Microsoft Edge n’a pas confirmé l’affichage. Vérifiez l’autorisation du site dans Edge puis redémarrez le navigateur.")), 5000);
-          notification.onshow = () => {
-            window.clearTimeout(timeout);
-            resolve();
-          };
-          notification.onerror = () => {
-            window.clearTimeout(timeout);
-            reject(new Error("Microsoft Edge a refusé la notification. Ouvrez les paramètres du site et autorisez les notifications."));
-          };
-        });
+        const registeredNotifications = await registration.getNotifications({ tag });
+        if (!registeredNotifications.length) throw new Error("Microsoft Edge n’a pas enregistré la notification persistante.");
       } else {
-        const result = await api.testPush();
-        if (!result?.delivered) throw new Error("Le serveur n’a trouvé aucun appareil Windows abonné.");
+        const subscription = await registration.pushManager.getSubscription();
+        if (!subscription) {
+          setStatus("disabled");
+          throw new Error("Cet Edge n’est plus abonné. Réactivez les notifications puis recommencez.");
+        }
+        const result = await api.testPush(subscription.endpoint);
+        if (!result?.accepted) throw new Error("Le service de notification n’a pas accepté le test pour cet Edge.");
       }
-      setFeedback("Notification affichée par Microsoft Edge.");
+      setFeedback(isDemo
+        ? "Notification persistante créée dans Edge. Vérifiez la bannière ou le centre de notifications."
+        : "Test Web Push remis à cet Edge. Vérifiez la bannière ou le centre de notifications.");
     } catch (pushError) {
       setError(pushError.message || "La notification de test n’a pas pu être envoyée.");
     } finally {
