@@ -1470,6 +1470,12 @@ input:focus-visible {
   box-shadow: 0 8px 20px rgba(50, 36, 120, 0.14);
 }
 
+.media-message--received {
+  align-self: flex-start;
+  border-radius: 18px 18px 18px 5px;
+  background: #fff;
+}
+
 .media-message img,
 .media-message video {
   display: block;
@@ -1478,6 +1484,26 @@ input:focus-visible {
   object-fit: cover;
   border-radius: 14px;
   background: #17134d;
+}
+
+.media-message__placeholder,
+.parent-media-message__placeholder {
+  display: grid;
+  min-height: 110px;
+  place-items: center;
+  padding: 16px;
+  color: #5d5870;
+  border-radius: 14px;
+  background: #f1eef9;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.media-message__placeholder.has-error,
+.parent-media-message__placeholder.has-error {
+  color: #9f2f55;
+  background: #fff0f5;
 }
 
 .media-message figcaption {
@@ -1489,6 +1515,11 @@ input:focus-visible {
   color: #eeeaff;
   font-size: 9.5px;
   font-weight: 800;
+}
+
+.media-message--received figcaption {
+  color: #5d5870;
+  justify-content: flex-start;
 }
 
 .media-message figcaption svg {
@@ -4277,6 +4308,12 @@ input:focus-visible {
   box-shadow: 0 4px 12px rgba(35, 27, 74, 0.08);
 }
 
+.parent-media-message--received {
+  align-self: flex-start;
+  border-radius: 16px 16px 16px 5px;
+  background: #fff;
+}
+
 .parent-media-message img,
 .parent-media-message video {
   display: block;
@@ -4297,6 +4334,11 @@ input:focus-visible {
   font-size: 8px;
   font-weight: 800;
   text-align: right;
+}
+
+.parent-media-message--received figcaption {
+  justify-content: flex-start;
+  text-align: left;
 }
 
 .parent-media-message .message-status--received {

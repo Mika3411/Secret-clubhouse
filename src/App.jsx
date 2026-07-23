@@ -389,17 +389,46 @@ const formatServerMessageTime = (value) => {
   return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(date);
 };
 
+const mapServerMessage = (message, accountId, directionOverride = null) => {
+  const mediaType = message.mediaType ?? message.media_type ?? "";
+  const mediaName = message.mediaName ?? message.media_name ?? "";
+  const createdAt = message.createdAt ?? message.created_at;
+  const senderId = message.senderId ?? message.sender_id;
+  const direction = directionOverride ?? (senderId === accountId ? "sent" : "received");
+  if (mediaType.startsWith("image/") || mediaType.startsWith("video/")) {
+    return {
+      id: message.id,
+      direction,
+      type: mediaType.startsWith("video/") ? "video" : "image",
+      mediaType,
+      name: mediaName,
+      time: formatServerMessageTime(createdAt),
+      status: "received",
+    };
+  }
+  const text = String(message.text ?? message.body ?? "").trim();
+  if (!text) return null;
+  return {
+    id: message.id,
+    direction,
+    type: "text",
+    text,
+    time: formatServerMessageTime(createdAt),
+    status: "received",
+  };
+};
+
+const appendUniqueMessages = (currentMessages, incomingMessages) => {
+  const existingIds = new Set(currentMessages.map((message) => message.id));
+  return [...currentMessages, ...incomingMessages.filter((message) => !existingIds.has(message.id))];
+};
+
 const mapServerConversation = (conversation, account) => {
   const messages = (Array.isArray(conversation.messages) ? conversation.messages : [])
-    .filter((message) => message.text)
-    .map((message) => ({
-      id: message.id,
-      direction: message.senderId === account.id ? "sent" : "received",
-      text: message.text,
-      time: formatServerMessageTime(message.createdAt),
-      status: "received",
-    }));
+    .map((message) => mapServerMessage(message, account.id))
+    .filter(Boolean);
   const latest = messages[messages.length - 1];
+  const latestPreview = latest?.type === "video" ? "Vidéo" : latest?.type === "image" ? "Photo" : latest?.text;
   const initials = String(conversation.name ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const isFamily = conversation.kind === "child" && (
     (account.role === "parent" && conversation.contact_role === "child")
@@ -414,13 +443,13 @@ const mapServerConversation = (conversation, account) => {
     serverBacked: true,
     relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : "Parent d’un contact",
     initials,
-    preview: latest?.text ?? (isFamily ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
+    preview: latestPreview ?? (isFamily ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
     time: latest?.time ?? "Maintenant",
     unread: 0,
     messages,
     ActivityIcon: ChatCircleDots,
-    received: messages.filter((message) => message.direction === "received").map((message) => message.text),
-    sent: messages.filter((message) => message.direction === "sent").at(-1)?.text ?? "",
+    received: messages.filter((message) => message.direction === "received" && message.type === "text").map((message) => message.text),
+    sent: messages.filter((message) => message.direction === "sent" && message.type === "text").at(-1)?.text ?? "",
   };
 };
 
@@ -820,6 +849,62 @@ function MessageStatus({ status = "received" }) {
   const StatusIcon = isSeen ? Checks : Check;
   const label = isSeen ? "Vu" : "Reçu";
   return <span className={`message-status message-status--${status}`} role="img" aria-label={label} title={label}><StatusIcon size={15} weight="bold" /></span>;
+}
+
+function ConversationMediaMessage({ message, parent = false }) {
+  const [mediaUrl, setMediaUrl] = useState(message.url ?? "");
+  const [loadError, setLoadError] = useState("");
+  const isReceived = message.direction === "received";
+  const isVideo = message.type === "video";
+
+  useEffect(() => {
+    if (message.url) {
+      setMediaUrl(message.url);
+      setLoadError("");
+      return undefined;
+    }
+    let isCurrent = true;
+    let objectUrl = "";
+    setMediaUrl("");
+    setLoadError("");
+    api.media(message.id)
+      .then((url) => {
+        objectUrl = url;
+        if (isCurrent) setMediaUrl(url);
+        else URL.revokeObjectURL(url);
+      })
+      .catch((error) => {
+        if (isCurrent) setLoadError(error.message || "Média indisponible.");
+      });
+    return () => {
+      isCurrent = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [message.id, message.url]);
+
+  const className = parent
+    ? `parent-media-message ${isReceived ? "parent-media-message--received" : ""}`
+    : `media-message ${isReceived ? "media-message--received" : ""}`;
+  const placeholderClassName = parent ? "parent-media-message__placeholder" : "media-message__placeholder";
+  const description = `${isVideo ? "Vidéo" : "Photo"} ${isReceived ? "reçue" : "envoyée"}`;
+
+  return (
+    <figure className={className}>
+      {mediaUrl ? (
+        isVideo
+          ? <video src={mediaUrl} controls playsInline aria-label={`${description} : ${message.name || "vidéo"}`} />
+          : <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} />
+      ) : (
+        <div className={`${placeholderClassName} ${loadError ? "has-error" : ""}`} role={loadError ? "alert" : "status"}>
+          {loadError || `Chargement de la ${isVideo ? "vidéo" : "photo"}…`}
+        </div>
+      )}
+      <figcaption>
+        <span>{description}{message.time ? ` · ${message.time}` : ""}</span>
+        {!isReceived && <MessageStatus status={message.status ?? "received"} />}
+      </figcaption>
+    </figure>
+  );
 }
 
 function useTypingIndicator(conversationId, enabled) {
@@ -1632,7 +1717,7 @@ function VideoCallScreen({ child, conversation, policy, autoReply, onClose }) {
   );
 }
 
-function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage }) {
+function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMessage, onSendMedia }) {
   const [draft, setDraft] = useState("");
   const [sentMessages, setSentMessages] = useState([]);
   const [mediaError, setMediaError] = useState("");
@@ -1678,7 +1763,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
     }
   };
 
-  const sendMedia = (event) => {
+  const sendMedia = async (event) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (!settings.media || !messagePolicy.allowed || !files.length) return;
@@ -1692,13 +1777,21 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
       setMediaError("Choisis une image, une photo ou une vidéo.");
       return;
     }
-    const mediaMessages = supportedFiles.map((file, index) => {
-      const url = URL.createObjectURL(file);
-      mediaUrlsRef.current.push(url);
-      return { id: `media-${Date.now()}-${index}`, type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "received" };
-    });
-    setMediaError("");
-    setSentMessages((current) => [...current, ...mediaMessages]);
+    try {
+      if (conversation.serverBacked) {
+        await onSendMedia?.(conversation.id, supportedFiles);
+      } else {
+        const mediaMessages = supportedFiles.map((file, index) => {
+          const url = URL.createObjectURL(file);
+          mediaUrlsRef.current.push(url);
+          return { id: `media-${Date.now()}-${index}`, direction: "sent", type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "received" };
+        });
+        setSentMessages((current) => [...current, ...mediaMessages]);
+      }
+      setMediaError("");
+    } catch (error) {
+      setMediaError(error.message || "Le média n’a pas pu être envoyé.");
+    }
   };
 
   const sendVoiceMessage = (blob, duration) => {
@@ -1743,7 +1836,9 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         {!messagePolicy.allowed && (
           <div className="chat-quiet-banner" role="status"><Clock size={18} weight="fill" /><span><strong>Mode calme actif</strong><small>{autoReplyIsActive ? `${conversation.name} reçoit automatiquement un message.` : `Les messages seront disponibles à ${nextMessageTime}.`}</small></span></div>
         )}
-        {conversation.serverBacked ? conversation.messages.map((message) => (
+        {conversation.serverBacked ? conversation.messages.map((message) => message.type === "image" || message.type === "video" ? (
+          <ConversationMediaMessage key={message.id} message={message} />
+        ) : (
           <p className={`bubble bubble--${message.direction}`} key={message.id}>{message.text}{message.direction === "sent" && <MessageStatus status={message.status ?? "received"} />}</p>
         )) : <>
           {conversation.received.map((message) => <p className="bubble bubble--received" key={message}>{message}</p>)}
@@ -1752,14 +1847,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
         {sentMessages.map((message) => {
           if (message.type === "text") return <p className="bubble bubble--sent" key={message.id}>{message.text}<MessageStatus status={message.status} /></p>;
           if (message.type === "audio") return <VoiceMessage key={message.id} url={message.url} duration={message.duration} status={message.status} />;
-          return (
-            <figure className="media-message" key={message.id}>
-              {message.type === "video"
-                ? <video src={message.url} controls playsInline aria-label={`Vidéo envoyée : ${message.name}`} />
-                : <img src={message.url} alt={`Image envoyée : ${message.name}`} />}
-              <figcaption><span>{message.type === "video" ? "Vidéo" : "Photo"} envoyée</span><MessageStatus status={message.status} /></figcaption>
-            </figure>
-          );
+          return <ConversationMediaMessage key={message.id} message={message} />;
         })}
         {autoReplyIsActive && (
           <div className="automatic-reply-group">
@@ -2606,7 +2694,7 @@ function ParentDashboard({ parentName, family, children, child, isDemo, requestS
   );
 }
 
-function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onOpenFamilyConversation, isDemo, initialContactId = "", onContactHandled }) {
+function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThreadId, onSelectThread, onBack, onSend, onSendMedia, onOpenFamilyConversation, isDemo, initialContactId = "", onContactHandled }) {
   const [draft, setDraft] = useState("");
   const [mediaByThread, setMediaByThread] = useState({});
   const [mediaError, setMediaError] = useState("");
@@ -2668,7 +2756,7 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
     }
   };
 
-  const sendParentMedia = (event) => {
+  const sendParentMedia = async (event) => {
     const files = Array.from(event.target.files ?? []);
     event.target.value = "";
     if (!selectedThread || !files.length) return;
@@ -2681,15 +2769,21 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
       setMediaError("Choisissez une image, une photo ou une vidéo.");
       return;
     }
-    const media = supportedFiles.map((file) => {
-      const url = URL.createObjectURL(file);
-      parentMediaUrlsRef.current.push(url);
-      return { id: `parent-media-${Date.now()}-${file.name}`, type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "received" };
-    });
-    setMediaByThread((current) => ({ ...current, [selectedThread.id]: [...(current[selectedThread.id] ?? []), ...media] }));
-    const sentMediaIds = new Set(media.map((item) => item.id));
-    window.setTimeout(() => setMediaByThread((current) => ({ ...current, [selectedThread.id]: (current[selectedThread.id] ?? []).map((item) => sentMediaIds.has(item.id) ? { ...item, status: "seen" } : item) })), 1400);
-    setMediaError("");
+    try {
+      if (selectedThread.serverBacked) {
+        await onSendMedia?.(selectedThread.id, supportedFiles);
+      } else {
+        const media = supportedFiles.map((file) => {
+          const url = URL.createObjectURL(file);
+          parentMediaUrlsRef.current.push(url);
+          return { id: `parent-media-${Date.now()}-${file.name}`, direction: "sent", type: file.type.startsWith("video/") ? "video" : "image", url, name: file.name, status: "received" };
+        });
+        setMediaByThread((current) => ({ ...current, [selectedThread.id]: [...(current[selectedThread.id] ?? []), ...media] }));
+      }
+      setMediaError("");
+    } catch (error) {
+      setMediaError(error.message || "Le média n’a pas pu être envoyé.");
+    }
   };
 
   const sendParentVoice = (blob, duration) => {
@@ -2725,19 +2819,16 @@ function ParentMessagesScreen({ parentName, familyChildren, threads, selectedThr
         <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
         <div className="parent-thread-messages" aria-live="polite">
           <span className="parent-thread-day">Aujourd’hui</span>
-          {selectedThread.messages.map((message) => (
+          {selectedThread.messages.map((message) => message.type === "image" || message.type === "video" ? (
+            <ConversationMediaMessage key={message.id} message={message} parent />
+          ) : (
             <div className={`parent-message-bubble parent-message-bubble--${message.direction}`} key={message.id}>
               <p>{message.text}</p><span className="parent-message-meta"><time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "seen"} />}</span>
             </div>
           ))}
           {(mediaByThread[selectedThread.id] ?? []).map((media) => media.type === "audio"
             ? <VoiceMessage key={media.id} url={media.url} duration={media.duration} status={media.status} parent />
-            : (
-              <figure className="parent-media-message" key={media.id}>
-                {media.type === "video" ? <video src={media.url} controls playsInline aria-label={`Vidéo envoyée : ${media.name}`} /> : <img src={media.url} alt={`Image envoyée : ${media.name}`} />}
-                <figcaption><span>{media.type === "video" ? "Vidéo" : "Photo"} envoyée · Maintenant</span><MessageStatus status={media.status} /></figcaption>
-              </figure>
-            ))}
+            : <ConversationMediaMessage key={media.id} message={media} parent />)}
           <TypingIndicator name={typingName} />
         </div>
         {messageError && <div className="parent-media-error" role="alert">{messageError}</div>}
@@ -3612,7 +3703,7 @@ export function App() {
       ...thread,
       preview: text,
       time: "À l’instant",
-      messages: [...thread.messages, { id: messageId, direction: "sent", text, time: "Maintenant", status: "received" }],
+      messages: [...thread.messages, { id: messageId, direction: "sent", type: "text", text, time: "Maintenant", status: "received" }],
     } : thread));
     if (session?.demo) {
       window.setTimeout(() => setParentThreads((current) => current.map((thread) => thread.id === threadId ? { ...thread, messages: thread.messages.map((message) => message.id === messageId ? { ...message, status: "seen" } : message) } : thread)), 1400);
@@ -3620,10 +3711,25 @@ export function App() {
     return result?.message;
   };
 
+  const sendParentMedia = async (threadId, files) => {
+    const { messages } = await api.sendMedia(threadId, files);
+    const nextMessages = messages
+      .map((message) => mapServerMessage(message, session.id, "sent"))
+      .filter(Boolean);
+    const latest = nextMessages[nextMessages.length - 1];
+    setParentThreads((current) => current.map((thread) => thread.id === threadId ? {
+      ...thread,
+      preview: latest?.type === "video" ? "Vidéo" : "Photo",
+      time: "À l’instant",
+      messages: appendUniqueMessages(thread.messages, nextMessages),
+    } : thread));
+    return nextMessages;
+  };
+
   const sendChildMessage = async (conversationId, text) => {
     if (session?.demo) return null;
     const { message } = await api.sendMessage(conversationId, text);
-    const nextMessage = { id: message.id, direction: "sent", text, time: formatServerMessageTime(message.created_at), status: "received" };
+    const nextMessage = { id: message.id, direction: "sent", type: "text", text, time: formatServerMessageTime(message.created_at), status: "received" };
     setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
       ...conversation,
       preview: text,
@@ -3637,6 +3743,28 @@ export function App() {
       messages: [...current.messages, nextMessage],
     } : current);
     return message;
+  };
+
+  const sendChildMedia = async (conversationId, files) => {
+    const { messages } = await api.sendMedia(conversationId, files);
+    const nextMessages = messages
+      .map((message) => mapServerMessage(message, session.id, "sent"))
+      .filter(Boolean);
+    const latest = nextMessages[nextMessages.length - 1];
+    const preview = latest?.type === "video" ? "Vidéo" : "Photo";
+    setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
+      ...conversation,
+      preview,
+      time: "À l’instant",
+      messages: appendUniqueMessages(conversation.messages, nextMessages),
+    } : conversation));
+    setSelectedConversation((current) => current?.id === conversationId ? {
+      ...current,
+      preview,
+      time: "À l’instant",
+      messages: appendUniqueMessages(current.messages, nextMessages),
+    } : current);
+    return nextMessages;
   };
 
   useEffect(() => {
@@ -3707,7 +3835,7 @@ export function App() {
       return <ParentAccessScreen parentName={familyOwner.name} onBack={() => setParentView(null)} onUnlock={() => setParentView("dashboard")} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onOpenFamilyConversation={openFamilyConversation} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onBack={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenFamilyConversation={openFamilyConversation} isDemo={Boolean(session.demo)} initialContactId={pendingContactId} onContactHandled={() => setPendingContactId("")} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} children={children} isDemo={Boolean(session.demo)} onBack={() => setParentView("dashboard")} />;
@@ -3749,7 +3877,7 @@ export function App() {
       return <PausedChildScreen child={activeChild} onOpenParent={() => setParentView("access")} />;
     }
     if (selectedConversation) {
-      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} />;
     }
     if (activeTab === "clubhouse") {
       const demoAdult = familyOwner.contactId ? [{ id: familyOwner.id ?? "demo-parent", name: familyOwner.name || "Mon parent", contactId: familyOwner.contactId, role: "parent" }] : [];
