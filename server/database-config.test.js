@@ -10,11 +10,23 @@ const certificate = [
   "-----END CERTIFICATE-----",
 ].join("\n");
 
-test("désactive TLS uniquement pour une URL PostgreSQL interne Render explicitement déclarée", () => {
+test("désactive TLS uniquement pour une URL PostgreSQL interne Render déclarée ou détectée sur Render", () => {
   assert.deepEqual(
     createDatabasePoolConfig({
       NODE_ENV: "production",
       DATABASE_TRANSPORT: "render-private",
+      DATABASE_URL: renderPrivateUrl,
+    }),
+    {
+      connectionString: renderPrivateUrl,
+      ssl: false,
+    },
+  );
+
+  assert.deepEqual(
+    createDatabasePoolConfig({
+      NODE_ENV: "production",
+      RENDER: "true",
       DATABASE_URL: renderPrivateUrl,
     }),
     {
@@ -139,6 +151,24 @@ test("exige un transport explicite en production mais conserve les tests locaux 
       DATABASE_URL: renderPrivateUrl,
     }),
     /DATABASE_TRANSPORT est requis/u,
+  );
+
+  assert.throws(
+    () => createDatabasePoolConfig({
+      NODE_ENV: "production",
+      RENDER: "true",
+      DATABASE_URL: externalUrl,
+    }),
+    /DATABASE_TRANSPORT est requis/u,
+  );
+
+  assert.throws(
+    () => createDatabasePoolConfig({
+      NODE_ENV: "production",
+      RENDER: "true",
+      DATABASE_URL: `${renderPrivateUrl}?sslmode=disable`,
+    }),
+    /sslmode non autorisé/u,
   );
 
   assert.deepEqual(

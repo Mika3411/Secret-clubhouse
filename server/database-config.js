@@ -99,8 +99,18 @@ export function createDatabasePoolConfig(env = process.env) {
 
   if (!transport) {
     if (production) {
+      if (connectionString && env.RENDER === "true") {
+        const url = parseDatabaseUrl(connectionString);
+        ensureConnectionStringDoesNotOverrideTls(url);
+        if (isRenderPrivateHostname(url.hostname)) {
+          return {
+            connectionString,
+            ssl: false,
+          };
+        }
+      }
       throw configurationError(
-        "DATABASE_TRANSPORT est requis en production (render-private ou tls).",
+        "DATABASE_TRANSPORT est requis en production hors URL PostgreSQL privée Render vérifiée.",
       );
     }
     if (connectionString) {
