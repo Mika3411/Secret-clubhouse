@@ -40,6 +40,30 @@ import {
   VoiceRecorder,
 } from "./conversations/media/ConversationMedia";
 
+function useConversationBottom(conversationId, latestItemKey) {
+  const scrollContainerRef = useRef(null);
+
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer || !conversationId) return undefined;
+
+    const scrollToLatest = () => {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    };
+
+    scrollToLatest();
+    const animationFrame = window.requestAnimationFrame(scrollToLatest);
+    const settledLayoutTimer = window.setTimeout(scrollToLatest, 180);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(settledLayoutTimer);
+    };
+  }, [conversationId, latestItemKey]);
+
+  return scrollContainerRef;
+}
+
 export const conversationGameOptions = [
   {
     id: "connect_four",
@@ -1098,6 +1122,17 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
     enabled: Boolean(conversation.serverBacked),
     inviteGame: onInviteGame,
   });
+  const latestMessage = conversation.serverBacked
+    ? conversation.messages.at(-1)
+    : sentMessages.at(-1);
+  const latestConversationItemKey = [
+    latestMessage?.id ?? "",
+    conversation.serverBacked ? "server" : conversation.received.length,
+    conversation.serverBacked ? 0 : Number(Boolean(conversation.sent)),
+    sentMessages.length,
+    conversationGames.at(-1)?.updatedAt ?? conversationGames.at(-1)?.id ?? "",
+  ].join(":");
+  const chatBodyRef = useConversationBottom(conversation.id, latestConversationItemKey);
 
   useEffect(() => () => {
     mediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -1180,7 +1215,7 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
         </div>
       </header>
 
-      <div className="chat-body" aria-live="polite">
+      <div ref={chatBodyRef} className="chat-body" aria-live="polite">
         <div className="message-history-controls">
           {conversation.hasMoreMessages && <button type="button" onClick={() => onLoadOlderMessages?.(conversation.id)} disabled={conversation.messagesLoading}>{conversation.messagesLoading ? "Chargement…" : "Afficher les messages précédents"}</button>}
           {conversation.messagesLoading && !conversation.messagesLoaded && <span role="status">Chargement des messages…</span>}
@@ -1262,6 +1297,16 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
     enabled: Boolean(selectedThread?.serverBacked),
     inviteGame: onInviteGame,
   });
+  const latestParentMessage = selectedThread?.messages?.at(-1);
+  const latestParentConversationItemKey = [
+    latestParentMessage?.id ?? "",
+    selectedThread ? (mediaByThread[selectedThread.id] ?? []).length : 0,
+    conversationGames.at(-1)?.updatedAt ?? conversationGames.at(-1)?.id ?? "",
+  ].join(":");
+  const parentThreadMessagesRef = useConversationBottom(
+    selectedThread?.id ?? "",
+    latestParentConversationItemKey,
+  );
 
   useEffect(() => setIsGameInviteOpen(false), [selectedThreadId]);
   useEffect(() => {
@@ -1417,7 +1462,7 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
               </div>
             </header>
             <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
-            <div className="parent-thread-messages" aria-live="polite">
+            <div ref={parentThreadMessagesRef} className="parent-thread-messages" aria-live="polite">
               <div className="message-history-controls message-history-controls--parent">
                 {selectedThread.hasMoreMessages && <button type="button" onClick={() => onLoadOlderMessages?.(selectedThread.id)} disabled={selectedThread.messagesLoading}>{selectedThread.messagesLoading ? "Chargement…" : "Afficher les messages précédents"}</button>}
                 {selectedThread.messagesLoading && !selectedThread.messagesLoaded && <span role="status">Chargement des messages…</span>}
