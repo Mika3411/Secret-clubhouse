@@ -20,8 +20,6 @@ services:
         generateValue: true
       - key: CONTENT_ENCRYPTION_KEY
         generateValue: true
-      - key: CONTENT_ENCRYPTION_PREVIOUS_KEYS
-        sync: false
       - key: AUTH_SESSION_TTL_SECONDS
         value: "43200"
       - key: NODE_ENV
@@ -30,56 +28,32 @@ services:
         value: Europe/Paris
       - key: RTC_CALL_TIMEOUT_SECONDS
         value: "45"
-      - key: RTC_STUN_URLS
-        value: stun:stun.cloudflare.com:3478
-      - key: RTC_TURN_KEY_ID
-        sync: false
-      - key: RTC_TURN_API_TOKEN
-        sync: false
-      - key: RTC_TURN_URLS
-        sync: false
-      - key: RTC_TURN_USERNAME
-        sync: false
-      - key: RTC_TURN_CREDENTIAL
-        sync: false
+      - key: RTC_ENABLED
+        value: "false"
       - key: RTC_NEUTRAL_DECLINE_MESSAGE
         value: Je ne peux pas répondre pour le moment.
-      - key: PUBLIC_APP_URL
-        sync: false
-      - key: FCM_SERVICE_ACCOUNT_JSON
-        sync: false
-      - key: FCM_SERVICE_ACCOUNT_JSON_BASE64
-        sync: false
       - key: FCM_ANDROID_PACKAGE
         value: fr.secretclubhouse.app
       - key: NATIVE_PUSH_TIMEOUT_MS
         value: "6000"
+      - key: NATIVE_PUSH_ENABLED
+        value: "false"
       - key: WEB_PUSH_TIMEOUT_MS
         value: "6000"
-      - key: APNS_TEAM_ID
-        sync: false
-      - key: APNS_KEY_ID
-        sync: false
-      - key: APNS_PRIVATE_KEY
-        sync: false
-      - key: APNS_PRIVATE_KEY_BASE64
-        sync: false
+      - key: WEB_PUSH_ENABLED
+        value: "false"
       - key: APNS_BUNDLE_ID
         value: fr.secretclubhouse.app
       - key: APNS_VOIP_TOPIC
         value: fr.secretclubhouse.app.voip
       - key: APNS_ENVIRONMENT
         value: production
-      - key: VAPID_PUBLIC_KEY
-        sync: false
-      - key: VAPID_PRIVATE_KEY
-        sync: false
       - key: VAPID_SUBJECT
         value: mailto:contact@secret-clubhouse.fr
       - key: PRIVACY_CONTACT_EMAIL
         value: contact@secret-clubhouse.fr
-      - key: PRIVACY_ADMIN_TOKEN
-        sync: false
+      - key: PRIVACY_ADMIN_ENABLED
+        value: "false"
   - type: cron
     name: secret-clubhouse-retention
     runtime: node

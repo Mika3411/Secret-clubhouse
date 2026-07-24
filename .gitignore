@@ -4,3 +4,12 @@ dist/
 .prototype-bootstrap/
 .vite-server*.log
 .codex-*.log
+.audit/
+.vite-*.log
+media-qa*.html
+src/media-qa.jsx
+*.apk
+*.aab
+*.ipa
+.env*
+!.env.example

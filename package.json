@@ -12,6 +12,7 @@
     "build": "vite build",
     "test": "node --test server/*.test.js",
     "retention:purge": "node server/run-retention.js",
+    "retention:test-purge": "node server/run-test-retention.js",
     "privacy:reapply-erasure": "node server/reapply-erasure-tombstones.js",
     "preview": "vite preview",
     "start": "node server/index.js",

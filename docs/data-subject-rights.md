@@ -24,7 +24,7 @@ Toute demande d’accès, rectification, effacement, limitation ou opposition cr
 
 Le Cron Job quotidien compte les demandes ouvertes en retard. Il échoue lorsqu’au moins une échéance est dépassée afin de déclencher une alerte Render. Le registre est conservé cinq ans au maximum, uniquement pour prouver le traitement de la demande.
 
-Le responsable habilité consulte et traite le registre avec `X-Privacy-Admin-Token` sur `/api/privacy/admin/requests`. La variable `PRIVACY_ADMIN_TOKEN` doit être un secret Render distinct des sessions utilisateur. Aucun mot de passe utilisateur ne doit être demandé par e-mail.
+Le canal historique `X-Privacy-Admin-Token` sur `/api/privacy/admin/requests` est fermé par défaut en production avec `PRIVACY_ADMIN_ENABLED=false`. Il ne doit pas être activé pour le périmètre initial : un jeton partagé ne fournit pas l’administration nominative et traçable attendue pour ce registre. Jusqu’à son remplacement, le responsable suit les demandes depuis leur accusé visible par la personne et traite les opérations exceptionnelles au moyen d’une procédure restreinte hors interface publique. Aucun mot de passe utilisateur ne doit être demandé par e-mail.
 
 Une demande d’effacement ne peut pas être clôturée tant que le compte concerné existe encore. Pour un enfant, le responsable peut envoyer `executeErasure: true` avec le statut `completed` : l’API efface alors le profil et crée sa consigne de restauration dans la même transaction. Pour un parent, la suppression protégée du compte ou de la famille doit d’abord être effectuée avec son mot de passe et sa confirmation explicite.
 

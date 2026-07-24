@@ -27,7 +27,7 @@ Le fichier `render.yaml` décrit le service web Node.js, la base PostgreSQL, le 
 3. Connecter le dépôt et conserver le chemin Blueprint par défaut : `render.yaml`.
 4. Vérifier le service `secret-clubhouse`, puis lancer **Deploy Blueprint**.
 
-Render fournit automatiquement une URL HTTPS en `onrender.com`. `DATABASE_URL`, `JWT_SECRET` et la clé dédiée `CONTENT_ENCRYPTION_KEY` sont configurés par le Blueprint. Les secrets TURN et VAPID doivent être renseignés dans Render. Pour valider le Blueprint avec la CLI Render avant le déploiement :
+Render fournit automatiquement une URL HTTPS en `onrender.com`. `DATABASE_URL`, `JWT_SECRET` et la clé dédiée `CONTENT_ENCRYPTION_KEY` sont configurés par le Blueprint. Le périmètre initial ferme explicitement WebRTC, Web Push, APNs/FCM et le canal d’administration RGPD partagé : aucun secret fournisseur n’est demandé pour créer les ressources. Pour valider le Blueprint avec la CLI Render avant le déploiement :
 
 ```bash
 render blueprints validate render.yaml
@@ -42,6 +42,19 @@ Documentation officielle : [Blueprints Render](https://render.com/docs/infrastru
 - `DATABASE_TRANSPORT=render-private` impose l’URL PostgreSQL interne de Render. Une base externe doit utiliser `DATABASE_TRANSPORT=tls`, la vérification du certificat (`rejectUnauthorized: true`) et, si nécessaire, une CA de confiance ; les paramètres de l’URL ne peuvent pas désactiver cette politique.
 - Les charges Web Push, APNs et FCM contiennent des identifiants opaques de routage et des libellés génériques. Elles n’incluent jamais le texte d’un message, le nom d’un fichier, le nom d’un enfant ou celui d’un contact ; un appel entrant affiche le libellé neutre « Contact autorisé ».
 - Le gestionnaire central n’expose que les erreurs 4xx explicitement déclarées comme publiques. Une erreur inattendue devient `Erreur interne.` ; chaque réponse porte `X-Request-ID`, et le JSON du gestionnaire d’erreurs répète cet identifiant dans `requestId` pour permettre la corrélation avec les journaux serveur sans divulguer de détail interne.
+
+### Activation contrôlée des fournisseurs
+
+En production, `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` valent `false` par défaut et dans le Blueprint. Les routes correspondantes répondent `503` et aucun jeton push n’est enregistré. Une valeur ambiguë fait échouer la configuration.
+
+Un flux ne peut être activé qu’après fermeture de son dossier dans `docs/registre-sous-traitants-et-transferts.md` :
+
+- WebRTC : ajouter la configuration STUN/TURN privée dans Render, puis définir `RTC_ENABLED=true` ;
+- Web Push : ajouter `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY`, puis définir `WEB_PUSH_ENABLED=true` ;
+- Android/iOS : ajouter soit la configuration FCM, soit la configuration APNs complète, puis définir `NATIVE_PUSH_ENABLED=true` ;
+- administration des demandes RGPD : le canal historique à jeton partagé reste désactivé tant qu’il n’est pas remplacé par un accès nominatif et traçable.
+
+Ne jamais ajouter ces valeurs dans Git ou dans une capture d’audit.
 
 Pour faire tourner la clé de contenu, conserver d’abord l’ancienne valeur dans le tableau JSON `CONTENT_ENCRYPTION_PREVIOUS_KEYS`, puis définir la nouvelle valeur dans `CONTENT_ENCRYPTION_KEY`. Avant d’accepter du trafic, le serveur relit et rechiffre les anciennes lignes avec la clé active, puis répète ce contrôle après un déploiement roulant. Une incohérence ou une clé manquante fait échouer le démarrage. Une ancienne clé ne doit être retirée qu’après vérification de la migration et expiration des sauvegardes qui peuvent encore contenir des enveloppes créées avec elle.
 
@@ -67,6 +80,10 @@ L’analyse d’impact complète est tenue dans [docs/aipd-secret-clubhouse.md](
 
 Le traitement d’enfants, de conversations et médias privés, le suivi régulier nécessaire au service et la combinaison de technologies mobiles, push et WebRTC rendent l’AIPD obligatoire. Son état courant est **production bloquée** tant que les actions organisationnelles, contractuelles et de sécurité `A01` à `A08` ne sont pas closes et que le responsable du traitement n’a pas signé la décision. Si un risque élevé subsiste malgré ces mesures, une consultation préalable de la CNIL est requise.
 
+L’action `A04` reste ouverte. Sa [procédure d’administration et de rotation](docs/a04-procedure-gestion-acces-et-cles.md), sa [checklist de preuves](docs/a04-checklist-preuves.md) et l’[audit du 23 juillet 2026](.audit/2026-07-23-a04-access-key-audit/audit.md) distinguent les contrôles du dépôt des preuves fournisseurs. Aucun test automatisé ou gabarit ne remplace l’exercice réel de rotation, récupération avec anciennes clés et révocation exigé avant clôture.
+
+L’action `A07` est fermée uniquement pour le [périmètre web restreint évalué le 23 juillet 2026](docs/a07-evaluation-securite-2026-07-23.md). Toute activation RTC/push/administration partagée ou toute distribution native la rouvre automatiquement.
+
 ## États persistants
 
 Chaque message possède des accusés PostgreSQL par destinataire. La récupération authentifiée du message enregistre sa réception ; l’ouverture de la conversation enregistre sa lecture. Le client affiche uniquement les états `envoyé`, `reçu` ou `vu` renvoyés par l’API.
@@ -81,7 +98,8 @@ Les appels audio et vidéo relient deux comptes authentifiés distincts. Le serv
 - persiste l’état de l’appel et échange les offres, réponses et candidats ICE dans PostgreSQL ;
 - expose l’appel entrant avec acceptation, refus, annulation, expiration et raccrochage ;
 - crée une seule réponse automatique neutre lors d’un refus ;
-- fournit STUN par défaut et des identifiants TURN temporaires lorsqu’un couple `RTC_TURN_KEY_ID` / `RTC_TURN_API_TOKEN` est configuré.
+- ne fournit aucun serveur STUN/TURN par défaut en production et refuse toutes les routes d’appel tant que `RTC_ENABLED` n’est pas explicitement activé ;
+- fournit des identifiants TURN temporaires lorsqu’un couple `RTC_TURN_KEY_ID` / `RTC_TURN_API_TOKEN` est configuré après qualification du fournisseur.
 
 Pour un autre service TURN, configurez `RTC_TURN_URLS`, `RTC_TURN_USERNAME` et `RTC_TURN_CREDENTIAL`. `RTC_ICE_SERVERS_JSON` permet aussi de fournir directement un tableau `iceServers`. Ne placez jamais la clé API TURN dans le client.
 

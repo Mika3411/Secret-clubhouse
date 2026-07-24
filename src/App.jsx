@@ -13,6 +13,7 @@ import {
   Checks,
   Clock,
   Copy,
+  DeviceMobile,
   DownloadSimple,
   Eye,
   EyeSlash,
@@ -469,6 +470,13 @@ const conversationGameOptions = [
     Icon: Anchor,
   },
 ];
+const clubhouseActivityById = new Map(clubhouseActivities.map((activity) => [activity.id, activity]));
+const clubhouseCatalogStatusCopy = {
+  empty: "Bientôt disponible",
+  new: "Tout est à découvrir",
+  in_progress: "Continue, tu avances !",
+  complete: "Catalogue terminé !",
+};
 
 const conversationGameById = Object.fromEntries(
   conversationGameOptions.map((game) => [game.id, game]),
@@ -1159,22 +1167,30 @@ function formatCallDuration(totalSeconds) {
   return `${minutes}:${seconds}`;
 }
 
-function MessageStatus({ status = "sent" }) {
-  const isSeen = status === "seen";
-  const isReceived = status === "received";
+export function MessageStatus({ status = "sent" }) {
+  const receiptStatus = status === "seen" || status === "received" ? status : "sent";
+  const isSeen = receiptStatus === "seen";
+  const isReceived = receiptStatus === "received";
   const StatusIcon = isSeen ? Checks : isReceived ? Check : Clock;
   const label = isSeen ? "Vu" : isReceived ? "Reçu" : "Envoyé";
-  return <span className={`message-status message-status--${status}`} role="img" aria-label={label} title={label}><StatusIcon size={15} weight="bold" /></span>;
+  return (
+    <span className={`message-status message-status--${receiptStatus}`} aria-label={label} title={label}>
+      <StatusIcon size={16} weight="bold" aria-hidden="true" />
+      <span className="message-status__label">{label}</span>
+    </span>
+  );
 }
 
-function ConversationMediaMessage({ message, parent = false }) {
+export function ConversationMediaMessage({ message, parent = false }) {
   const [mediaUrl, setMediaUrl] = useState(message.url ?? "");
   const [loadError, setLoadError] = useState("");
   const [isMediaOpen, setIsMediaOpen] = useState(false);
+  const [mediaShape, setMediaShape] = useState("unknown");
   const isReceived = message.direction === "received";
   const isVideo = message.type === "video";
 
   useEffect(() => {
+    setMediaShape("unknown");
     if (message.url) {
       setMediaUrl(message.url);
       setLoadError("");
@@ -1213,6 +1229,12 @@ function ConversationMediaMessage({ message, parent = false }) {
     };
   }, [isMediaOpen]);
 
+  const rememberMediaShape = (width, height) => {
+    if (!width || !height) return;
+    const ratio = width / height;
+    setMediaShape(ratio > 1.15 ? "landscape" : ratio < 0.86 ? "portrait" : "square");
+  };
+
   const className = parent
     ? `parent-media-message ${isReceived ? "parent-media-message--received" : ""}`
     : `media-message ${isReceived ? "media-message--received" : ""}`;
@@ -1221,23 +1243,27 @@ function ConversationMediaMessage({ message, parent = false }) {
 
   return (
     <>
-    <figure className={className}>
+    <figure className={`${className} media-message--${mediaShape}`}>
       {mediaUrl ? (
-        <div className="media-message__preview">
-          {isVideo
-            ? <video src={mediaUrl} controls playsInline aria-label={`${description} : ${message.name || "vidéo"}`} />
-            : <button type="button" className="media-message__photo-button" onClick={() => setIsMediaOpen(true)} aria-label="Afficher la photo en plein écran">
-              <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} />
-            </button>}
-          {isVideo && (
-            <button type="button" className="media-message__action media-message__action--expand" onClick={() => setIsMediaOpen(true)} aria-label="Afficher la vidéo en plein écran" title="Agrandir">
+        <>
+          <div className="media-message__preview">
+            {isVideo
+              ? <video src={mediaUrl} controls preload="metadata" playsInline onLoadedMetadata={(event) => rememberMediaShape(event.currentTarget.videoWidth, event.currentTarget.videoHeight)} aria-label={`${description} : ${message.name || "vidéo"}`} />
+              : <button type="button" className="media-message__photo-button" onClick={() => setIsMediaOpen(true)} aria-label="Ouvrir la photo en grand">
+                <img src={mediaUrl} alt={`${description} : ${message.name || "photo"}`} onLoad={(event) => rememberMediaShape(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)} />
+              </button>}
+          </div>
+          <div className="media-message__toolbar" aria-label={`Actions pour la ${isVideo ? "vidéo" : "photo"}`}>
+            <button type="button" className="media-message__action media-message__action--expand" onClick={() => setIsMediaOpen(true)} aria-label={`Ouvrir la ${isVideo ? "vidéo" : "photo"} en grand`}>
               <Eye size={20} weight="bold" />
+              <span>Agrandir</span>
             </button>
-          )}
-          <a className="media-message__action media-message__action--download" href={mediaUrl} download={message.name || (isVideo ? "video" : "photo")} onClick={(event) => event.stopPropagation()} aria-label={`Enregistrer la ${isVideo ? "vidéo" : "photo"}`} title="Enregistrer">
-            <DownloadSimple size={20} weight="bold" />
-          </a>
-        </div>
+            <a className="media-message__action media-message__action--download" href={mediaUrl} download={message.name || (isVideo ? "video" : "photo")} onClick={(event) => event.stopPropagation()} aria-label={`Télécharger la ${isVideo ? "vidéo" : "photo"}`}>
+              <DownloadSimple size={20} weight="bold" />
+              <span>Télécharger</span>
+            </a>
+          </div>
+        </>
       ) : (
         <div className={`${placeholderClassName} ${loadError ? "has-error" : ""}`} role={loadError ? "alert" : "status"}>
           {loadError || `Chargement de la ${isVideo ? "vidéo" : "photo"}…`}
@@ -1364,10 +1390,11 @@ function TypingIndicator({ name }) {
   return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
 }
 
-function PushNotificationButton() {
+function PushNotificationButton({ features }) {
   const native = Capacitor.isNativePlatform();
+  const enabled = native ? features?.nativePush === true : features?.webPush === true;
   const isWindowsWeb = !native && /Windows/i.test(navigator.userAgent);
-  const supported = native || ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
+  const supported = enabled && (native || ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window));
   const [status, setStatus] = useState(supported ? "checking" : "unsupported");
   const [consent, setConsent] = useState(null);
   const [error, setError] = useState("");
@@ -1518,6 +1545,8 @@ function PushNotificationButton() {
       : status === "unsupported"
         ? "Non disponibles sur ce navigateur"
         : isWindowsWeb ? "Recevoir les messages et demandes dans Windows" : "Recevoir les nouveaux messages en veille";
+
+  if (!enabled) return null;
 
   return (
     <div className="push-setting">
@@ -2629,7 +2658,7 @@ function ChatScreen({ child, conversation, settings, schedule, onBack, onSendMes
   );
 }
 
-function ClubhouseScreen({ child }) {
+export function ClubhouseScreen({ child }) {
   const [filter, setFilter] = useState("all");
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [phase, setPhase] = useState("intro");
@@ -2645,22 +2674,32 @@ function ClubhouseScreen({ child }) {
   const [sessionQuestions, setSessionQuestions] = useState([]);
   const questionDecksRef = useRef({});
   const completionPendingRef = useRef(false);
-  const featuredActivity = clubhouseActivities.find((activity) => activity.featured);
-  const visibleActivities = clubhouseActivities.filter((activity) => !activity.featured && (
+  const currentQuestion = sessionQuestions[questionIndex] ?? null;
+  const serverActivityById = useMemo(
+    () => new Map((clubhouse?.catalog ?? []).map((activity) => [activity.activityId, activity])),
+    [clubhouse?.catalog],
+  );
+  const availableActivities = useMemo(
+    () => (clubhouse?.catalog ?? [])
+      .map((serverActivity) => clubhouseActivityById.get(serverActivity.activityId))
+      .filter(Boolean),
+    [clubhouse?.catalog],
+  );
+  const featuredActivity = availableActivities.find((activity) => activity.featured);
+  const visibleActivities = availableActivities.filter((activity) => !activity.featured && (
     filter === "all"
     || (filter === "multiplayer" ? activity.multiplayer : activity.type === filter)
   ));
-  const currentQuestion = sessionQuestions[questionIndex] ?? null;
-  const completedActivities = useMemo(() => new Set(clubhouse?.completedActivities ?? []), [clubhouse?.completedActivities]);
-  const rewardByActivity = useMemo(
-    () => new Map((clubhouse?.catalog ?? []).map((activity) => [activity.activityId, activity.reward])),
-    [clubhouse?.catalog],
-  );
-  const stars = clubhouse?.stars ?? 0;
-  const streak = clubhouse?.streak ?? 0;
-  const totalActivities = clubhouse?.totalActivities ?? 0;
-  const progress = totalActivities > 0 ? Math.round(((clubhouse?.completedCount ?? 0) / totalActivities) * 100) : 0;
-  const activityReward = (activityId) => rewardByActivity.get(activityId) ?? 0;
+  const summary = clubhouse?.summary;
+  const stars = summary?.totalStars ?? 0;
+  const streak = summary?.currentStreakDays ?? 0;
+  const catalogProgress = summary?.catalog ?? {
+    completedCount: 0,
+    totalActivities: 0,
+    percent: 0,
+    status: "empty",
+  };
+  const activityProgress = (activityId) => serverActivityById.get(activityId);
 
   const loadClubhouse = async () => {
     setIsClubhouseLoading(true);
@@ -2790,7 +2829,7 @@ function ClubhouseScreen({ child }) {
         <header className="clubhouse-header">
           <span className="clubhouse-header__icon"><House size={25} weight="fill" /></span>
           <div><span>Ton espace entre amis</span><h1 id="clubhouse-title">Le Clubhouse</h1></div>
-          <span className="clubhouse-stars" aria-label="Étoiles en cours de chargement"><Star size={18} weight="fill" /> —</span>
+          <span className="clubhouse-stars" aria-label="Total d’étoiles en cours de chargement"><Star size={18} weight="fill" /><span><strong>—</strong><small>au total</small></span></span>
         </header>
         <div className="clubhouse-state" role={clubhouseError ? "alert" : "status"}>
           <House size={30} weight="fill" />
@@ -2806,24 +2845,52 @@ function ClubhouseScreen({ child }) {
       <header className="clubhouse-header">
         <span className="clubhouse-header__icon"><House size={25} weight="fill" /></span>
         <div><span>Ton espace entre amis</span><h1 id="clubhouse-title">Le Clubhouse</h1></div>
-        <span className="clubhouse-stars" aria-label={`${stars} étoiles`}><Star size={18} weight="fill" /> {stars}</span>
+        <span className="clubhouse-stars" aria-label={`${stars} étoiles gagnées au total`}><Star size={18} weight="fill" /><span><strong>{stars}</strong><small>au total</small></span></span>
       </header>
 
       <div className="clubhouse-content">
         <section className="clubhouse-welcome" aria-label="Progression du Clubhouse">
-          <div><span>Salut {child.name} !</span><strong>Prête pour une nouvelle mission ?</strong></div>
-          <div className="clubhouse-streak"><Lightning size={17} weight="fill" /><span><strong>{streak} jour{streak > 1 ? "s" : ""}</strong><small>de suite</small></span></div>
-          <div className="clubhouse-progress"><span style={{ width: `${progress}%` }} /><small>{clubhouse?.completedCount ?? 0}/{totalActivities} activités terminées</small></div>
+          <div className="clubhouse-welcome__intro"><span>Salut {child.name} !</span><strong>Prête pour une nouvelle mission ?</strong></div>
+          <div className="clubhouse-summary" role="list" aria-label="Tes repères">
+            <div className="clubhouse-summary__catalog" role="listitem">
+              <span className="clubhouse-summary__label"><CheckCircle size={15} weight="fill" /> Catalogue</span>
+              <strong>{catalogProgress.completedCount} sur {catalogProgress.totalActivities}</strong>
+              <small>{clubhouseCatalogStatusCopy[catalogProgress.status] ?? "Progression enregistrée"}</small>
+              <span className="clubhouse-progress" aria-label={`${catalogProgress.completedCount} activités terminées sur ${catalogProgress.totalActivities}`}>
+                <span style={{ width: `${catalogProgress.percent}%` }} />
+              </span>
+            </div>
+            <div className="clubhouse-streak" role="listitem">
+              <span className="clubhouse-summary__label"><Lightning size={15} weight="fill" /> Ma série</span>
+              <strong>{streak} jour{streak > 1 ? "s" : ""}</strong>
+              <small>{streak > 0 ? "en jouant chaque jour" : "Commence aujourd’hui"}</small>
+            </div>
+          </div>
         </section>
 
         {clubhouseError && <div className="clubhouse-state clubhouse-state--inline" role="alert"><strong>{clubhouseError}</strong><button type="button" onClick={loadClubhouse}>Resynchroniser</button></div>}
 
-        <button type="button" className="clubhouse-featured" onClick={() => openActivity(featuredActivity)}>
-          <span className="clubhouse-featured__badge">Défi du jour</span>
-          <span className="clubhouse-featured__icon"><featuredActivity.Icon size={32} weight="fill" /></span>
-          <span className="clubhouse-featured__copy"><strong>{featuredActivity.title}</strong><small>{featuredActivity.description}</small><span><Timer size={14} weight="bold" /> {featuredActivity.duration} min <Star size={14} weight="fill" /> +{activityReward(featuredActivity.id)}</span></span>
-          {completedActivities.has(featuredActivity.id) ? <CheckCircle className="clubhouse-featured__arrow is-complete" size={25} weight="fill" /> : <CaretRight className="clubhouse-featured__arrow" size={23} weight="bold" />}
-        </button>
+        {featuredActivity && (() => {
+          const featuredProgress = activityProgress(featuredActivity.id);
+          return (
+            <button type="button" className="clubhouse-featured" onClick={() => openActivity(featuredActivity)}>
+              <span className="clubhouse-featured__badge">Mission du jour</span>
+              <span className="clubhouse-featured__icon"><featuredActivity.Icon size={32} weight="fill" /></span>
+              <span className="clubhouse-featured__copy">
+                <strong>{featuredActivity.title}</strong>
+                <small>{featuredActivity.description}</small>
+                <span className="clubhouse-featured__meta">
+                  <span><Timer size={14} weight="bold" /> {featuredActivity.duration} min</span>
+                  <span className={featuredProgress?.completed ? "is-earned" : ""}>
+                    {featuredProgress?.completed ? <CheckCircle size={14} weight="fill" /> : <Star size={14} weight="fill" />}
+                    {featuredProgress?.completed ? "Récompense gagnée" : `${featuredProgress?.reward ?? 0} étoiles à gagner`}
+                  </span>
+                </span>
+              </span>
+              {featuredProgress?.completed ? <CheckCircle className="clubhouse-featured__arrow is-complete" size={25} weight="fill" /> : <CaretRight className="clubhouse-featured__arrow" size={23} weight="bold" />}
+            </button>
+          );
+        })()}
 
         <div className="clubhouse-section-title"><div><span>À toi de jouer</span><h2>Défis et mini-jeux</h2></div><GameController size={25} weight="fill" /></div>
 
@@ -2836,13 +2903,21 @@ function ClubhouseScreen({ child }) {
         <div className="clubhouse-grid">
           {visibleActivities.map((activity) => {
             const ActivityIcon = activity.Icon;
-            const isComplete = completedActivities.has(activity.id);
+            const serverActivity = activityProgress(activity.id);
+            const isComplete = serverActivity?.completed;
             return (
               <button type="button" className={`clubhouse-card clubhouse-card--${activity.tone}`} key={activity.id} onClick={() => openActivity(activity)}>
-                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.multiplayer ? "Multijoueur" : activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <CheckCircle size={20} weight="fill" aria-label="Terminé" />}</span>
+                <span className="clubhouse-card__top"><span className="clubhouse-card__icon"><ActivityIcon size={25} weight="fill" /></span><span className="clubhouse-card__type">{activity.multiplayer ? "Multijoueur" : activity.type === "game" ? "Mini-jeu" : "Défi"}</span>{isComplete && <span className="clubhouse-card__done"><CheckCircle size={16} weight="fill" /> Fait</span>}</span>
                 <strong>{activity.title}</strong>
                 <small>{activity.description}</small>
-                <span className="clubhouse-card__meta"><span><Timer size={13} weight="bold" /> {activity.duration} min</span><span><Star size={13} weight="fill" /> +{activityReward(activity.id)}</span></span>
+                <span className="clubhouse-card__meta">
+                  <span><Timer size={14} weight="bold" /> {activity.duration} min</span>
+                  <span className={isComplete ? "is-earned" : ""}>
+                    {isComplete ? <CheckCircle size={14} weight="fill" /> : <Star size={14} weight="fill" />}
+                    {isComplete ? "Déjà gagnées" : `${serverActivity?.reward ?? 0} étoiles`}
+                  </span>
+                </span>
+                {serverActivity?.replayCount > 0 && <span className="clubhouse-card__replays">Rejouée {serverActivity.replayCount} fois</span>}
               </button>
             );
           })}
@@ -2872,7 +2947,15 @@ function ClubhouseScreen({ child }) {
                 {phase === "intro" && (
                   <div className="clubhouse-modal__intro">
                     <p>{selectedActivity.description}</p>
-                    <div className="clubhouse-modal__facts"><span><Timer size={18} weight="fill" /><strong>{selectedActivity.duration} min</strong><small>durée</small></span><span><Star size={18} weight="fill" /><strong>+{activityReward(selectedActivity.id)}</strong><small>étoiles</small></span><span><ShieldCheck size={18} weight="fill" /><strong>Privé</strong><small>rien n’est publié</small></span></div>
+                    <div className="clubhouse-modal__facts">
+                      <span><Timer size={18} weight="fill" /><strong>{selectedActivity.duration} min</strong><small>durée estimée</small></span>
+                      <span className={activityProgress(selectedActivity.id)?.completed ? "is-earned" : ""}>
+                        {activityProgress(selectedActivity.id)?.completed ? <CheckCircle size={18} weight="fill" /> : <Star size={18} weight="fill" />}
+                        <strong>{activityProgress(selectedActivity.id)?.completed ? "Déjà gagnée" : `+${activityProgress(selectedActivity.id)?.reward ?? 0}`}</strong>
+                        <small>{activityProgress(selectedActivity.id)?.completed ? `${activityProgress(selectedActivity.id)?.reward ?? 0} étoiles · une seule fois` : "étoiles à la 1re réussite"}</small>
+                      </span>
+                      <span><ShieldCheck size={18} weight="fill" /><strong>Privé</strong><small>rien n’est publié</small></span>
+                    </div>
                     <button type="button" className="clubhouse-modal__primary" onClick={startActivity}><Sparkle size={18} weight="fill" /> Commencer</button>
                   </div>
                 )}
@@ -3099,7 +3182,7 @@ function DataRightsModal({ account, family, children = [], onClose, onDeleted })
   ), document.body);
 }
 
-function ProfileScreen({ child, onOpenPreferences, onOpenDataRights, onLogout }) {
+function ProfileScreen({ child, features, onOpenPreferences, onOpenDataRights, onLogout }) {
   const [idCopied, setIdCopied] = useState(false);
 
   const copyOwnId = async () => {
@@ -3122,7 +3205,7 @@ function ProfileScreen({ child, onOpenPreferences, onOpenDataRights, onLogout })
         <ShieldCheck size={28} weight="fill" />
         <div><strong>Compte protégé</strong><span>Géré par un parent</span></div>
       </div>
-      <PushNotificationButton />
+      <PushNotificationButton features={features} />
       <button type="button" className="secondary-button" onClick={onOpenPreferences}><GearSix size={19} weight="bold" /> Mes préférences</button>
       <button type="button" className="secondary-button child-data-rights-button" onClick={onOpenDataRights}><ShieldCheck size={19} weight="fill" /> Mes données et mes droits</button>
       <button type="button" className="child-logout-button" onClick={onLogout}><SignOut size={18} weight="bold" /> Se déconnecter</button>
@@ -3453,12 +3536,12 @@ function SafetyToggle({ icon: Icon, title, detail, checked, onChange }) {
 
 function ChildProfilesPanel({ children, activeChildId, onSelectChild, onAddChild }) {
   return (
-    <section className="children-panel" aria-labelledby="children-title">
+    <section className="children-panel" aria-labelledby="children-title" data-profile-count={children.length}>
       <div className="children-panel__heading">
         <div><span>Famille</span><h2 id="children-title">Mes enfants</h2></div>
         <button type="button" className="add-child-button" onClick={onAddChild}><Plus size={18} weight="bold" /> Ajouter</button>
       </div>
-      <div className="child-profile-list">
+      <div className={`child-profile-list child-profile-list--count-${Math.min(children.length, 4)}`}>
         {children.map((child) => (
           <button
             key={child.id}
@@ -3517,7 +3600,10 @@ function ParentModeNavigation({ active, unreadMessages = 0, onHome, onManagement
   );
 }
 
-function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, contactRequests = [], contactRelationships = [], contactRequestBusyId = "", contactRequestError = "", onRespondToContactRequest, onRetryContactRequests, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onOpenDataRights, onEditSchedule, onLogout }) {
+function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, features, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, contactRequests = [], contactRelationships = [], contactRequestBusyId = "", contactRequestError = "", onRespondToContactRequest, onRetryContactRequests, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onOpenDataRights, onEditSchedule, onLogout }) {
+  const notificationsEnabled = Capacitor.isNativePlatform()
+    ? features?.nativePush === true
+    : features?.webPush === true;
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
   const isHome = activeSection === "home";
   const pendingRequests = contactRequests.filter((request) => request.status === "pending");
@@ -3590,70 +3676,6 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
 
         <ChildProfilesPanel children={children} activeChildId={child?.id} onSelectChild={onSelectChild} onAddChild={onAddChild} />
 
-        <section className="parent-section" aria-labelledby="requests-title">
-          <div className="parent-section__title">
-            <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Approuvez les contacts de votre famille.</p></div></div>
-            {pendingRequests.length > 0 && <span className="status-pill">{pendingRequests.length}</span>}
-          </div>
-          {contactRequestError && <div className="request-sync-error" role="alert"><Shield size={17} weight="fill" /><span>{contactRequestError}</span><button type="button" onClick={onRetryContactRequests}>Réessayer</button></div>}
-          {pendingRequests.map((request) => {
-            const isIncoming = request.direction === "incoming";
-            const displayedContact = isIncoming ? request.requester : request.target;
-            const familyProfile = isIncoming ? request.target : request.requester;
-            const isBusy = contactRequestBusyId === request.id;
-            return (
-              <article className="friend-request" key={request.id}>
-                <span className="request-avatar" aria-hidden="true">{displayedContact.name?.trim().charAt(0).toUpperCase() || "?"}</span>
-                <div className="request-copy">
-                  <strong>{displayedContact.name}</strong>
-                  <span>{displayedContact.contactId}</span>
-                  <small>{isIncoming ? `Demande pour ${familyProfile.name}` : `Envoyée pour ${familyProfile.name}`}</small>
-                </div>
-                {isIncoming && request.canRespond
-                  ? <div className="request-actions">
-                      <button type="button" className="decline-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "decline")}><X size={16} weight="bold" /> Refuser</button>
-                      <button type="button" className="approve-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "accept")}><Check size={16} weight="bold" /> {isBusy ? "Traitement…" : "Accepter"}</button>
-                    </div>
-                  : <div className="request-pending-note"><Clock size={15} weight="fill" /> En attente de l’autre famille</div>}
-              </article>
-            );
-          })}
-          {pendingRequests.length === 0 && !contactRequestError && <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>}
-        </section>
-
-        <button type="button" className="family-parents-entry" onClick={onOpenFamilyParents}>
-          <span><UsersThree size={23} weight="fill" /></span>
-          <span><strong>Parents de la famille</strong><small>{family?.role === "primary" ? "Invitez et gérez les co-parents autorisés." : "Consultez les adultes autorisés de la famille."}</small></span>
-          <span className="family-parents-count">{family?.members?.length ?? 1}{family?.pendingInvitations?.length ? <small>+{family.pendingInvitations.length}</small> : null}</span>
-          <CaretRight size={18} weight="bold" aria-hidden="true" />
-        </button>
-
-        <button type="button" className="family-ids-entry" onClick={onOpenContactIds}>
-          <span><IdentificationCard size={23} weight="fill" /></span>
-          <span><strong>Identifiants de contact</strong><small>Un numéro unique et non réutilisable par membre.</small></span>
-          <span className="family-ids-count">{children.length + (family?.members?.length ?? 1)}</span>
-          <CaretRight size={18} weight="bold" aria-hidden="true" />
-        </button>
-
-        <button type="button" className="parent-password-entry" onClick={onOpenPassword}>
-          <span><LockKey size={22} weight="fill" /></span>
-          <span><strong>Mot de passe parent</strong><small>Modifier vos informations de connexion.</small></span>
-          <CaretRight size={18} weight="bold" aria-hidden="true" />
-        </button>
-
-        <button type="button" className="parent-data-rights-entry" onClick={onOpenDataRights}>
-          <span><ShieldCheck size={22} weight="fill" /></span>
-          <span><strong>Données et droits RGPD</strong><small>Exporter, corriger, limiter, s’opposer ou supprimer.</small></span>
-          <CaretRight size={18} weight="bold" aria-hidden="true" />
-        </button>
-
-        <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
-          <span><DownloadSimple size={23} weight="bold" /></span>
-          <span><strong>Installer sur Android</strong><small>Télécharger l’application Secret Clubhouse · APK · 12,7 Mo</small></span>
-          <span className="parent-apk-badge">APK</span>
-          <CaretRight size={18} weight="bold" aria-hidden="true" />
-        </a>
-
         {!child && (
           <section className="empty-family-card" aria-labelledby="empty-family-management-title">
             <span><UserPlus size={34} weight="fill" /></span>
@@ -3662,25 +3684,92 @@ function ParentDashboard({ activeSection, onChangeSection, parentName, family, c
           </section>
         )}
 
-        {child && <>
-        <section className="parent-section" aria-labelledby="safety-title">
-          <div className="parent-section__title">
-            <div><span className="section-icon section-icon--violet"><ShieldCheck size={19} weight="fill" /></span><div><h2 id="safety-title">Règles de sécurité</h2><p>Réglages appliqués au compte de {child.name}.</p></div></div>
+        <div className="parent-management-grid">
+          <div className="parent-management-column">
+            <section className="parent-section" aria-labelledby="requests-title">
+              <div className="parent-section__title">
+                <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Approuvez les contacts de votre famille.</p></div></div>
+                {pendingRequests.length > 0 && <span className="status-pill">{pendingRequests.length}</span>}
+              </div>
+              {contactRequestError && <div className="request-sync-error" role="alert"><Shield size={17} weight="fill" /><span>{contactRequestError}</span><button type="button" onClick={onRetryContactRequests}>Réessayer</button></div>}
+              {pendingRequests.map((request) => {
+                const isIncoming = request.direction === "incoming";
+                const displayedContact = isIncoming ? request.requester : request.target;
+                const familyProfile = isIncoming ? request.target : request.requester;
+                const isBusy = contactRequestBusyId === request.id;
+                return (
+                  <article className="friend-request" key={request.id}>
+                    <span className="request-avatar" aria-hidden="true">{displayedContact.name?.trim().charAt(0).toUpperCase() || "?"}</span>
+                    <div className="request-copy">
+                      <strong>{displayedContact.name}</strong>
+                      <span>{displayedContact.contactId}</span>
+                      <small>{isIncoming ? `Demande pour ${familyProfile.name}` : `Envoyée pour ${familyProfile.name}`}</small>
+                    </div>
+                    {isIncoming && request.canRespond
+                      ? <div className="request-actions">
+                          <button type="button" className="decline-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "decline")}><X size={16} weight="bold" /> Refuser</button>
+                          <button type="button" className="approve-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "accept")}><Check size={16} weight="bold" /> {isBusy ? "Traitement…" : "Accepter"}</button>
+                        </div>
+                      : <div className="request-pending-note"><Clock size={15} weight="fill" /> En attente de l’autre famille</div>}
+                  </article>
+                );
+              })}
+              {pendingRequests.length === 0 && !contactRequestError && <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>}
+            </section>
+
+            {child && <section className="parent-section" aria-labelledby="safety-title">
+              <div className="parent-section__title">
+                <div><span className="section-icon section-icon--violet"><ShieldCheck size={19} weight="fill" /></span><div><h2 id="safety-title">Règles de sécurité</h2><p>Réglages appliqués au compte de {child.name}.</p></div></div>
+              </div>
+              <div className="settings-list">
+                <SafetyToggle icon={PencilSimple} title="Photos, images et vidéos" detail="Autoriser l’envoi entre amis approuvés" checked={settings.media} onChange={() => onToggleSetting("media")} />
+                <button className="safety-setting schedule-setting" type="button" onClick={onEditSchedule} aria-label={`Gérer les horaires de ${child.name}`}>
+                  <span className="setting-icon"><Clock size={20} weight="fill" /></span>
+                  <span className="setting-copy"><strong>Mode calme</strong><small>{scheduleDetail}</small></span>
+                  <span className="schedule-setting__tail" aria-hidden="true"><span className={`toggle ${schedule.enabled ? "is-on" : ""}`}><span /></span><CaretRight size={16} weight="bold" /></span>
+                </button>
+                {notificationsEnabled && <ChildNotificationConsentSetting child={child} />}
+              </div>
+            </section>}
           </div>
-          <div className="settings-list">
-            <SafetyToggle icon={PencilSimple} title="Photos, images et vidéos" detail="Autoriser l’envoi entre amis approuvés" checked={settings.media} onChange={() => onToggleSetting("media")} />
-            <button className="safety-setting schedule-setting" type="button" onClick={onEditSchedule} aria-label={`Gérer les horaires de ${child.name}`}>
-              <span className="setting-icon"><Clock size={20} weight="fill" /></span>
-              <span className="setting-copy"><strong>Mode calme</strong><small>{scheduleDetail}</small></span>
-              <span className="schedule-setting__tail" aria-hidden="true"><span className={`toggle ${schedule.enabled ? "is-on" : ""}`}><span /></span><CaretRight size={16} weight="bold" /></span>
+
+          <div className="parent-management-column">
+            <button type="button" className="family-parents-entry" onClick={onOpenFamilyParents}>
+              <span><UsersThree size={23} weight="fill" /></span>
+              <span><strong>Parents de la famille</strong><small>{family?.role === "primary" ? "Invitez et gérez les co-parents autorisés." : "Consultez les adultes autorisés de la famille."}</small></span>
+              <span className="family-parents-count">{family?.members?.length ?? 1}{family?.pendingInvitations?.length ? <small>+{family.pendingInvitations.length}</small> : null}</span>
+              <CaretRight size={18} weight="bold" aria-hidden="true" />
             </button>
-            <ChildNotificationConsentSetting child={child} />
+
+            <button type="button" className="family-ids-entry" onClick={onOpenContactIds}>
+              <span><IdentificationCard size={23} weight="fill" /></span>
+              <span><strong>Identifiants de contact</strong><small>Un numéro unique et non réutilisable par membre.</small></span>
+              <span className="family-ids-count">{children.length + (family?.members?.length ?? 1)}</span>
+              <CaretRight size={18} weight="bold" aria-hidden="true" />
+            </button>
+
+            <section className="parent-account-app-panel" aria-labelledby="parent-account-app-title">
+              <div className="parent-account-app-panel__title">
+                <span><DeviceMobile size={20} weight="fill" /></span>
+                <div><h2 id="parent-account-app-title">Compte et application</h2><p>Connexion, droits et installation de Secret Clubhouse.</p></div>
+              </div>
+
+              <button type="button" className="parent-password-entry" onClick={onOpenPassword}>
+                <span><LockKey size={22} weight="fill" /></span>
+                <span><strong>Mot de passe parent</strong><small>Modifier vos informations de connexion.</small></span>
+                <CaretRight size={18} weight="bold" aria-hidden="true" />
+              </button>
+
+              <button type="button" className="parent-data-rights-entry" onClick={onOpenDataRights}>
+                <span><ShieldCheck size={22} weight="fill" /></span>
+                <span><strong>Données et droits RGPD</strong><small>Exporter, corriger, limiter, s’opposer ou supprimer.</small></span>
+                <CaretRight size={18} weight="bold" aria-hidden="true" />
+              </button>
+
+              <PushNotificationButton features={features} />
+            </section>
           </div>
-        </section>
-
-        </>}
-
-        <PushNotificationButton />
+        </div>
         </>}
       </div>
       <ParentModeNavigation
@@ -3855,8 +3944,8 @@ function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren
           <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
           <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
           <div className="conversation-actions conversation-actions--parent">
-            <button type="button" className="icon-button audio-call-button" onClick={() => onStartCall(selectedThread, "audio")} aria-label={`Appeler ${selectedThread.name} en audio`}><Phone size={20} weight="fill" /></button>
-            <button type="button" className="icon-button video-call-button" onClick={() => onStartCall(selectedThread, "video")} aria-label={`Appeler ${selectedThread.name} en vidéo`}><VideoCamera size={20} weight="fill" /></button>
+            {onStartCall && <button type="button" className="icon-button audio-call-button" onClick={() => onStartCall(selectedThread, "audio")} aria-label={`Appeler ${selectedThread.name} en audio`}><Phone size={20} weight="fill" /></button>}
+            {onStartCall && <button type="button" className="icon-button video-call-button" onClick={() => onStartCall(selectedThread, "video")} aria-label={`Appeler ${selectedThread.name} en vidéo`}><VideoCamera size={20} weight="fill" /></button>}
             {canInviteToGame && <button type="button" className="parent-thread-game-button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${selectedThread.name} à jouer`}><GameController size={19} weight="fill" /><span>Jouer</span></button>}
           </div>
         </header>
@@ -4499,6 +4588,7 @@ export function App() {
   }, [latestIncomingMessageId, openConversationForReceipts?.id, session?.id]);
 
   const openRealtimeCall = (conversation, callType, policy = null) => {
+    if (session?.features?.rtc !== true) return;
     setCallOverlay({
       key: `outgoing-${conversation.id}-${callType}-${Date.now()}`,
       direction: "outgoing",
@@ -4960,7 +5050,7 @@ export function App() {
   }, [session?.id, session?.role]);
 
   useEffect(() => {
-    if (!Capacitor.isNativePlatform() || !session || !hasNativeSession()) return undefined;
+    if (!Capacitor.isNativePlatform() || !session || !hasNativeSession() || session.features?.nativePush !== true) return undefined;
     let disposed = false;
     let nativeDeliveryEnabled = false;
     const listenerHandles = [];
@@ -5157,10 +5247,10 @@ export function App() {
       window.removeEventListener("secretclubhouse:native-push-token", handleNativeTokenEvent);
       listenerHandles.forEach((handle) => { void handle.remove(); });
     };
-  }, [session?.id, session?.role]);
+  }, [session?.features?.nativePush, session?.id, session?.role]);
 
   useEffect(() => {
-    if (!session) return undefined;
+    if (!session || session.features?.rtc !== true) return undefined;
     if (session.role === "child" && activeChild?.status !== "active") return undefined;
     let active = true;
     let openingIncomingCall = false;
@@ -5207,7 +5297,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [activeChild?.status, parentThreads, serverConversations, session?.id, session?.role]);
+  }, [activeChild?.status, parentThreads, serverConversations, session?.features?.rtc, session?.id, session?.role]);
 
   useEffect(() => {
     if (!session) return;
@@ -5263,7 +5353,7 @@ export function App() {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={openRealtimeCall} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
@@ -5277,6 +5367,7 @@ export function App() {
           family={family}
           children={children}
           child={activeChild}
+          features={session.features}
           onSelectChild={setActiveChildId}
           onAddChild={() => setChildModal({ mode: "create" })}
           onEditChild={() => setChildModal({ mode: "edit", childId: activeChild.id })}
@@ -5311,13 +5402,13 @@ export function App() {
       return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
     if (selectedConversation) {
-      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} onStartCall={openRealtimeCall} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
     }
     if (activeTab === "clubhouse") {
       return <ClubhouseScreen child={activeChild} />;
     }
     if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
-    if (activeTab === "profile") return <ProfileScreen child={activeChild} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onOpenDataRights={() => setIsDataRightsOpen(true)} onLogout={logoutParent} />;
+    if (activeTab === "profile") return <ProfileScreen child={activeChild} features={session.features} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onOpenDataRights={() => setIsDataRightsOpen(true)} onLogout={logoutParent} />;
     const availableConversations = serverConversations.map((conversation) => ({ ...conversation, online: presenceByContactId[conversation.contactId] ?? false }));
     const approvedFriends = availableConversations.filter((conversation) => !conversation.isFamily && conversation.contactRole !== "parent");
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;

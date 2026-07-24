@@ -1,11 +1,11 @@
 # Analyse d’impact relative à la protection des données (AIPD)
 
 **Traitement :** Secret Clubhouse — service familial privé de communication et d’activités pour enfants de 6 à 13 ans
-**Version :** 1.0
+**Version :** 1.9<br>
 **Date d’évaluation :** 23 juillet 2026
 **Responsable du traitement :** Mickael Thorez, éditeur individuel non professionnel
 **Contact RGPD :** `contact@secret-clubhouse.fr`
-**État :** projet complet sur le plan technique, à valider par le responsable du traitement
+**État :** réévaluation fondée sur les preuves disponibles, non validée par le responsable du traitement
 
 Ce dossier applique la méthode CNIL : contexte, respect des principes fondamentaux, étude des risques sur les droits et libertés, mesures et validation. Il doit être conservé avec ses preuves. Il ne remplace ni l’avis d’un DPO lorsqu’un DPO est désigné, ni une consultation préalable de la CNIL lorsqu’un risque résiduel élevé ne peut pas être réduit.
 
@@ -13,14 +13,15 @@ Ce dossier applique la méthode CNIL : contexte, respect des principes fondament
 
 > **PRODUCTION BLOQUÉE**
 
-L’AIPD est obligatoire et a été constituée à partir du code et de la documentation du 23 juillet 2026. Elle n’est pas encore formellement approuvée. Les risques `R01`, `R08` et `R10` restent provisoirement élevés en l’absence de preuves closes sur l’administration des secrets, les transferts et sous-traitants, le test de sécurité indépendant et la gouvernance de production.
+La condition demandée d’une clôture vérifiée de `A02` à `A08` n’est pas satisfaite. `A05`, `A06` et `A07` disposent désormais de preuves permettant de retenir leur clôture, avec les réserves et restrictions décrites ci-dessous. `A02`, `A03`, `A04` et `A08` restent ouvertes. L’AIPD n’est donc pas formellement approuvée et les risques `R01`, `R02`, `R06`, `R08` et `R10` restent élevés.
 
 Avant l’ouverture à des enfants réels, le responsable doit :
 
-1. fermer les actions `A01` à `A08` et joindre les preuves ;
-2. réévaluer les vraisemblances résiduelles ;
-3. signer la décision de validation ;
-4. si un risque élevé subsiste malgré les mesures, demander une consultation préalable de la CNIL avant le traitement concerné.
+1. fermer avec des preuves réelles `A02`, `A03`, `A04` et `A08` ;
+2. rejouer les contrôles échus de `A05` et `A06` si leur date de réexamen est atteinte ;
+3. recalculer les vraisemblances résiduelles sur la configuration effectivement déployée ;
+4. si un risque élevé subsiste après toutes les mesures réalisables, consulter préalablement la CNIL avant le traitement concerné ;
+5. présenter seulement ensuite une nouvelle décision de validation à Mickael Thorez.
 
 La présence d’un dossier dans le dépôt ne vaut donc pas autorisation de mise en production.
 
@@ -71,7 +72,15 @@ Cette version repose notamment sur :
 - `server/notification-privacy.js` et `server/legal-compliance.js` pour la minimisation push et le consentement ;
 - `server/privacy-service.js`, `docs/data-subject-rights.md` et `server/reapply-erasure-tombstones.js` pour les droits ;
 - `server/retention.js`, `server/retention-policy.js`, `docs/data-retention.md` et `render.yaml` pour les durées ;
+- `docs/incident-response.md`, `docs/registre-violations.md` et le dossier `docs/exercices/a05-2026-07-23-*` pour la réponse aux violations et la preuve de l’exercice A05 ;
+- `docs/a06-validation-postgresql-2026-07-23.md` et les tests PostgreSQL associés pour la clôture technique A06 ;
+- `docs/registre-sous-traitants-et-transferts.md` pour l’état ouvert d’A03 et les preuves privées attendues ;
 - `docs/registre-bases-legales.md`, `src/privacy-policy.js` et `src/legal-framework.js` pour les finalités, bases légales et informations fournies.
+- `docs/a02-protocole-consultation.md` pour le protocole vierge préparatoire de l’action `A02`.
+- `docs/a04-procedure-gestion-acces-et-cles.md`, `docs/a04-checklist-preuves.md` et `.audit/2026-07-23-a04-access-key-audit/audit.md` pour l’audit et la préparation de l’action `A04`.
+- `docs/a07-evaluation-securite-2026-07-23.md` et les tests de garde des routes, drapeaux de production et conteneurs natifs pour la clôture restreinte de `A07`.
+- `docs/a08-checklist-configuration-production-2026-07-23.md` et `.audit/2026-07-23-a08-production-config-audit/evidence-index.md` pour la comparaison expurgée entre le Blueprint et Render réellement déployé.
+- `docs/production-deblocage-minimal.md` pour les seules interventions privées ou humaines encore nécessaires au périmètre web restreint.
 
 Les contrôles indiqués comme existants sont des contrôles présents dans le dépôt. Leur configuration effective en production doit encore être prouvée par `A08`.
 
@@ -156,7 +165,7 @@ La permission caméra, microphone ou notification du système d’exploitation e
 - Les demandes ont une échéance à un mois et une chronologie.
 - La suppression active et la restauration sont encadrées par des consignes d’effacement temporaires.
 
-Le point de vue de parents et d’enfants n’a pas encore été recueilli pour cette AIPD. `A02` est donc ouvert. La consultation doit employer des scénarios concrets et un langage adapté, sans exposer de donnée réelle : notification sur écran verrouillé, présence, visibilité parentale, demandes de contact, suppression et appel vidéo.
+Le point de vue de parents et d’enfants n’a pas encore été recueilli et aucune décision signée n’explique pourquoi cette consultation ne serait pas appropriée dans le contexte précis de Secret Clubhouse. `A02` reste donc ouverte. L’article 35(9) n’impose la consultation que « le cas échéant » : le protocole de `docs/a02-protocole-consultation.md` permet soit une consultation adaptée et minimisée, soit la formalisation d’une décision circonstanciée fondée sur des éléments alternatifs réellement examinés. Le gabarit vierge ne ferme pas l’action.
 
 ## 8. Nécessité et proportionnalité
 
@@ -241,11 +250,11 @@ Les transferts hors EEE ne peuvent pas être justifiés par la seule mention con
 | ID | Événement redouté | Initial | Mesures principales | Résiduel | Niveau | Actions |
 |---|---|---:|---|---:|---|---|
 | R01 | Accès non autorisé aux conversations ou médias | 4×4=16 | Autorisations, sessions, chiffrement applicatif, base privée | 4×3=12 | Élevé | A04, A07, A08 |
-| R02 | Usurpation ou prise de contrôle d’un compte | 4×3=12 | bcrypt, limitation, session révocable 12 h | 4×2=8 | Modéré | A07, A08 |
+| R02 | Usurpation ou prise de contrôle d’un compte | 4×3=12 | bcrypt, limitation, session révocable 12 h | 4×3=12 | Élevé | A07, A08 |
 | R03 | Contact indésirable, manipulation ou harcèlement | 4×3=12 | Identifiant opaque, approbation, règles API | 4×2=8 | Modéré | A02, A05, A07 |
 | R04 | Surveillance disproportionnée de l’enfant | 3×3=9 | Visibilité restreinte, données éphémères, pas de contenu parent | 3×2=6 | Modéré | A02, A06 |
-| R05 | Exposition par notification | 3×3=9 | Libellé générique, consentement conjoint, jeton opaque | 2×2=4 | Faible | A03, A07 |
-| R06 | Exposition liée à WebRTC | 4×3=12 | Autorisation, signalisation chiffrée, permissions à l’usage, purge, TURN | 3×2=6 | Modéré | A03, A07, A08 |
+| R05 | Exposition par notification | 3×3=9 | Libellé générique, consentement conjoint, jeton opaque | 2×3=6 | Modéré | A03, A07 |
+| R06 | Exposition liée à WebRTC | 4×3=12 | Autorisation, signalisation chiffrée, permissions à l’usage, purge, TURN | 3×3=9 | Élevé | A03, A07, A08 |
 | R07 | Conservation ou restauration incorrecte | 4×3=12 | Purge, échéances, tombstones, registre de droits | 4×2=8 | Modéré | A06, A08 |
 | R08 | Transfert ou sous-traitance insuffisamment maîtrisé | 4×3=12 | Registre par flux, Francfort pour les nouvelles ressources, minimisation, chiffrement, contrats annoncés | 4×3=12 | Élevé | A03, A01 |
 | R09 | Indisponibilité ou perte de données | 3×3=9 | Sauvegardes, transactions, uploads bornés, tests | 3×2=6 | Modéré | A05, A06, A08 |
@@ -253,37 +262,130 @@ Les transferts hors EEE ne peuvent pas être justifiés par la seule mention con
 
 Les scénarios détaillés — menaces, impacts, contrôles et liens d’action — sont la source structurée `server/aipd-register.js`. Toute modification d’un score doit être motivée dans l’historique de validation et accompagnée d’une preuve.
 
+### 10.1 Vérification de la clôture de A02 à A08
+
+| Action | État vérifié au 23/07/2026 | Preuves contrôlées | Conclusion |
+|---|---|---|---|
+| A02 | **Ouverte** | `docs/a02-protocole-consultation.md` se déclare vierge ; aucune consultation réelle et aucune décision signée établissant qu’elle ne serait pas appropriée ne sont référencées | Le protocole est un gabarit ; aucune des deux voies de clôture prévues par l’article 35(9) n’est prouvée |
+| A03 | **Ouverte** | `docs/registre-sous-traitants-et-transferts.md` regroupe les preuves en cinq dossiers ; le code et le Blueprint cible ferment maintenant RTC, Web Push, FCM et APNs | La désactivation cible prépare D2 à D5, mais elle n’est pas encore prouvée sur Render réel ; D1 Render reste dépourvu de dossier privé vérifié |
+| A04 | **Ouverte** | Procédure et audit A04 ; checklist encore vierge | Pour les services réellement actifs, les accès nominatifs, l’authentification adaptée, le moindre privilège et les essais représentatifs de récupération/révocation ne sont pas prouvés |
+| A05 | **Fermée avec réserve** | Procédure, registre, exercice `SIM-A05-2026-07-23`, manifeste et cinq contrôles automatisés réussis lors du rejeu | L’exercice synthétique couvre le contrôle préparatoire ; le 23/07/2027 est un objectif interne de revue, pas une échéance légale fixe |
+| A06 | **Fermée avec réserve** | Rapport A06 et nouveau rejeu sur PostgreSQL 18.4 local neuf : purge 1/1, droits 1/1, cycle complet 5/5 et commande de purge réussis | La date du 23/10/2026 est un objectif interne fondé sur le risque, non une périodicité légale. A06 ne prouve pas Render |
+| A07 | **Fermée avec restriction** | Rapport A07 ; 132 tests unitaires/HTTP réussis, 9 tests PostgreSQL réels réussis, audit npm sans vulnérabilité, build réussi ; quatre constats corrigés | Fermeture limitée au web/API : RTC, push, administration partagée et distribution native restent désactivés. Leur activation rouvre A07 |
+| A08 | **Ouverte** | Checklist Render datée : 9 cases cochées et 29 non cochées ; index de preuves expurgé | Ressources observées en Oregon, Cron absent, déploiement refusé, SHA servi ancien, sessions de 168 h et restauration/alertes non prouvées |
+
+**Conclusion de vérification :** la prémisse « A02 à A08 clôturées » est fausse. Aucun score ci-dessous ne peut être présenté comme un score définitif après clôture complète.
+
+### 10.2 Recalcul des vraisemblances résiduelles
+
+| Risque | Preuves vérifiées | Vraisemblance précédente → actuelle | Explication | Résiduel actuel |
+|---|---|---:|---|---|
+| R01 | Contrôles d’autorisation, session et chiffrement évalués ; A07 fermée ; A04 et A08 ouvertes | 3 → 3 | L’évaluation ferme les défauts locaux élevés, mais accès privilégiés, récupération des clés et déploiement conforme ne sont pas prouvés. Aucune baisse n’est encore justifiée | 4×3=12 — **Élevé** |
+| R02 | Limitation, cookie/Bearer, révocation et erreurs évalués ; A07 fermée ; A08 ouverte | 2 → 3 | Le code évalué impose 12 h, mais la version observée sur Render sert encore des sessions de 168 h. Tant que cette version n’est pas remplacée et prouvée, la hausse demeure | 4×3=12 — **Élevé** |
+| R03 | Approbation parentale, règles serveur et gardes des routes évaluées ; A05/A07 fermées ; A02 ouverte | 2 → 2 | Les barrières réduisent le scénario à « possible », mais A02 n’a suivi aucune de ses deux voies de décision ; une baisse à 1 n’est pas justifiée | 4×2=8 — **Modéré** |
+| R04 | Restrictions de présence et exports vérifiés ; A06 fermée ; A02 ouverte | 2 → 2 | La collecte est bornée techniquement, mais ni consultation appropriée ni décision circonstanciée de ne pas consulter n’est documentée | 3×2=6 — **Modéré** |
+| R05 | Push fermé dans le périmètre cible ; A07 fermée ; A03 et A08 ouvertes | 2 → 3 | La désactivation est testée dans le dépôt mais pas encore prouvée sur Render réel ; les routes, durées, sous-traitants et contrats de tout flux futur restent à établir | 2×3=6 — **Modéré** |
+| R06 | RTC fermé dans le périmètre cible ; A07 fermée ; A03 et A08 ouvertes | 2 → 3 | La version actuellement observée et sa configuration STUN/TURN ne sont pas remplacées ni prouvées. Le score ne baissera qu’après déploiement vérifié des drapeaux fermés | 3×3=9 — **Élevé** |
+| R07 | A06 rejouée sur une base neuve avec restauration et tombstones ; A08 ouverte | 2 → 2 | A06 confirme la logique locale et empêche une hausse ; l’absence de Cron et de restauration Render réels empêche une baisse à 1 | 4×2=8 — **Modéré** |
+| R08 | Registre A03 regroupé en cinq dossiers, tous ouverts ; A08 constate l’Oregon | 3 → 3 | Le transfert et les accès hors EEE sont plausibles et observés pour Render ; aucun dossier contractuel complet ni décision de transfert datée ne permet une baisse | 4×3=12 — **Élevé** |
+| R09 | A05 et A06 fermées ; transaction, purge et restauration locale vérifiées ; A08 ouverte | 2 → 2 | Les contrôles locaux réduisent le risque, mais sauvegarde, alerte, Cron et restauration gérés par Render restent non testés | 3×2=6 — **Modéré** |
+| R10 | Erreurs, routes et journaux évalués ; A05/A07 fermées ; A04 et A08 ouvertes | 3 → 3 | Les accès réels ne sont pas inventoriés et leur revue/révocation n’est pas prouvée ; la fermeture des contrôles locaux ne permet donc pas encore une baisse | 4×3=12 — **Élevé** |
+
+Les risques encore élevés sont `R01`, `R02`, `R06`, `R08` et `R10`. Les hausses de vraisemblance concernent `R02`, `R05` et `R06`. Aucun score ne diminue, car aucune nouvelle preuve ne ferme les actions dont dépendrait une telle réduction.
+
+### 10.3 Exigences internes retirées ou rendues proportionnelles
+
+La version 1.8 retire les modalités qui n’étaient pas imposées comme telles par le RGPD :
+
+- réponses humaines obligatoires pour fermer A02 : remplacées par les deux voies de l’article 35(9), consultation lorsqu’elle est appropriée ou décision signée et circonstanciée de ne pas consulter ;
+- test A07 nécessairement confié à un prestataire indépendant : remplacé par une évaluation compétente, suffisamment séparée et fiable ;
+- revues A04 trimestrielles, A05 annuelles et A06 trimestrielles : remplacées par un rythme motivé par le risque, les changements et les incidents ;
+- MFA et essais sur les cinq fournisseurs, même inactifs : limités aux accès et services réellement actifs, avec `N/A` prouvé pour les fonctions désactivées ;
+- vérificateur distinct, nombre fixe d’administrateurs, abonnement à un canal précis de changement fournisseur et configuration `Essential Contacts` : retirés comme formes internes non obligatoires ;
+- forme unique de preuve A08 par CI sur le même SHA et test obligatoire de réception d’alerte : une provenance de déploiement et une preuve de détection équivalentes sont admises.
+
+Ces retraits ne modifient aucun score : ils allègent la forme de la preuve, pas les lacunes substantielles actuellement observées.
+
+La version 1.9 ferme `A07` pour un périmètre web restreint après correction de quatre constats et réussite des contrôles locaux. Cette fermeture ne réduit pas encore les scores dépendant de `A04` et `A08`, car le déploiement réellement observé ne correspond pas à la version évaluée.
+
+### 10.4 Consultation préalable de la CNIL
+
+L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-donnees/chapitre4) et la [procédure de soumission de la CNIL](https://www.cnil.fr/fr/services-en-ligne/soumettre-une-analyse-dimpact-relative-la-protection-des-donnees-aipd-la-cnil) imposent une consultation préalable lorsque l’AIPD conclut à un risque résiduel élevé après prise en compte des mesures destinées à l’atténuer.
+
+**Conclusion actuelle :**
+
+- la production est interdite dans l’état présent ;
+- la consultation CNIL ne doit pas servir à remplacer les contrats, preuves de configuration, la décision requise par A02 ou les tests encore réalisables ;
+- les cinq risques élevés sont encore liés à des mesures et preuves inachevées : la conclusion définitive de l’article 36 est donc différée jusqu’à leur achèvement ;
+- si, après fermeture vérifiée de `A02`, `A03`, `A04` et `A08`, un risque conserve un score de 9 à 16, la consultation préalable devient obligatoire avant le traitement concerné ;
+- si Mickael Thorez décide qu’un de ces risques ne peut pas être davantage réduit tout en maintenant le traitement envisagé, la consultation devient immédiatement obligatoire avant toute mise en œuvre de ce traitement.
+
 ## 11. Plan d’actions
 
-| ID | Mesure à fermer | Responsable | Échéance | Preuve d’acceptation |
-|---|---|---|---|---|
-| A01 | Validation formelle de l’AIPD | Responsable du traitement | Avant utilisateurs réels | Décision datée/signée, avis DPO si désigné, budget et risques acceptés. |
-| A02 | Consultation adaptée de parents et enfants | Responsable du traitement | Avant validation | Compte rendu anonymisé ou justification écrite de l’absence de consultation. |
-| A03 | Dossier sous-traitants et transferts | Responsable du traitement | Avant production | Actions bloquantes du registre fermées ; DPA, région réelle, accès support, sauvegardes, sous-traitants ultérieurs, DPF/CCT et analyses d’impact signées pour chaque flux. |
-| A04 | Administration et cycle de vie des clés | Sécurité/exploitation | Avant production | MFA, administrateurs nommés, moindre privilège, revue, rotation et récupération testées. |
-| A05 | Réponse aux incidents et violations | Responsable du traitement | Avant production puis annuel | Procédure et exercice incluant qualification, confinement, familles et CNIL sous 72 h. |
-| A06 | Purge, droits, effacement et restauration | Exploitation | Avant production puis trimestriel | Test PostgreSQL proche production avec rapports et absence de réapparition. |
-| A07 | Test de sécurité indépendant | Prestataire indépendant | Avant production puis changement majeur | Aucun constat critique/élevé ouvert sur API, mobile, upload, WebRTC et push. |
-| A08 | Preuve de configuration de production | Exploitation | Chaque déploiement | Checklist sans secret : variables, réseau, clés, alertes, sauvegardes, Cron et CI. |
+| ID | Mesure à fermer | Responsable | Échéance | Preuve d’acceptation | Statut vérifié |
+|---|---|---|---|---|---|
+| A01 | Validation formelle de l’AIPD | Responsable du traitement | Avant utilisateurs réels | Décision datée/signée, avis DPO si désigné, budget et risques acceptés | **Ouverte** |
+| A02 | Décider et, si approprié, consulter parents et enfants | Responsable du traitement | Avant validation | Consultation adaptée avec compte rendu anonymisé et décisions motivées, ou décision signée et circonstanciée démontrant pourquoi elle n’est pas appropriée et quelles sources alternatives ont été examinées | **Ouverte** |
+| A03 | Dossier sous-traitants et transferts | Responsable du traitement | Avant production | Cinq dossiers `D1` à `D5` fermés avec contrat, configuration réelle, chaîne de traitement, transfert, décision et prochaine revue ; sinon flux techniquement désactivé et limitation prouvée | **Ouverte** |
+| A04 | Administration et cycle de vie des clés | Sécurité/exploitation | Avant production | Pour les services actifs : accès nominatifs, authentification adaptée au risque, moindre privilège, séparation des secrets et essai représentatif de rotation/remplacement, récupération et révocation ; services inactifs `N/A` avec preuve | **Ouverte** |
+| A05 | Réponse aux incidents et violations | Responsable du traitement | Avant production, après incident/changement matériel, puis selon le risque | Procédure, registre et exercice incluant qualification, confinement, familles, enfants et CNIL sous 72 h | **Fermée avec réserve le 23/07/2026 ; objectif interne de revue 23/07/2027** |
+| A06 | Purge, droits, effacement et restauration | Exploitation | Avant production, après changement matériel, puis selon le risque | Toutes les durées, purge, droits, suppressions, tombstones et restauration réussis sur PostgreSQL local isolé via `TEST_DATABASE_URL` | **Fermée avec réserve le 23/07/2026 ; objectif interne de revue 23/10/2026** |
+| A07 | Évaluation de sécurité proportionnée | Évaluateur compétent | Avant production puis changement majeur | Périmètre web/API évalué, constats élevés corrigés et aucun constat critique/élevé ouvert ; RTC, push, administration partagée et distribution native désactivés | **Fermée avec restriction le 23/07/2026** |
+| A08 | Preuve de configuration de production | Exploitation | Chaque déploiement | Preuves datées de l’état Render réel et lien non ambigu entre la version servie, les tests et le build par SHA ou provenance équivalente | **Ouverte** |
 
 Une action n’est « fermée » qu’avec une pièce datée, un auteur et un résultat vérifiable. La seule présence d’une option dans `render.yaml` ne prouve pas sa valeur effective.
 
-## 12. Validation formelle
+L’audit A04 du 23 juillet 2026 conclut à un état **ouvert**. Les mécanismes de clé active/précédente pour le contenu sont présents et testés avec des données synthétiques, mais les accès privilégiés et l’authentification des services actifs, la révocation d’un accès représentatif et la récupération réelle des secrets ne sont pas prouvés. Si Web Push est activé, le rollover VAPID reste bloquant : une seule paire est chargée, les souscriptions ne portent pas d’identifiant de paire et la clé privée peut être conservée dans PostgreSQL en l’absence de variables Render. Si le canal est désactivé, ces contrôles sont `N/A` avec preuve technique. La procédure et la checklist sont des préparatifs, jamais une preuve d’exercice.
 
-Cette section doit être complétée par une personne réelle. Aucun champ ci-dessous ne doit être prérempli ou signé automatiquement.
+L’audit A08 du 23 juillet 2026 conclut également à un état **ouvert**. Render affiche le service web et PostgreSQL en Oregon, aucun Cron Secret Clubhouse, six noms de variables seulement et un dernier déploiement refusé faute de `DATABASE_TRANSPORT`. Le commit réellement servi utilise encore des JWT de sept jours, ne contient pas le chiffrement applicatif versionné ni le workflow CI, et aucune restauration réelle n’est prouvée. La checklist datée conserve les constats expurgés ; le `render.yaml` actuel reste uniquement l’état cible.
 
-| Validation | Décision à renseigner |
+### Preuve de clôture A07
+
+L’évaluation `docs/a07-evaluation-securite-2026-07-23.md` a identifié puis fermé deux constats élevés et deux constats modérés : distribution publique d’un APK de débogage, activation implicite de fournisseurs, dépassement de la limite HTTP de 30 Mio et configuration Android trop permissive. La suite complète réussit 132 tests hors base, les cinq suites PostgreSQL réelles réussissent 9 tests supplémentaires, l’audit npm ne trouve aucune vulnérabilité et le build web réussit.
+
+Cette clôture vaut uniquement tant que `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` restent à `false` et qu’aucun APK/AAB/IPA n’est distribué. Toute activation ou publication native rouvre automatiquement `A07`.
+
+### Preuve de clôture A05
+
+L’exercice `SIM-A05-2026-07-23` a été exécuté le 23 juillet 2026 par six rôles fictifs déclarés (`EX-RT`, `EX-PI`, `EX-SEC`, `EX-PRIV`, `EX-COM`, `EX-SCR`), sans donnée réelle, connexion de production ni envoi à la CNIL ou aux familles. Il a évalué neuf objectifs, trouvé quatre défauts documentaires et fermé les quatre corrections. Le résultat, les limites et les brouillons neutres sont consignés dans `docs/exercices/a05-2026-07-23-fuite-messages-enfants.md` ; le manifeste `docs/exercices/a05-2026-07-23-manifest.json` et `server/incident-response-evidence.test.js` contrôlent la date, les rôles, le calcul des 72 heures, les décisions, les résultats et les preuves de correction.
+
+Cette clôture couvre le critère d’exercice sur table d’A05. Elle ne démontre pas une mobilisation humaine réelle, un envoi multi-canal ou une interaction avec Render/CNIL et ne ferme aucune autre action. Le 23 juillet 2027 est une date de planification interne, non une périodicité imposée par le RGPD ; A05 est aussi à réexaminer après tout changement matériel ou incident réel.
+
+### Preuve de clôture A06
+
+La validation A06 du 23 juillet 2026 a utilisé exclusivement `TEST_DATABASE_URL` vers PostgreSQL 18.4 local et des données synthétiques. Les garde-fous ont refusé toute variable de production, tout hôte distant et tout nom de base non explicitement marqué comme test. Les tests ont réussi pour toutes les échéances, chaque catégorie de purge, les cinq types de demandes RGPD, les exports parent/enfant, la restriction, la suppression d’un enfant et d’une famille, la création des tombstones, `pg_dump`, `pg_restore`, puis le rejeu des tombstones sans réapparition des personnes effacées. Les journaux contrôlés ne contenaient que des condensats et des compteurs.
+
+Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’environnement, les commandes, les résultats et les anomalies de harnais corrigées. Cette preuve clôt A06. Le 23 octobre 2026 est un objectif interne de réexamen fondé sur le risque, pas une périodicité légale. Elle ne prouve ni le déclenchement du Cron Render réel ni une restauration depuis une sauvegarde gérée par Render ; ces preuves restent exigées par A08.
+
+## 12. Projet de décision finale à signer
+
+> **PROJET NON SIGNÉ — cette trame ne constitue ni une signature, ni une validation, ni une autorisation de production.**
+
+| Élément | Décision préparée |
 |---|---|
-| Responsable du traitement | Nom, décision, date et signature |
-| DPO, si désigné | Avis, réserves, date et identité |
-| Sécurité/exploitation | Preuves A04 à A08, date et identité |
-| Point de vue des personnes | Référence du compte rendu A02 ou justification |
-| Risques résiduels | Acceptés, à réduire, ou soumis à consultation préalable CNIL |
-| Autorisation de production | Oui/non, périmètre et conditions |
+| Responsable appelé à décider | Mickael Thorez, responsable du traitement |
+| Date de préparation | 23 juillet 2026 |
+| Date d’effet | Aucune tant que Mickael Thorez n’a pas daté et signé la décision |
+| Périmètre | Ensemble des traitements listés au § 3 : comptes familiaux et enfants, contacts, communications et médias, présence, WebRTC, notifications, règles parentales, Clubhouse et jeux, sécurité, conservation, droits, Render/PostgreSQL et fournisseurs réseau/push |
+| Décision proposée | **Ne pas valider l’AIPD et ne pas autoriser la production** |
+| Motif | La clôture de A02 à A08 n’est pas vérifiée ; A02, A03, A04 et A08 restent ouvertes ; R01, R02, R06, R08 et R10 restent élevés |
+| Réserves impératives | Aucun enfant réel ; RTC, Web Push, FCM, APNs, administration RGPD partagée et distribution native restent désactivés ; aucun transfert non documenté ; A05 reste un exercice synthétique ; A06 reste une validation locale et non une preuve Render ; A07 est limitée au web/API |
+| Consultation CNIL | À réexaminer après les mesures encore réalisables. Obligatoire avant le traitement concerné si un risque résiduel élevé subsiste alors, ou si Mickael Thorez conclut qu’il ne peut pas être réduit |
+| Prochaine révision | Au plus tard le **5 septembre 2026**, avant la première échéance de recontrôle DPF inscrite dans A03, et plus tôt dès que A02, A03, A04 ou A08 reçoit une nouvelle preuve ou qu’un flux exclu d’A07 est activé |
 
-Décision actuelle : **non validée — production bloquée**.
+### Déclaration réservée à Mickael Thorez
 
-Si les actions réduisent tous les risques sous le niveau élevé, le responsable peut documenter son acceptation motivée. Si un risque élevé reste présent et que sa réduction n’est pas possible, la consultation préalable de la CNIL est obligatoire avant le traitement concerné.
+> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.9, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
+
+| Champ à compléter personnellement | Valeur |
+|---|---|
+| Décision | `☐ Je confirme la non-autorisation de production dans l’état actuel` |
+| Réserves ou instructions supplémentaires |  |
+| Date de signature |  |
+| Signature de Mickael Thorez |  |
+| Avis du DPO, si un DPO est désigné | Identité, avis, date et signature à compléter |
+
+La signature de cette décision de blocage ne ferme ni `A01` ni les actions manquantes. Une autorisation future exige une nouvelle réévaluation versionnée ; elle ne doit pas être ajoutée à cette trame tant qu’une preuve manque ou qu’un risque élevé reste non traité.
 
 ## 13. Réexamen
 

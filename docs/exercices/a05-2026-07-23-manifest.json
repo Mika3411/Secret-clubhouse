@@ -1,0 +1,106 @@
+{
+  "exerciseId": "SIM-A05-2026-07-23",
+  "actionId": "A05",
+  "exerciseDate": "2026-07-23",
+  "timezone": "Europe/Paris",
+  "syntheticScenario": true,
+  "realDataUsed": false,
+  "externalNotificationSent": false,
+  "exerciseType": "tabletop-role-play",
+  "participants": [
+    { "id": "EX-RT", "role": "Responsable du traitement", "fictional": true },
+    { "id": "EX-PI", "role": "Pilote d’incident", "fictional": true },
+    { "id": "EX-SEC", "role": "Sécurité/exploitation", "fictional": true },
+    { "id": "EX-PRIV", "role": "Référent vie privée", "fictional": true },
+    { "id": "EX-COM", "role": "Communication/support", "fictional": true },
+    { "id": "EX-SCR", "role": "Scribe/observateur", "fictional": true }
+  ],
+  "scenario": {
+    "category": "confidentiality",
+    "cause": "synthetic-horizontal-authorization-regression",
+    "children": 3,
+    "families": 2,
+    "records": 12,
+    "dataCategories": ["synthetic-text-messages"],
+    "excludedCategories": ["media", "credentials", "tokens", "encryption-keys", "webrtc-signals"]
+  },
+  "timeline": {
+    "firstSignal": "2026-07-23T09:00:00+02:00",
+    "awareness": "2026-07-23T09:08:00+02:00",
+    "cnilDeadline": "2026-07-26T09:08:00+02:00",
+    "initialContainment": "2026-07-23T09:22:00+02:00",
+    "cnilDraftReady": "2026-07-23T11:30:00+02:00",
+    "familyAndChildDraftsReady": "2026-07-23T12:15:00+02:00",
+    "simulatedRecoveryApproved": "2026-07-23T13:30:00+02:00",
+    "exerciseClosed": "2026-07-23T16:30:00+02:00"
+  },
+  "risk": {
+    "severity": 4,
+    "likelihood": 3,
+    "score": 12,
+    "level": "high",
+    "cnilNotificationRequired": true,
+    "dataSubjectCommunicationRequired": true,
+    "article34ExceptionApplied": false
+  },
+  "results": {
+    "status": "completed-with-verified-corrections",
+    "objectivesEvaluated": 9,
+    "objectivesMet": 9,
+    "defectsFound": 4,
+    "defectsClosed": 4,
+    "nextExerciseDue": "2027-07-23"
+  },
+  "verification": {
+    "performedOn": "2026-07-23",
+    "targetedTests": {
+      "command": "node --test server/incident-response-evidence.test.js",
+      "passed": 5,
+      "failed": 0
+    },
+    "fullTestSuite": {
+      "command": "npm test",
+      "status": "not-clean-out-of-scope-concurrent-control",
+      "passed": 108,
+      "failed": 1,
+      "skipped": 4,
+      "skipReason": "TEST_DATABASE_URL not configured",
+      "failureScope": "One out-of-scope test in the concurrently changing repository; all A05 tests passed in the same run"
+    },
+    "productionBuild": {
+      "command": "npm run build",
+      "status": "passed"
+    },
+    "localPreview": {
+      "httpStatus": 200,
+      "title": "Secret Clubhouse",
+      "phoneViewportChecked": true
+    }
+  },
+  "corrections": [
+    {
+      "id": "EX-A05-01",
+      "status": "closed",
+      "evidence": ["docs/incident-response.md", "server/incident-response-evidence.test.js"]
+    },
+    {
+      "id": "EX-A05-02",
+      "status": "closed",
+      "evidence": ["docs/incident-response.md"]
+    },
+    {
+      "id": "EX-A05-03",
+      "status": "closed",
+      "evidence": ["docs/incident-response.md"]
+    },
+    {
+      "id": "EX-A05-04",
+      "status": "closed",
+      "evidence": [
+        "docs/registre-violations.md",
+        "docs/exercices/a05-2026-07-23-fuite-messages-enfants.md",
+        "server/incident-response-evidence.test.js"
+      ]
+    }
+  ]
+}

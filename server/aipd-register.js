@@ -1,4 +1,4 @@
-export const aipdVersion = "1.0";
+export const aipdVersion = "1.9";
 export const aipdAssessmentDate = "2026-07-23";
 
 export const aipdRiskScale = Object.freeze({
@@ -70,11 +70,11 @@ export const aipdActions = Object.freeze([
   }),
   Object.freeze({
     id: "A02",
-    title: "Recueillir le point de vue des personnes concernées",
+    title: "Décider et, si approprié, recueillir le point de vue des personnes concernées",
     owner: "Responsable du traitement",
     deadline: "Avant validation de l’AIPD",
     status: "open",
-    acceptance: "Compte rendu d’une consultation adaptée de parents et d’enfants de 6 à 13 ans, ou justification documentée de son absence.",
+    acceptance: "Soit consultation adaptée et minimisée de parents et d’enfants avec compte rendu anonymisé et décisions motivées, soit décision signée et circonstanciée démontrant pourquoi cette consultation n’est pas appropriée au sens de l’article 35(9), avec les éléments alternatifs réellement examinés. Un gabarit vierge ou une justification générique ne ferme jamais A02.",
   }),
   Object.freeze({
     id: "A03",
@@ -82,7 +82,7 @@ export const aipdActions = Object.freeze([
     owner: "Responsable du traitement",
     deadline: "Avant mise en production",
     status: "open",
-    acceptance: "Toutes les actions bloquantes de docs/registre-sous-traitants-et-transferts.md sont fermées avec DPA, localisation effective, accès support, sauvegardes, liste des sous-traitants ultérieurs, mécanisme de transfert et analyse signée pour Render, Cloudflare, Apple, Google et les services Web Push retenus.",
+    acceptance: "Les cinq dossiers regroupés D1 à D5 de docs/registre-sous-traitants-et-transferts.md sont fermés avec compte et contrat applicables, configuration réelle, chaîne de traitement, mécanisme de transfert, décision datée et prochaine revue. Un dossier non validé peut seulement être fermé si le flux correspondant est techniquement désactivé en production et que cette limitation est prouvée.",
   }),
   Object.freeze({
     id: "A04",
@@ -90,31 +90,61 @@ export const aipdActions = Object.freeze([
     owner: "Responsable sécurité / exploitation",
     deadline: "Avant mise en production",
     status: "open",
-    acceptance: "Administrateurs nommés, MFA, moindre privilège, revue trimestrielle, séparation des secrets, rotation et restauration avec anciennes clés testées et consignées.",
+    acceptance: "Pour les fournisseurs et secrets réellement actifs : accès privilégiés nominatifs, authentification adaptée au risque, moindre privilège, séparation des secrets et procédure de rotation, récupération et révocation testée sur un environnement représentatif sans donnée d’enfant. Les services désactivés sont notés non applicables avec preuve technique. Aucun rythme trimestriel, vérificateur distinct ou test d’un fournisseur inactif n’est imposé pour fermer A04.",
   }),
   Object.freeze({
     id: "A05",
     title: "Tester la réponse aux incidents et violations",
     owner: "Responsable du traitement",
-    deadline: "Avant mise en production puis chaque année",
-    status: "open",
+    deadline: "Avant mise en production, après incident ou changement matériel, puis à intervalles adaptés au risque",
+    status: "closed",
+    closedAt: "2026-07-23",
+    closedBy: "EX-RT (rôle fictif de l’exercice sur table)",
+    nextReviewAt: "2027-07-23",
+    evidence: Object.freeze([
+      "docs/incident-response.md",
+      "docs/registre-violations.md",
+      "docs/exercices/a05-2026-07-23-fuite-messages-enfants.md",
+      "docs/exercices/a05-2026-07-23-manifest.json",
+      "server/incident-response-evidence.test.js",
+    ]),
     acceptance: "Procédure de qualification, confinement, preuve, information des familles et notification CNIL sous 72 heures testée lors d’un exercice.",
   }),
   Object.freeze({
     id: "A06",
     title: "Tester purge, effacement et restauration",
     owner: "Exploitation",
-    deadline: "Avant mise en production puis chaque trimestre",
-    status: "open",
+    deadline: "Avant mise en production, après changement matériel, puis à intervalles adaptés au risque",
+    status: "closed",
+    closedAt: "2026-07-23",
+    closedBy: "Codex — validation automatisée sur PostgreSQL local isolé",
+    nextReviewAt: "2026-10-23",
+    evidence: Object.freeze([
+      "docs/a06-validation-postgresql-2026-07-23.md",
+      "server/a06-lifecycle.integration.test.js",
+      "server/retention.integration.test.js",
+      "server/retention.test.js",
+      "server/test-database-safety.test.js",
+      "server/erasure-restoration.js",
+    ]),
     acceptance: "Tests PostgreSQL complets réussis sur une base proche de la production, y compris tombstones, purge, export, restauration et absence de réapparition d’un compte effacé.",
   }),
   Object.freeze({
     id: "A07",
-    title: "Réaliser un test de sécurité indépendant",
-    owner: "Responsable sécurité / prestataire indépendant",
+    title: "Réaliser une évaluation de sécurité proportionnée",
+    owner: "Responsable sécurité / évaluateur compétent",
     deadline: "Avant mise en production puis après changement majeur",
-    status: "open",
-    acceptance: "API, autorisations horizontales, comptes enfants, upload, WebRTC, push, applications natives et dépendances testés ; aucune anomalie critique ou élevée non corrigée.",
+    status: "closed",
+    closedAt: "2026-07-23",
+    closedBy: "Codex — revue locale du périmètre web restreint",
+    evidence: Object.freeze([
+      "docs/a07-evaluation-securite-2026-07-23.md",
+      "server/route-authorization.test.js",
+      "server/production-features.test.js",
+      "server/security-hardening.test.js",
+    ]),
+    acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
+    scopeRestriction: "Fermée uniquement pour le web/API avec RTC, Web Push, APNs/FCM, administration RGPD partagée et distribution native désactivés. Toute activation ou distribution native rouvre A07.",
   }),
   Object.freeze({
     id: "A08",
@@ -122,7 +152,7 @@ export const aipdActions = Object.freeze([
     owner: "Exploitation",
     deadline: "À chaque déploiement",
     status: "open",
-    acceptance: "Revue des variables, transports, sessions, clés, sauvegardes, alertes, Cron Job, journaux et résultats CI archivée sans valeur secrète.",
+    acceptance: "Preuves datées et expurgées de l’état Render réel : régions, variables, transport privé, sessions, chiffrement et anciennes clés, sauvegarde/restauration, Cron et journaux conformes ; la version servie est reliée sans ambiguïté aux tests et au build réussis par un SHA ou une preuve de déploiement équivalente. render.yaml seul ne prouve jamais la production.",
   }),
 ]);
 
@@ -168,7 +198,7 @@ export const aipdRisks = Object.freeze([
     impacts: ["Contact trompeur ou manipulation", "Modification des protections", "Accès aux données et perte de contrôle du compte"],
     initial: { severity: 4, likelihood: 3 },
     existingMeasures: ["Hash bcrypt des mots de passe", "Limitation persistante des connexions par identité et IP", "Sessions valables 12 heures en production et révocables", "Vérification du mot de passe actuel pour les opérations sensibles"],
-    residual: { severity: 4, likelihood: 2 },
+    residual: { severity: 4, likelihood: 3 },
     actionIds: ["A07", "A08"],
   }),
   risk({
@@ -201,7 +231,7 @@ export const aipdRisks = Object.freeze([
     impacts: ["Révélation d’une relation ou d’un échange", "Atteinte à la confidentialité familiale", "Traçage technique indu"],
     initial: { severity: 3, likelihood: 3 },
     existingMeasures: ["Libellés génériques sans texte, nom de fichier, nom d’enfant ou de contact", "Jetons opaques", "Consentement facultatif, révocable et conjoint pour les moins de 15 ans", "Suppression des jetons lors du retrait"],
-    residual: { severity: 2, likelihood: 2 },
+    residual: { severity: 2, likelihood: 3 },
     actionIds: ["A03", "A07"],
   }),
   risk({
@@ -212,7 +242,7 @@ export const aipdRisks = Object.freeze([
     impacts: ["Atteinte à l’intimité physique ou sonore", "Localisation approximative par adresse IP", "Appel indésirable ou anxiogène"],
     initial: { severity: 4, likelihood: 3 },
     existingMeasures: ["Participants authentifiés et approuvés", "Règles parentales vérifiées par l’API", "Payloads offre/réponse/ICE chiffrés avant PostgreSQL", "Permission média demandée à l’usage", "Signaux purgés sous 24 heures", "Relais TURN temporaire lorsqu’il est configuré", "Aucun enregistrement applicatif du flux"],
-    residual: { severity: 3, likelihood: 2 },
+    residual: { severity: 3, likelihood: 3 },
     actionIds: ["A03", "A07", "A08"],
   }),
   risk({
@@ -264,6 +294,6 @@ export const aipdRisks = Object.freeze([
 export const aipdDecision = Object.freeze({
   status: "blocked",
   productionApproved: false,
-  reason: "L’AIPD technique est constituée, mais les risques résiduels R01, R08 et R10 restent élevés tant que les preuves organisationnelles, contractuelles et indépendantes ne sont pas closes.",
-  priorConsultationRule: "Si un risque élevé subsiste malgré les mesures complémentaires, le responsable du traitement doit consulter la CNIL avant de commencer ou poursuivre le traitement concerné.",
+  reason: "La clôture globale A02 à A08 n’est pas vérifiée : A02, A03, A04 et A08 restent ouvertes, et les risques résiduels R01, R02, R06, R08 et R10 restent élevés.",
+  priorConsultationRule: "Les mesures encore réalisables doivent être achevées avant toute production. Si un risque résiduel élevé subsiste ensuite, ou si le responsable décide qu’il ne peut pas le réduire, il doit consulter la CNIL préalablement au traitement concerné.",
 });

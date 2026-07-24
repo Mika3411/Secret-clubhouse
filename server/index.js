@@ -42,6 +42,8 @@ import {
 } from "./native-push.js";
 import { PublicHttpError, safeHttpErrorResponse } from "./http-errors.js";
 import { privacySafeNotificationPayload } from "./notification-privacy.js";
+import { retentionPolicy } from "./retention-policy.js";
+import { buildClubhouseState } from "./clubhouse-progress.js";
 import {
   authenticateSessionRequest,
   createAuthSession,
@@ -56,6 +58,7 @@ import {
 import { migrateLegacyMessageContent } from "./message-encryption-migration.js";
 import { decryptCallSignal, encryptCallSignal } from "./call-signal-content.js";
 import { migrateLegacyCallSignals } from "./call-signal-encryption-migration.js";
+import { resolveProductionFeatures } from "./production-features.js";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -67,6 +70,7 @@ const webPushTimeoutMs = Math.max(2_000, Math.min(15_000, Number(process.env.WEB
 const neutralCallReply = String(process.env.RTC_NEUTRAL_DECLINE_MESSAGE || "Je ne peux pas répondre pour le moment.").trim().slice(0, 240);
 const privacyContactEmail = String(process.env.PRIVACY_CONTACT_EMAIL || "contact@secret-clubhouse.fr").trim().toLowerCase();
 const privacyAdminToken = String(process.env.PRIVACY_ADMIN_TOKEN || "");
+const productionFeatures = resolveProductionFeatures(process.env);
 const invalidLoginPasswordHash = "$2b$12$YoNVhfH0Ezc9Sc/m1jloOu2rXeLxQwenmlqLzPmOOqpV4ztVtWWju";
 let pushEnabled = false;
 let vapidPublicKey = "";
@@ -82,7 +86,8 @@ function parseRtcIceServers() {
     }
   }
 
-  const stunUrls = String(process.env.RTC_STUN_URLS || "stun:stun.cloudflare.com:3478")
+  const defaultStunUrls = process.env.NODE_ENV === "production" ? "" : "stun:stun.cloudflare.com:3478";
+  const stunUrls = String(process.env.RTC_STUN_URLS || defaultStunUrls)
     .split(",")
     .map((url) => url.trim())
     .filter((url) => url.startsWith("stun:") || url.startsWith("stuns:"));
@@ -105,6 +110,7 @@ const fallbackRtcIceServers = parseRtcIceServers();
 let managedTurnCache = null;
 
 async function getRtcIceServers() {
+  if (!productionFeatures.rtc) return [];
   const keyId = process.env.RTC_TURN_KEY_ID;
   const apiToken = process.env.RTC_TURN_API_TOKEN;
   if (!keyId || !apiToken) return fallbackRtcIceServers;
@@ -141,11 +147,20 @@ async function getRtcIceServers() {
 }
 
 async function initializeWebPush() {
+  if (!productionFeatures.webPush) {
+    pushEnabled = false;
+    vapidPublicKey = "";
+    console.log("Web Push désactivé par WEB_PUSH_ENABLED.");
+    return;
+  }
   let keys = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY
     ? { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY }
     : null;
 
   if (!keys) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("WEB_PUSH_ENABLED=true exige VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY en production.");
+    }
     const generatedKeys = webpush.generateVAPIDKeys();
     await pool.query(
       `insert into application_settings(setting_key,setting_value)
@@ -732,6 +747,11 @@ async function serializeAccount(account) {
     contactId: account.contact_id,
     processingRestrictedAt: account.processing_restricted_at ?? null,
     processingRestrictionReason: account.processing_restriction_reason ?? null,
+    features: {
+      rtc: productionFeatures.rtc,
+      webPush: productionFeatures.webPush,
+      nativePush: productionFeatures.nativePush,
+    },
   };
   if (account.role !== "child") return serialized;
   return {
@@ -749,6 +769,7 @@ async function serializeAccount(account) {
 }
 
 function privacyAdminAuthorized(req) {
+  if (!productionFeatures.privacyAdministration) return false;
   if (!privacyAdminToken) return false;
   const provided = String(req.get("X-Privacy-Admin-Token") || "");
   if (!provided || provided.length !== privacyAdminToken.length) return false;
@@ -1084,8 +1105,9 @@ app.get("/api/privacy/export", requireAuth, async (req, res) => {
 
 app.get("/api/privacy/admin/requests", async (req, res) => {
   if (!privacyAdminAuthorized(req)) {
-    return res.status(privacyAdminToken ? 401 : 503).json({
-      error: privacyAdminToken ? "Accès au registre refusé." : "Le canal de traitement RGPD n’est pas configuré.",
+    const configured = productionFeatures.privacyAdministration && Boolean(privacyAdminToken);
+    return res.status(configured ? 401 : 503).json({
+      error: configured ? "Accès au registre refusé." : "Le canal de traitement RGPD n’est pas activé.",
     });
   }
   const result = await pool.query(
@@ -1115,8 +1137,9 @@ app.get("/api/privacy/admin/requests", async (req, res) => {
 
 app.patch("/api/privacy/admin/requests/:id", async (req, res) => {
   if (!privacyAdminAuthorized(req)) {
-    return res.status(privacyAdminToken ? 401 : 503).json({
-      error: privacyAdminToken ? "Accès au registre refusé." : "Le canal de traitement RGPD n’est pas configuré.",
+    const configured = productionFeatures.privacyAdministration && Boolean(privacyAdminToken);
+    return res.status(configured ? 401 : 503).json({
+      error: configured ? "Accès au registre refusé." : "Le canal de traitement RGPD n’est pas activé.",
     });
   }
   if (!uuidPattern.test(req.params.id)) return res.status(400).json({ error: "Demande invalide." });
@@ -1734,23 +1757,6 @@ app.patch("/api/account/avatar", requireAuth, requireActiveChild, async (req, re
   res.json({ child: await serializeAccount(result.rows[0]) });
 });
 
-function previousIsoDate(value) {
-  const date = new Date(`${value}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() - 1);
-  return date.toISOString().slice(0, 10);
-}
-
-function calculateClubhouseStreak(activityDates, today) {
-  const activeDates = new Set(activityDates);
-  let cursor = activeDates.has(today) ? today : previousIsoDate(today);
-  let streak = 0;
-  while (activeDates.has(cursor)) {
-    streak += 1;
-    cursor = previousIsoDate(cursor);
-  }
-  return streak;
-}
-
 async function serializeClubhouseState(childId, executor = pool) {
   const [catalogResult, progressResult, dailyResult, todayResult] = await Promise.all([
     executor.query(
@@ -1775,28 +1781,12 @@ async function serializeClubhouseState(childId, executor = pool) {
       [parentalTimeZone],
     ),
   ]);
-  const catalog = catalogResult.rows.map((activity) => ({
-    activityId: activity.id,
-    reward: Number(activity.reward),
-  }));
-  const progress = progressResult.rows.map((activity) => ({
-    activityId: activity.activity_id,
-    firstCompletedAt: activity.first_completed_at,
-    lastCompletedAt: activity.last_completed_at,
-    completionCount: Number(activity.completion_count),
-    awardedStars: Number(activity.awarded_stars),
-  }));
-  const activityDates = dailyResult.rows.map((row) => row.activity_date);
-  const stars = progress.reduce((total, activity) => total + activity.awardedStars, 0);
-  return {
-    stars,
-    streak: calculateClubhouseStreak(activityDates, todayResult.rows[0].today),
-    completedCount: progress.length,
-    totalActivities: catalog.length,
-    completedActivities: progress.map((activity) => activity.activityId),
-    catalog,
-    progress,
-  };
+  return buildClubhouseState({
+    catalogRows: catalogResult.rows,
+    progressRows: progressResult.rows,
+    activityDates: dailyResult.rows.map((row) => row.activity_date),
+    today: todayResult.rows[0].today,
+  });
 }
 
 app.get("/api/clubhouse", requireAuth, requireActiveChild, async (req, res) => {
@@ -2053,6 +2043,9 @@ app.get("/api/push/public-key", requireAuth, (_req, res) => {
 });
 
 app.post("/api/push/subscribe", requireAuth, requireActiveChild, async (req, res) => {
+  if (!productionFeatures.webPush || !pushEnabled) {
+    return res.status(503).json({ error: "Web Push n’est pas activé." });
+  }
   const subscription = req.body?.subscription;
   if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: "Abonnement push invalide." });
   await assertActiveNotificationConsent(pool, req.auth.sub);
@@ -2075,6 +2068,9 @@ app.delete("/api/push/subscribe", requireAuth, async (req, res) => {
 });
 
 app.post("/api/push/native-token", requireAuth, requireActiveChild, async (req, res) => {
+  if (!productionFeatures.nativePush) {
+    return res.status(503).json({ error: "Les notifications natives ne sont pas activées." });
+  }
   let registration;
   try {
     registration = normalizeNativeTokenRegistration(req.body, process.env);
@@ -3649,6 +3645,17 @@ function validateCallSignal(signalType, payload) {
     && payload.candidate.length <= 8192;
 }
 
+function requireRtcFeature(_req, res, next) {
+  if (!productionFeatures.rtc) {
+    return res.status(503).json({ error: "Les appels audio et vidéo ne sont pas activés." });
+  }
+  return next();
+}
+
+app.use("/api/calls", requireRtcFeature);
+app.use("/api/conversations/:id/calls", requireRtcFeature);
+app.use("/api/native/calls", requireRtcFeature);
+
 app.get("/api/calls", requireAuth, requireActiveChild, async (req, res) => {
   await expireStaleCalls();
   const result = await pool.query(
@@ -4219,8 +4226,10 @@ app.get("/api/conversations/:id/typing", requireAuth, requireActiveChild, async 
 
 app.post("/api/conversations/:id/typing", requireAuth, requireActiveChild, requireConversationMessagingAccess, async (req, res) => {
   if (req.body?.active === true) {
-    await pool.query(`insert into typing_states(conversation_id,account_id,expires_at) values($1,$2,now()+interval '6 seconds')
-      on conflict(conversation_id,account_id) do update set expires_at=excluded.expires_at`, [req.params.id, req.auth.sub]);
+    await pool.query(`insert into typing_states(conversation_id,account_id,expires_at)
+      values($1,$2,now()+$3*interval '1 second')
+      on conflict(conversation_id,account_id) do update set expires_at=excluded.expires_at`,
+    [req.params.id, req.auth.sub, retentionPolicy.typingStateSeconds]);
   } else {
     await pool.query("delete from typing_states where conversation_id=$1 and account_id=$2", [req.params.id, req.auth.sub]);
   }
@@ -4280,7 +4289,7 @@ app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, req
 const supportedAudioTypes = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/aac", "audio/x-m4a"]);
 const maxMediaFileBytes = 25 * 1024 * 1024;
 const maxMediaPayloadBytes = 30 * 1024 * 1024;
-const maxMediaRequestBytes = maxMediaPayloadBytes + (1024 * 1024);
+const maxMediaRequestBytes = 30 * 1024 * 1024;
 const mediaUploadDirectory = path.join(os.tmpdir(), "secret-clubhouse-uploads");
 
 function requireBoundedMediaRequest(req, _res, next) {
@@ -4463,9 +4472,6 @@ app.get("/api/media/:messageId", requireAuth, requireActiveChild, async (req, re
 });
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-app.get("/downloads/Secret-Clubhouse.apk", (_req, res) => {
-  res.download(path.join(root, "Secret-Clubhouse-debug.apk"), "Secret-Clubhouse.apk");
-});
 app.get("/sw.js", (_req, res) => {
   res.set({
     "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -4509,11 +4515,12 @@ export async function startServer() {
     cipher: contentCipher,
     logger: console,
   });
-  nativePushService = createNativePushService({ pool, env: process.env, logger: console });
-  console.log(
-    `Notifications natives : FCM ${nativePushService.capabilities.fcm ? "actif" : "non configuré"}, `
-    + `APNs ${nativePushService.capabilities.apns ? "actif" : "non configuré"}.`,
-  );
+  nativePushService = productionFeatures.nativePush
+    ? createNativePushService({ pool, env: process.env, logger: console })
+    : null;
+  console.log(nativePushService
+    ? `Notifications natives : FCM ${nativePushService.capabilities.fcm ? "actif" : "non configuré"}, APNs ${nativePushService.capabilities.apns ? "actif" : "non configuré"}.`
+    : "Notifications natives désactivées par NATIVE_PUSH_ENABLED.");
   await initializeWebPush();
   const server = app.listen(port, "0.0.0.0", () => console.log(`Secret Clubhouse écoute sur ${port}`));
   let contentMigrationPromise = null;

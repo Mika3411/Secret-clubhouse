@@ -71,3 +71,26 @@ test("la pause enfant coupe les appels et la signalisation revérifie la politiq
     /if \(profile\.status === "paused"\)[\s\S]{0,900}update call_sessions[\s\S]{0,900}delete from call_signals/u,
   );
 });
+
+test("les conteneurs natifs refusent sauvegarde Android et transport en clair", async () => {
+  const [androidManifest, iosInfo] = await Promise.all([
+    readSource("android/app/src/main/AndroidManifest.xml"),
+    readSource("ios/App/App/Info.plist"),
+  ]);
+
+  assert.match(androidManifest, /android:allowBackup="false"/u);
+  assert.match(androidManifest, /android:usesCleartextTraffic="false"/u);
+  assert.doesNotMatch(iosInfo, /NSAllowsArbitraryLoads/u);
+  assert.doesNotMatch(iosInfo, /NSExceptionAllowsInsecureHTTPLoads/u);
+});
+
+test("la production ne distribue jamais l’APK de débogage du dépôt", async () => {
+  const [indexSource, appSource] = await Promise.all([
+    readSource("server/index.js"),
+    readSource("src/App.jsx"),
+  ]);
+
+  assert.doesNotMatch(indexSource, /Secret-Clubhouse-debug\.apk/u);
+  assert.doesNotMatch(indexSource, /\/downloads\/Secret-Clubhouse\.apk/u);
+  assert.doesNotMatch(appSource, /\/downloads\/Secret-Clubhouse\.apk/u);
+});
