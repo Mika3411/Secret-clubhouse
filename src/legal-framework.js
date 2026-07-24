@@ -1,10 +1,6 @@
-export const legalDocumentVersions = Object.freeze({
-  terms: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-  legalNotice: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-  privacy: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-  parentalAuthority: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-  notificationConsent: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-});
+import { legalDocumentVersions, registrationLegalEvidence } from "./legal-versions.js";
+
+export { legalDocumentVersions, registrationLegalEvidence };
 
 export const registrationLegalStatements = Object.freeze({
   terms: "J’accepte les conditions d’utilisation de Secret Clubhouse.",
@@ -84,6 +80,15 @@ export const legalBasisRegister = Object.freeze([
     optional: false,
   }),
   Object.freeze({
+    id: "service-analytics",
+    subjects: "Familles et utilisateurs",
+    purpose: "Mesurer sous forme agrégée l’adoption, le retour à 30 jours et la fréquence d’utilisation afin de piloter et améliorer le service.",
+    basisCode: "RGPD, article 6 § 1 f)",
+    basisLabel: "Intérêt légitime",
+    justification: "Les calculs réutilisent uniquement des dates et catégories déjà nécessaires au service, excluent les administrateurs et ne révèlent aucun nom, identifiant, contenu, contact ou comportement individuel.",
+    optional: false,
+  }),
+  Object.freeze({
     id: "optional-notifications",
     subjects: "Utilisateur de l’appareil et, pour un enfant de moins de 15 ans, son responsable légal",
     purpose: "Conserver un jeton push et envoyer les notifications facultatives activées sur un appareil.",
@@ -102,14 +107,3 @@ export const legalBasisRegister = Object.freeze([
     optional: false,
   }),
 ]);
-
-export function registrationLegalEvidence() {
-  return {
-    termsAccepted: true,
-    parentalAuthorityConfirmed: true,
-    privacyNoticeProvided: true,
-    termsVersion: legalDocumentVersions.terms.id,
-    parentalAuthorityVersion: legalDocumentVersions.parentalAuthority.id,
-    privacyVersion: legalDocumentVersions.privacy.id,
-  };
-}

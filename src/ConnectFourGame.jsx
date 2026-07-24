@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Anchor,
-  CheckCircle,
-  GameController,
-  GridFour,
-  PaperPlaneTilt,
-  ShieldCheck,
-  X,
-} from "@phosphor-icons/react";
+import { Anchor } from "@phosphor-icons/react/Anchor";
+import { CheckCircle } from "@phosphor-icons/react/CheckCircle";
+import { GameController } from "@phosphor-icons/react/GameController";
+import { GridFour } from "@phosphor-icons/react/GridFour";
+import { PaperPlaneTilt } from "@phosphor-icons/react/PaperPlaneTilt";
+import { ShieldCheck } from "@phosphor-icons/react/ShieldCheck";
+import { X } from "@phosphor-icons/react/X";
 import { api } from "./api";
 
 const GAME_TYPES = {

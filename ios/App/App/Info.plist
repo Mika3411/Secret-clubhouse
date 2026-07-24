@@ -28,6 +28,8 @@
 	<string>Secret Clubhouse utilise la caméra uniquement pendant les appels vidéo autorisés.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Secret Clubhouse utilise le microphone pour les messages vocaux et les appels autorisés.</string>
+	<key>NativeApiOrigin</key>
+	<string>https://secret-clubhouse.onrender.com</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

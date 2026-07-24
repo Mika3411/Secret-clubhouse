@@ -56,6 +56,7 @@ test("le Blueprint de production désactive les flux non qualifiés sans demande
     "WEB_PUSH_ENABLED",
     "NATIVE_PUSH_ENABLED",
     "PRIVACY_ADMIN_ENABLED",
+    "ADMIN_ANALYTICS_ENABLED",
   ]) {
     assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*value:\\s*\"false\"`, "u"));
   }
@@ -84,12 +85,13 @@ test("l’API refuse les routes fournisseur lorsque le drapeau est fermé", asyn
 });
 
 test("le client masque les contrôles désactivés annoncés par l’API", async () => {
-  const [serverSource, appSource] = await Promise.all([
+  const [serverSource, appSource, notificationSource] = await Promise.all([
     readFile(new URL("./index.js", import.meta.url), "utf8"),
     readFile(new URL("../src/App.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/features/NotificationSettings.jsx", import.meta.url), "utf8"),
   ]);
   assert.match(serverSource, /features:\s*\{[\s\S]{0,180}rtc:\s*productionFeatures\.rtc/u);
   assert.match(appSource, /session\.features\?\.rtc === true \? openRealtimeCall : null/u);
   assert.match(appSource, /session\.features\?\.nativePush !== true/u);
-  assert.match(appSource, /if \(!enabled\) return null/u);
+  assert.match(notificationSource, /if \(!enabled\) return null/u);
 });

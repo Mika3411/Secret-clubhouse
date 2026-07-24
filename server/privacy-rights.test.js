@@ -60,6 +60,7 @@ function exportExecutor(requesterId) {
         };
       }
       if (statement.includes("from clubhouse_activity_progress")) return { rows: [] };
+      if (statement.includes("from clubhouse_daily_activity")) return { rows: [] };
       if (statement.includes("from game_sessions")) return { rows: [] };
       if (statement.includes("from call_sessions")) return { rows: [] };
       if (statement.includes("from push_subscriptions")) return { rows: [] };

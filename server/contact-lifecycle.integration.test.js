@@ -140,7 +140,7 @@ test("cycle PostgreSQL demande → approbation/refus → conversation", {
   const childLogin = await apiRequest("/auth/login", {
     method: "POST",
     body: {
-      contactId: familyB.child.contactId,
+      username: familyB.child.username,
       password: familyB.childPassword,
     },
   });

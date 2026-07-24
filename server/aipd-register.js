@@ -1,5 +1,5 @@
-export const aipdVersion = "1.9";
-export const aipdAssessmentDate = "2026-07-23";
+export const aipdVersion = "1.11";
+export const aipdAssessmentDate = "2026-07-24";
 
 export const aipdRiskScale = Object.freeze({
   severity: Object.freeze({
@@ -49,7 +49,7 @@ export const aipdHighRiskCriteria = Object.freeze([
     id: "systematic-monitoring",
     label: "Surveillance ou suivi régulier",
     applicable: true,
-    evidence: "Présence, activité, horaires, accusés de réception et interactions sont suivis pour fournir et sécuriser le service.",
+    evidence: "Présence, activité, horaires, accusés de réception, progression Clubhouse, série personnelle et interactions sont suivis pour fournir et sécuriser le service ; le pilotage interne réutilise seulement ces dates et événements sous forme agrégée, sans détail individuel.",
   }),
   Object.freeze({
     id: "innovative-technology",
@@ -144,7 +144,7 @@ export const aipdActions = Object.freeze([
       "server/security-hardening.test.js",
     ]),
     acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
-    scopeRestriction: "Fermée uniquement pour le web/API avec RTC, Web Push, APNs/FCM, administration RGPD partagée et distribution native désactivés. Toute activation ou distribution native rouvre A07.",
+    scopeRestriction: "Fermée uniquement pour le web/API avec RTC, Web Push, APNs/FCM, administration RGPD partagée, tableau d’agrégats administrateur et distribution native désactivés. Toute activation de ces canaux ou distribution native rouvre A07.",
   }),
   Object.freeze({
     id: "A08",
@@ -186,7 +186,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Compromission d’un compte ou d’une session", "Erreur d’autorisation horizontale", "Accès privilégié ou fuite de sauvegarde", "Compromission d’une clé applicative"],
     impacts: ["Atteinte à l’intimité et à la dignité", "Harcèlement, chantage ou exposition d’images", "Perte de confiance et détresse de l’enfant"],
     initial: { severity: 4, likelihood: 4 },
-    existingMeasures: ["Conversations limitées aux participants autorisés", "Sessions opaques révocables et cookie web HttpOnly", "AES-256-GCM applicatif avec contexte authentifié", "Base PostgreSQL privée Render", "Contenu des conversations enfant-ami masqué aux parents non participants"],
+    existingMeasures: ["Conversations limitées aux participants autorisés", "Sessions opaques révocables et cookie web HttpOnly", "Format binaire, MIME réel et durée maximale de deux minutes vérifiés côté serveur pour les messages vocaux", "AES-256-GCM applicatif avec contexte authentifié", "Base PostgreSQL privée Render", "Contenu des conversations enfant-ami masqué aux parents non participants"],
     residual: { severity: 4, likelihood: 3 },
     actionIds: ["A04", "A07", "A08"],
   }),
@@ -197,7 +197,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Mot de passe deviné ou réutilisé", "Vol d’un appareil ou d’une session", "Tentatives automatisées"],
     impacts: ["Contact trompeur ou manipulation", "Modification des protections", "Accès aux données et perte de contrôle du compte"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Hash bcrypt des mots de passe", "Limitation persistante des connexions par identité et IP", "Sessions valables 12 heures en production et révocables", "Vérification du mot de passe actuel pour les opérations sensibles"],
+    existingMeasures: ["Hash bcrypt des mots de passe", "Limitation persistante des connexions par identité et IP", "Nom d’utilisateur enfant privé distinct de l’identifiant de contact QR, lequel est refusé par l’authentification", "Sessions valables 12 heures en production et révocables", "Vérification du mot de passe actuel pour les opérations sensibles"],
     residual: { severity: 4, likelihood: 3 },
     actionIds: ["A07", "A08"],
   }),
@@ -219,7 +219,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Collecte trop fine ou conservation trop longue", "Présentation trop détaillée aux adultes", "Détournement de la présence et des accusés de lecture"],
     impacts: ["Atteinte à la vie privée et à l’autonomie", "Pression familiale ou sociale", "Profil comportemental involontaire"],
     initial: { severity: 3, likelihood: 3 },
-    existingMeasures: ["Présence limitée au compte, à la famille et aux contacts approuvés", "Présence hors ligne après 75 secondes et purgée sous 24 heures", "Tableau parent limité aux alertes et à l’activité générale", "Aucun contenu enfant-ami exposé au parent"],
+    existingMeasures: ["Présence limitée au compte, à la famille et aux contacts approuvés", "Présence hors ligne après 75 secondes et purgée sous 24 heures", "Tableau parent limité aux alertes et à l’activité générale", "Aucun contenu enfant-ami exposé au parent", "Tableau opérateur limité à des agrégats PostgreSQL sans nom, identifiant, relation ou contenu individuel", "Compte administrateur et famille associée exclus des calculs"],
     residual: { severity: 3, likelihood: 2 },
     actionIds: ["A02", "A06"],
   }),
@@ -230,7 +230,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Aperçu visible sur un appareil partagé", "Journalisation d’une charge push", "Jeton envoyé sans consentement valide"],
     impacts: ["Révélation d’une relation ou d’un échange", "Atteinte à la confidentialité familiale", "Traçage technique indu"],
     initial: { severity: 3, likelihood: 3 },
-    existingMeasures: ["Libellés génériques sans texte, nom de fichier, nom d’enfant ou de contact", "Jetons opaques", "Consentement facultatif, révocable et conjoint pour les moins de 15 ans", "Suppression des jetons lors du retrait"],
+    existingMeasures: ["Libellés génériques sans texte, nom de fichier, nom d’enfant ou de contact", "Jetons opaques", "Consentement facultatif, révocable et conjoint pour les moins de 15 ans", "Lecture et mutation du consentement bloquées sous restriction RGPD par une liste méthode-chemin explicite", "Suppression des jetons lors du retrait"],
     residual: { severity: 2, likelihood: 3 },
     actionIds: ["A03", "A07"],
   }),
@@ -238,10 +238,10 @@ export const aipdRisks = Object.freeze([
     id: "R06",
     title: "Exposition liée aux appels WebRTC",
     fearedEvent: "Un appel divulgue une adresse réseau, active un média sans intention ou contourne une règle parentale.",
-    threats: ["Mauvaise négociation ICE/TURN", "Permission caméra ou microphone mal comprise", "Signal réutilisé", "Contrôle d’horaire uniquement côté client"],
+    threats: ["Mauvaise négociation ICE/TURN", "Permission caméra ou microphone mal comprise", "Signal réutilisé", "Contrôle d’horaire uniquement côté client", "Évaluation dans le fuseau local d’un téléphone en déplacement"],
     impacts: ["Atteinte à l’intimité physique ou sonore", "Localisation approximative par adresse IP", "Appel indésirable ou anxiogène"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Participants authentifiés et approuvés", "Règles parentales vérifiées par l’API", "Payloads offre/réponse/ICE chiffrés avant PostgreSQL", "Permission média demandée à l’usage", "Signaux purgés sous 24 heures", "Relais TURN temporaire lorsqu’il est configuré", "Aucun enregistrement applicatif du flux"],
+    existingMeasures: ["Participants authentifiés et approuvés", "Règles parentales vérifiées par l’API", "Fuseau parental IANA transmis avec les plannings et partagé par les évaluations React/API", "Payloads offre/réponse/ICE chiffrés avant PostgreSQL", "Jetons d’action natifs limités à l’origine HTTPS API et au chemin /api/native/calls/ sur Android et iOS", "Permission média demandée à l’usage", "Signaux purgés sous 24 heures", "Relais TURN temporaire lorsqu’il est configuré", "Aucun enregistrement applicatif du flux"],
     residual: { severity: 3, likelihood: 3 },
     actionIds: ["A03", "A07", "A08"],
   }),
@@ -285,7 +285,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Privilèges trop larges", "Secret partagé", "Absence de revue des accès", "Données personnelles dans des journaux"],
     impacts: ["Divulgation massive", "Altération des protections ou des preuves", "Impossibilité d’attribuer une action"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Erreurs publiques génériques avec identifiant de corrélation", "Journaux de sécurité minimisés", "Secrets séparés dans Render", "Contenus chiffrés en base"],
+    existingMeasures: ["Erreurs publiques génériques avec identifiant de corrélation", "Journaux de sécurité minimisés", "Secrets séparés dans Render", "Contenus chiffrés en base", "Accès aux agrégats réservé à un parent nominativement inscrit et lecture journalisée sans contenu"],
     residual: { severity: 4, likelihood: 3 },
     actionIds: ["A04", "A05", "A07", "A08"],
   }),

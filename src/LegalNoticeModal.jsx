@@ -1,12 +1,10 @@
 import { useEffect, useRef } from "react";
-import {
-  Copyright,
-  EnvelopeSimple,
-  HardDrives,
-  IdentificationCard,
-  ShieldCheck,
-  X,
-} from "@phosphor-icons/react";
+import { Copyright } from "@phosphor-icons/react/Copyright";
+import { EnvelopeSimple } from "@phosphor-icons/react/EnvelopeSimple";
+import { HardDrives } from "@phosphor-icons/react/HardDrives";
+import { IdentificationCard } from "@phosphor-icons/react/IdentificationCard";
+import { ShieldCheck } from "@phosphor-icons/react/ShieldCheck";
+import { X } from "@phosphor-icons/react/X";
 import {
   legalHost,
   legalNoticeSections,

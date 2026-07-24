@@ -1,20 +1,18 @@
 import { useEffect, useRef } from "react";
-import {
-  ArrowSquareOut,
-  Backpack,
-  Clock,
-  Database,
-  EnvelopeSimple,
-  Eye,
-  GlobeHemisphereWest,
-  HandHeart,
-  ListChecks,
-  Scales,
-  ShieldCheck,
-  Sparkle,
-  UserCircle,
-  X,
-} from "@phosphor-icons/react";
+import { ArrowSquareOut } from "@phosphor-icons/react/ArrowSquareOut";
+import { Backpack } from "@phosphor-icons/react/Backpack";
+import { Clock } from "@phosphor-icons/react/Clock";
+import { Database } from "@phosphor-icons/react/Database";
+import { EnvelopeSimple } from "@phosphor-icons/react/EnvelopeSimple";
+import { Eye } from "@phosphor-icons/react/Eye";
+import { GlobeHemisphereWest } from "@phosphor-icons/react/GlobeHemisphereWest";
+import { HandHeart } from "@phosphor-icons/react/HandHeart";
+import { ListChecks } from "@phosphor-icons/react/ListChecks";
+import { Scales } from "@phosphor-icons/react/Scales";
+import { ShieldCheck } from "@phosphor-icons/react/ShieldCheck";
+import { Sparkle } from "@phosphor-icons/react/Sparkle";
+import { UserCircle } from "@phosphor-icons/react/UserCircle";
+import { X } from "@phosphor-icons/react/X";
 import {
   childPrivacyCards,
   parentPrivacyPolicy,

@@ -23,7 +23,7 @@ Cette politique applique le principe de limitation de la conservation. PostgreSQ
 | Demande de contact | 30 jours en attente, puis 180 jours de trace | Création, puis résolution ou expiration | Passage à `expired`, puis suppression |
 | Invitation de jeu | 30 jours en attente | Création | Suppression |
 | Partie acceptée, refusée ou terminée | 180 jours | Dernière action | Suppression |
-| Progression Clubhouse, étoiles et jours de série | Durée de vie du profil enfant | Première activité terminée | Suppression en cascade immédiate avec le profil, ou avec la famille après 730 jours d’inactivité |
+| Progression Clubhouse, étoiles, série, défis quotidiens, récompenses et apparence choisie | Durée de vie du profil enfant | Première activité terminée | Suppression en cascade immédiate avec le profil, ou avec la famille après 730 jours d’inactivité |
 | Compteur de limitation de connexion | 48 heures | Dernière mise à jour | Suppression ; le compteur d’identité est aussi effacé après une connexion réussie |
 | Journal de sécurité applicatif | 365 jours | Événement | Suppression ; les e-mails et adresses IP ne sont pas enregistrés en clair |
 | Demande d’exercice des droits | 5 ans | Réception de la demande | Suppression du registre, de la réponse et de sa chronologie |

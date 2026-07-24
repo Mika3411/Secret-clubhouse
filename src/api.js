@@ -70,6 +70,7 @@ export const api = {
     }
   },
   me: () => request("/me"),
+  adminAnalytics: () => request("/admin/analytics"),
   privacyContact: () => request("/privacy/contact"),
   privacyRequests: () => request("/privacy/requests"),
   submitPrivacyRequest: (data) => request("/privacy/requests", { method: "POST", body: JSON.stringify(data) }),
@@ -86,6 +87,10 @@ export const api = {
   updateAvatar: (avatar) => request("/account/avatar", { method: "PATCH", body: JSON.stringify({ avatar }) }),
   clubhouse: () => request("/clubhouse"),
   completeClubhouseActivity: (activityId) => request(`/clubhouse/activities/${encodeURIComponent(activityId)}/complete`, { method: "POST" }),
+  updateClubhouseAppearance: (unlockId) => request("/clubhouse/appearance", {
+    method: "PATCH",
+    body: JSON.stringify({ unlockId }),
+  }),
   children: () => request("/children"),
   createChild: (data) => request("/children", { method: "POST", body: JSON.stringify(data) }),
   updateChild: (childId, data) => request(`/children/${encodeURIComponent(childId)}`, { method: "PATCH", body: JSON.stringify(data) }),
@@ -118,6 +123,12 @@ export const api = {
     body: JSON.stringify(details),
   }),
   conversations: () => request("/conversations"),
+  conversationMessages: (conversationId, { before = "", limit = 50 } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (before) params.set("before", before);
+    return request(`/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`);
+  },
+  syncConversations: (cursor = "0") => request(`/conversations/sync?cursor=${encodeURIComponent(cursor)}`),
   openFamilyConversation: (contactId) => request("/family-conversations", { method: "POST", body: JSON.stringify({ contactId }) }),
   contactRequests: () => request("/contact-requests"),
   addContact: (contactId, requesterContactId = "") => request("/contact-requests", {
@@ -134,7 +145,10 @@ export const api = {
   respondToGame: (gameId, action) => request(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify({ action }) }),
   playGameMove: (gameId, move) => request(`/games/${encodeURIComponent(gameId)}/moves`, { method: "POST", body: JSON.stringify({ move }) }),
   sendMessage: (conversationId, text) => request(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
-  markConversationRead: (conversationId) => request(`/conversations/${encodeURIComponent(conversationId)}/read`, { method: "POST" }),
+  markConversationRead: (conversationId, messageIds = []) => request(`/conversations/${encodeURIComponent(conversationId)}/read`, {
+    method: "POST",
+    body: JSON.stringify({ messageIds }),
+  }),
   calls: () => request("/calls"),
   startCall: (conversationId, callType) => request(`/conversations/${encodeURIComponent(conversationId)}/calls`, { method: "POST", body: JSON.stringify({ callType }) }),
   call: (callId, afterSignal = 0) => request(`/calls/${encodeURIComponent(callId)}?afterSignal=${encodeURIComponent(afterSignal)}`),

@@ -1,0 +1,189 @@
+/* Réglages et consentements de notifications. */
+.push-setting {
+  display: grid;
+  width: 100%;
+  gap: 5px;
+}
+
+.push-setting > button {
+  display: grid;
+  width: 100%;
+  min-height: 58px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  text-align: left;
+  color: var(--ink);
+  border: 1px solid #ddd7f4;
+  border-radius: 15px;
+  background: #f7f4ff;
+}
+
+.push-setting > button > svg {
+  color: #7658dc;
+}
+
+.push-setting > button > span:nth-child(2) {
+  display: grid;
+}
+
+.push-setting strong { font-size: 11px; }
+.push-setting small { color: #757087; font-size: 8.5px; }
+.push-setting__legal {
+  padding-inline: 5px;
+  line-height: 1.45;
+}
+.push-setting__error { color: #a62d50 !important; }
+.push-setting__hint { padding-inline: 5px; color: #66599b !important; }
+
+.safety-setting {
+  display: grid;
+  width: 100%;
+  min-height: 57px;
+  grid-template-columns: 34px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  text-align: left;
+  color: var(--ink);
+  border-bottom: 1px solid #efedf5;
+  background: #fff;
+}
+
+.safety-setting:last-child {
+  border-bottom: 0;
+}
+
+.child-notification-consent {
+  display: grid;
+  gap: 5px;
+}
+
+.child-notification-consent > small {
+  padding: 0 12px 8px 46px;
+  color: #746f83;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+.child-notification-consent .push-setting__error {
+  padding-top: 0;
+}
+
+.setting-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 11px;
+  color: #7257d6;
+  background: #f0ecff;
+}
+
+.setting-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.setting-copy strong {
+  font-size: 11.5px;
+}
+
+.setting-copy small {
+  overflow: hidden;
+  color: #7d798e;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle {
+  display: flex;
+  width: 40px;
+  height: 23px;
+  align-items: center;
+  padding: 3px;
+  border-radius: 20px;
+  background: #d8d5e1;
+  transition: background 160ms ease;
+}
+
+.toggle span {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(29, 25, 50, 0.2);
+  transition: transform 160ms ease;
+}
+
+.toggle.is-on {
+  background: #27c69d;
+}
+
+.toggle.is-on span {
+  transform: translateX(17px);
+}
+
+@media (min-width: 700px) {
+
+  .setting-copy small {
+    font-size: 11px;
+  }
+
+  .setting-copy strong {
+    font-size: 13.5px;
+  }
+}
+
+.safety-setting {
+  min-height: 64px;
+  padding-block: 8px;
+}
+
+.setting-copy strong {
+  font-size: 13px;
+}
+
+.setting-copy small {
+  overflow: visible;
+  color: var(--readable-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.child-notification-consent > small {
+  color: #565166;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.push-setting > button {
+  min-height: 68px;
+}
+
+.push-setting strong {
+  font-size: 13px;
+}
+
+.push-setting small {
+  color: #565166;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.push-setting__legal {
+  color: #565166;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (min-width: 700px) {
+
+  .setting-copy small {
+    font-size: 12px;
+  }
+}

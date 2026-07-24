@@ -7,16 +7,19 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import webpush from "web-push";
-import { initializeDatabase, pool } from "./db.js";
+import { applyApiNoStoreCache, mountProductionAssets } from "./production-cache.js";
+import { initializeDatabase, pool } from "./repositories/database.js";
 import {
   clearSuccessfulLogin,
+  consumeRegistrationIpAttempt,
   createLoginScopeKeys,
+  createRegistrationIpScopeKey,
   getActiveLoginBlock,
   loginRetryAfterSeconds,
   pruneLoginRateLimits,
   recordLoginFailure,
 } from "./login-protection.js";
-import { evaluateChildPolicy } from "./parental-policy.js";
+import { evaluateChildPolicy } from "./policies/parental-policy.js";
 import { writeSecurityEvent } from "./security-log.js";
 import {
   assertActiveNotificationConsent,
@@ -33,16 +36,17 @@ import {
   privacyRequestTypes,
   resolvePrivacySubject,
   serializePrivacyRequest,
-} from "./privacy-service.js";
+} from "./services/privacy-service.js";
+import { getAdminAnalytics } from "./services/admin-analytics-service.js";
 import {
   createNativePushService,
   createOpaqueCallActionToken,
   hashCallActionToken,
   normalizeNativeTokenRegistration,
-} from "./native-push.js";
+} from "./notifications/native-push.js";
 import { PublicHttpError, safeHttpErrorResponse } from "./http-errors.js";
-import { privacySafeNotificationPayload } from "./notification-privacy.js";
-import { retentionPolicy } from "./retention-policy.js";
+import { privacySafeNotificationPayload } from "./notifications/notification-privacy.js";
+import { retentionPolicy } from "./retention/policy.js";
 import { buildClubhouseState } from "./clubhouse-progress.js";
 import {
   authenticateSessionRequest,
@@ -50,27 +54,52 @@ import {
   logoutAuthSession,
   setSessionCookie,
 } from "./auth-sessions.js";
-import { getContentCipher } from "./content-encryption.js";
+import { getContentCipher } from "./encryption/content-encryption.js";
 import {
   decryptMessageContent,
   encryptMessageContent,
-} from "./message-content.js";
+} from "./encryption/message-content.js";
 import { migrateLegacyMessageContent } from "./message-encryption-migration.js";
-import { decryptCallSignal, encryptCallSignal } from "./call-signal-content.js";
+import { decryptCallSignal, encryptCallSignal } from "./encryption/call-signal-content.js";
 import { migrateLegacyCallSignals } from "./call-signal-encryption-migration.js";
-import { resolveProductionFeatures } from "./production-features.js";
+import { resolveFeatureFlag, resolveProductionFeatures } from "./production-features.js";
+import {
+  conversationSyncPageSize,
+  decodeMessagePageCursor,
+  encodeMessagePageCursor,
+  normalizeConversationMessageIds,
+  normalizeConversationSyncCursor,
+  normalizeMessagePageLimit,
+} from "./conversation-sync.js";
+import {
+  isValidChildUsername,
+  normalizeChildUsername,
+} from "../src/child-username.js";
+import { registerSystemRoutes } from "./routes/system-routes.js";
+import {
+  MediaValidationError,
+  validateUploadedMediaFiles,
+} from "./media-validation.js";
+import { isAllowedDuringPrivacyRestriction } from "./privacy-restriction.js";
+import {
+  authorizePlatformAdministrator,
+  configuredPlatformAdminEmails,
+} from "./policies/platform-admin.js";
+import { defaultParentalTimeZone } from "../src/policy-time.js";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret) throw new Error("JWT_SECRET est requis");
-const parentalTimeZone = process.env.PARENTAL_TIME_ZONE || "Europe/Paris";
+const parentalTimeZone = process.env.PARENTAL_TIME_ZONE || defaultParentalTimeZone;
 const callTimeoutSeconds = Math.max(20, Math.min(120, Number(process.env.RTC_CALL_TIMEOUT_SECONDS) || 45));
 const webPushTimeoutMs = Math.max(2_000, Math.min(15_000, Number(process.env.WEB_PUSH_TIMEOUT_MS) || 6_000));
 const neutralCallReply = String(process.env.RTC_NEUTRAL_DECLINE_MESSAGE || "Je ne peux pas répondre pour le moment.").trim().slice(0, 240);
 const privacyContactEmail = String(process.env.PRIVACY_CONTACT_EMAIL || "contact@secret-clubhouse.fr").trim().toLowerCase();
 const privacyAdminToken = String(process.env.PRIVACY_ADMIN_TOKEN || "");
 const productionFeatures = resolveProductionFeatures(process.env);
+const adminAnalyticsEnabled = resolveFeatureFlag(process.env, "ADMIN_ANALYTICS_ENABLED");
+const platformAdminEmails = configuredPlatformAdminEmails(process.env);
 const invalidLoginPasswordHash = "$2b$12$YoNVhfH0Ezc9Sc/m1jloOu2rXeLxQwenmlqLzPmOOqpV4ztVtWWju";
 let pushEnabled = false;
 let vapidPublicKey = "";
@@ -203,10 +232,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
-app.use("/api/auth", (_req, res, next) => {
-  res.set({ "Cache-Control": "no-store", Pragma: "no-cache" });
-  next();
-});
+app.use("/api", applyApiNoStoreCache);
 
 const legacyReservedContactId = "SC-482-917-305";
 const makeContactId = () => {
@@ -250,6 +276,24 @@ function sendLoginRateLimit(res, blockedUntil) {
   });
   return res.status(429).json({ error: "Trop de tentatives. Réessayez plus tard." });
 }
+
+async function enforceRegistrationIpLimit(req, res, flow) {
+  const registrationScope = createRegistrationIpScopeKey({
+    clientAddress: req.ip || req.socket?.remoteAddress,
+    secret: jwtSecret,
+  });
+  const blockedUntil = await consumeRegistrationIpAttempt(pool, registrationScope);
+  if (!blockedUntil) return false;
+  await writeSecurityEvent(pool, {
+    eventType: "auth.registration",
+    outcome: "blocked",
+    ipHash: registrationScope.ipHash,
+    metadata: { flow },
+  });
+  sendLoginRateLimit(res, blockedUntil);
+  return true;
+}
+
 const childColors = new Set(["mint", "violet", "sun", "coral"]);
 const childStatuses = new Set(["active", "paused"]);
 const avatarOptions = {
@@ -276,14 +320,6 @@ const defaultCommunicationSchedule = {
   video: { enabled: false, start: "09:00", end: "18:30" },
   autoReply: { enabled: true, message: "Je ne peux pas répondre pour le moment." },
 };
-
-const normalizeUsername = (value) => String(value ?? "")
-  .normalize("NFD")
-  .replace(/[\u0300-\u036f]/g, "")
-  .toLowerCase()
-  .replace(/[^a-z0-9]+/g, ".")
-  .replace(/^\.|\.$/g, "")
-  .slice(0, 18);
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const invitationTokenPattern = /^[A-Za-z0-9_-]{40,128}$/;
@@ -465,6 +501,19 @@ async function getInvitationByToken(token, executor = pool, forUpdate = false) {
   return result.rows[0] ?? null;
 }
 
+function validateAvailableRegistrationInvitation(invitation, requestedEmail = "") {
+  if (!invitation) throw httpError(404, "Invitation de co-parent introuvable.");
+  if (invitation.status !== "pending") throw httpError(410, "Cette invitation a déjà été utilisée ou révoquée.");
+  if (new Date(invitation.expires_at).getTime() <= Date.now()) {
+    throw httpError(410, "Cette invitation de co-parent a expiré.");
+  }
+  const invitationEmail = normalizeEmail(invitation.email);
+  if (requestedEmail && requestedEmail !== invitationEmail) {
+    throw httpError(403, "Cette invitation est liée à une autre adresse e-mail.");
+  }
+  return invitationEmail;
+}
+
 function invitationLink(req, token) {
   const configuredBase = process.env.PUBLIC_APP_URL || process.env.APP_URL || process.env.RENDER_EXTERNAL_URL;
   const base = configuredBase || `${req.protocol}://${req.get("host")}`;
@@ -583,14 +632,21 @@ function normalizeSchedule(value = {}, fallback = defaultCommunicationSchedule) 
   };
 }
 
+function serializeCommunicationSchedule(schedule) {
+  return {
+    ...normalizeSchedule({}, schedule),
+    timeZone: parentalTimeZone,
+  };
+}
+
 function normalizeChildProfile(body, current = null) {
   const name = body.name === undefined ? current?.display_name ?? "" : String(body.name).trim().slice(0, 24);
   const age = body.age === undefined ? Number(current?.age) : Number(body.age);
-  const username = body.username === undefined ? current?.username ?? "" : normalizeUsername(body.username);
+  const username = body.username === undefined ? current?.username ?? "" : normalizeChildUsername(body.username);
   const color = body.color === undefined ? current?.avatar_color ?? "mint" : String(body.color);
   const status = body.status === undefined ? current?.status ?? "active" : String(body.status);
   const password = body.password === undefined || body.password === null ? "" : String(body.password);
-  if (name.length < 2 || !Number.isInteger(age) || age < 6 || age > 13 || username.length < 3) {
+  if (name.length < 2 || !Number.isInteger(age) || age < 6 || age > 13 || !isValidChildUsername(username)) {
     return { error: "Vérifiez le prénom, l’âge et le pseudo de l’enfant." };
   }
   if (!childColors.has(color) || !childStatuses.has(status)) return { error: "Profil enfant invalide." };
@@ -683,14 +739,6 @@ async function requireActiveChild(req, res, next) {
   }
 }
 
-const restrictionAllowedPaths = new Set([
-  "/api/auth/logout",
-  "/api/me",
-  "/api/privacy/requests",
-  "/api/privacy/export",
-  "/api/privacy/contact",
-]);
-
 async function requireAuth(req, res, next) {
   try {
     const session = await authenticateSessionRequest(pool, req, {
@@ -722,9 +770,7 @@ async function requireAuth(req, res, next) {
       appliedAt: account.processing_restricted_at,
       reason: account.processing_restriction_reason,
     } : null;
-    const isAllowedDuringRestriction = restrictionAllowedPaths.has(req.path)
-      || req.path.startsWith("/api/privacy/")
-      || (req.method === "DELETE" && ["/api/account", "/api/family"].includes(req.path));
+    const isAllowedDuringRestriction = isAllowedDuringPrivacyRestriction(req.method, req.path);
     if (req.privacyRestriction && !isAllowedDuringRestriction) {
       return res.status(423).json({
         error: "Le traitement de ce compte est limité. Seuls vos droits, l’export et la suppression restent disponibles.",
@@ -732,6 +778,30 @@ async function requireAuth(req, res, next) {
         restriction: req.privacyRestriction,
       });
     }
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+async function requirePlatformAdministrator(req, res, next) {
+  try {
+    if (!adminAnalyticsEnabled) {
+      return res.status(404).json({ error: "Cette fonctionnalité n’est pas disponible." });
+    }
+    const administrator = await authorizePlatformAdministrator(pool, req.auth.sub, {
+      configuredEmails: platformAdminEmails,
+    });
+    if (!administrator) {
+      await writeSecurityEvent(pool, {
+        accountId: req.auth.sub,
+        eventType: "admin.analytics.access",
+        outcome: "blocked",
+        metadata: { requestId: req.requestId ?? null },
+      });
+      return res.status(403).json({ error: "Cet espace est réservé à l’administrateur autorisé." });
+    }
+    req.platformAdministrator = administrator;
     return next();
   } catch (error) {
     return next(error);
@@ -764,7 +834,7 @@ async function serializeAccount(account) {
     avatar: account.avatar_config ? normalizeAvatarConfig(account.avatar_config) : null,
     status: account.status || "active",
     settings: { ...defaultSafetySettings, ...(account.safety_settings ?? {}) },
-    schedule: normalizeSchedule({}, account.communication_schedule),
+    schedule: serializeCommunicationSchedule(account.communication_schedule),
   };
 }
 
@@ -844,20 +914,7 @@ async function recordCompletedErasure(executor, {
   return requestResult.rows[0].id;
 }
 
-app.get("/api/health", async (_req, res) => {
-  await pool.query("select 1");
-  res.json({ ok: true });
-});
-
-app.get("/api/privacy/contact", (_req, res) => {
-  res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" });
-  res.json({
-    controller: "Secret Clubhouse",
-    email: privacyContactEmail,
-    responseDeadline: "un mois",
-    childFriendlyNotice: "Un enfant peut exercer ses droits lui-même ou demander l’aide de son parent.",
-  });
-});
+registerSystemRoutes(app, { pool, privacyContactEmail });
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body ?? {};
@@ -868,6 +925,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
   const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal);
   if (!legalEvidence.valid) return res.status(400).json({ error: legalEvidence.error });
+  if (await enforceRegistrationIpLimit(req, res, "primary_parent")) return;
 
   const passwordHash = await bcrypt.hash(password, 12);
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -919,20 +977,17 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
   }
   const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal);
   if (!legalEvidence.valid) return res.status(400).json({ error: legalEvidence.error });
+  if (await enforceRegistrationIpLimit(req, res, "invited_coparent")) return;
 
+  const invitationPreview = await getInvitationByToken(token);
+  validateAvailableRegistrationInvitation(invitationPreview, requestedEmail);
   const passwordHash = await bcrypt.hash(password, 12);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const client = await pool.connect();
     try {
       await client.query("begin");
       const invitation = await getInvitationByToken(token, client, true);
-      if (!invitation) throw httpError(404, "Invitation de co-parent introuvable.");
-      if (invitation.status !== "pending") throw httpError(410, "Cette invitation a déjà été utilisée ou révoquée.");
-      if (new Date(invitation.expires_at).getTime() <= Date.now()) throw httpError(410, "Cette invitation de co-parent a expiré.");
-      const invitationEmail = normalizeEmail(invitation.email);
-      if (requestedEmail && requestedEmail !== invitationEmail) {
-        throw httpError(403, "Cette invitation est liée à une autre adresse e-mail.");
-      }
+      const invitationEmail = validateAvailableRegistrationInvitation(invitation, requestedEmail);
 
       const accountResult = await client.query(
         "insert into accounts(role,email,contact_id,password_hash,display_name) values('parent',$1,$2,$3,$4) returning *",
@@ -974,13 +1029,13 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, contactId, password } = req.body ?? {};
+  const { email, username, password } = req.body ?? {};
   res.set("Cache-Control", "no-store");
   const normalizedEmail = normalizeEmail(email);
-  const normalizedContactId = String(contactId ?? "").trim().toUpperCase();
+  const normalizedUsername = normalizeChildUsername(username);
   const loginScopeKeys = createLoginScopeKeys({
     email: normalizedEmail,
-    contactId: normalizedContactId,
+    username: normalizedUsername,
     clientAddress: req.ip || req.socket?.remoteAddress,
     secret: jwtSecret,
   });
@@ -996,9 +1051,9 @@ app.post("/api/auth/login", async (req, res) => {
 
   const result = normalizedEmail
     ? await pool.query("select * from accounts where role='parent' and email=$1", [normalizedEmail])
-    : normalizedContactId === legacyReservedContactId
-      ? { rows: [] }
-      : await pool.query("select * from accounts where role='child' and contact_id=$1", [normalizedContactId]);
+    : isValidChildUsername(normalizedUsername)
+      ? await pool.query("select * from accounts where role='child' and lower(username)=$1", [normalizedUsername])
+      : { rows: [] };
   const account = result.rows[0];
   const submittedPassword = typeof password === "string" && password.length <= 128 ? password : "";
   const passwordMatches = await bcrypt.compare(submittedPassword, account?.password_hash ?? invalidLoginPasswordHash);
@@ -1041,6 +1096,21 @@ app.get("/api/me", requireAuth, async (req, res) => {
   const result = await pool.query("select * from accounts where id=$1", [req.auth.sub]);
   if (!result.rows[0]) return res.status(404).json({ error: "Compte introuvable." });
   res.json({ account: await serializeAccount(result.rows[0]) });
+});
+
+app.get("/api/admin/analytics", requireAuth, requirePlatformAdministrator, async (req, res) => {
+  const analytics = await getAdminAnalytics(pool);
+  await writeSecurityEvent(pool, {
+    accountId: req.auth.sub,
+    eventType: "admin.analytics.read",
+    outcome: "success",
+    metadata: {
+      requestId: req.requestId ?? null,
+      aggregateOnly: true,
+    },
+  });
+  res.set("Cache-Control", "private, no-store, max-age=0");
+  res.json({ analytics });
 });
 
 app.get("/api/privacy/requests", requireAuth, async (req, res) => {
@@ -1655,7 +1725,7 @@ app.post("/api/children", requireAuth, async (req, res) => {
     } catch (error) {
       await client.query("rollback");
       if (error.code === "23505" && error.constraint === "accounts_contact_id_key") continue;
-      if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo est déjà utilisé dans votre famille." });
+      if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo privé est déjà utilisé. Choisissez-en un autre." });
       throw error;
     } finally {
       client.release();
@@ -1737,7 +1807,7 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
     await client.query("commit");
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
-    if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo est déjà utilisé dans votre famille." });
+    if (error.code === "23505") return res.status(409).json({ error: "Ce pseudo privé est déjà utilisé. Choisissez-en un autre." });
     throw error;
   } finally {
     client.release();
@@ -1758,9 +1828,15 @@ app.patch("/api/account/avatar", requireAuth, requireActiveChild, async (req, re
 });
 
 async function serializeClubhouseState(childId, executor = pool) {
-  const [catalogResult, progressResult, dailyResult, todayResult] = await Promise.all([
+  const [catalogResult, progressResult, dailyResult, dailyChallengeResult, appearanceResult, todayResult] = await Promise.all([
     executor.query(
-      "select id,reward from clubhouse_activities where active=true order by id",
+      `select activity.id,activity.reward,activity.kind,activity.rotation_rank,
+              activity.fixed_catalog,activity.daily_eligible,activity.unlock_id,
+              unlock.kind as unlock_kind,unlock.label as unlock_label,unlock.accent as unlock_accent
+       from clubhouse_activities activity
+       left join clubhouse_unlocks unlock on unlock.id=activity.unlock_id
+       where activity.active=true
+       order by activity.kind,activity.rotation_rank,activity.id`,
     ),
     executor.query(
       `select activity_id,first_completed_at,last_completed_at,completion_count,awarded_stars
@@ -1777,6 +1853,18 @@ async function serializeClubhouseState(childId, executor = pool) {
       [childId],
     ),
     executor.query(
+      `select challenge_date::text as challenge_date,activity_id
+       from clubhouse_daily_challenges
+       where child_id=$1
+       order by challenge_date desc
+       limit 40`,
+      [childId],
+    ),
+    executor.query(
+      "select unlock_id from clubhouse_appearance where child_id=$1",
+      [childId],
+    ),
+    executor.query(
       "select (now() at time zone $1)::date::text as today",
       [parentalTimeZone],
     ),
@@ -1785,6 +1873,8 @@ async function serializeClubhouseState(childId, executor = pool) {
     catalogRows: catalogResult.rows,
     progressRows: progressResult.rows,
     activityDates: dailyResult.rows.map((row) => row.activity_date),
+    dailyChallengeRows: dailyChallengeResult.rows,
+    appearanceRow: appearanceResult.rows[0] ?? null,
     today: todayResult.rows[0].today,
   });
 }
@@ -1808,7 +1898,12 @@ app.post("/api/clubhouse/activities/:activityId/complete", requireAuth, requireA
     );
     if (!childResult.rowCount) throw httpError(403, "Ce profil enfant est en pause.");
     const activityResult = await client.query(
-      "select id,reward from clubhouse_activities where id=$1 and active=true for share",
+      `select activity.id,activity.reward,activity.unlock_id,
+              unlock.kind as unlock_kind,unlock.label as unlock_label,unlock.accent as unlock_accent
+       from clubhouse_activities activity
+       left join clubhouse_unlocks unlock on unlock.id=activity.unlock_id
+       where activity.id=$1 and activity.active=true
+       for share of activity`,
       [activityId],
     );
     const activity = activityResult.rows[0];
@@ -1842,11 +1937,29 @@ app.post("/api/clubhouse/activities/:activityId/complete", requireAuth, requireA
        on conflict(child_id,activity_date) do nothing`,
       [req.auth.sub, parentalTimeZone],
     );
-    const clubhouse = await serializeClubhouseState(req.auth.sub, client);
+    let clubhouse = await serializeClubhouseState(req.auth.sub, client);
+    if (clubhouse.dailyChallenge?.activityId === activityId) {
+      await client.query(
+        `insert into clubhouse_daily_challenges(child_id,challenge_date,activity_id)
+         values($1,(now() at time zone $2)::date,$3)
+         on conflict(child_id,challenge_date) do update
+           set activity_id=excluded.activity_id,completed_at=now()`,
+        [req.auth.sub, parentalTimeZone, activityId],
+      );
+      clubhouse = await serializeClubhouseState(req.auth.sub, client);
+    }
     await client.query("commit");
     res.json({
       rewardEarned,
       reward: rewardEarned ? Number(activity.reward) : 0,
+      unlockEarned: rewardEarned && activity.unlock_id
+        ? {
+            id: activity.unlock_id,
+            kind: activity.unlock_kind,
+            label: activity.unlock_label,
+            accent: activity.unlock_accent,
+          }
+        : null,
       clubhouse,
     });
   } catch (error) {
@@ -1855,6 +1968,32 @@ app.post("/api/clubhouse/activities/:activityId/complete", requireAuth, requireA
   } finally {
     client.release();
   }
+});
+
+app.patch("/api/clubhouse/appearance", requireAuth, requireActiveChild, async (req, res) => {
+  if (req.auth.role !== "child") return res.status(403).json({ error: "L’apparence du Clubhouse appartient au profil enfant." });
+  const unlockId = String(req.body?.unlockId ?? "").trim();
+  if (!/^[a-z0-9-]{3,64}$/.test(unlockId)) return res.status(400).json({ error: "Récompense invalide." });
+
+  const ownedResult = await pool.query(
+    `select unlock.id
+     from clubhouse_unlocks unlock
+     join clubhouse_activities activity on activity.unlock_id=unlock.id
+     join clubhouse_activity_progress progress
+       on progress.activity_id=activity.id and progress.child_id=$1
+     where unlock.id=$2
+     limit 1`,
+    [req.auth.sub, unlockId],
+  );
+  if (!ownedResult.rowCount) return res.status(403).json({ error: "Cette récompense n’est pas encore débloquée." });
+
+  await pool.query(
+    `insert into clubhouse_appearance(child_id,unlock_id)
+     values($1,$2)
+     on conflict(child_id) do update set unlock_id=excluded.unlock_id,updated_at=now()`,
+    [req.auth.sub, unlockId],
+  );
+  res.json({ clubhouse: await serializeClubhouseState(req.auth.sub) });
 });
 
 app.delete("/api/children/:id", requireAuth, async (req, res) => {
@@ -2412,19 +2551,29 @@ async function ensureHouseholdParentConversations(accountId) {
   }
 }
 
-app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) => {
-  await ensureFamilyConversations(req.auth.sub);
-  if (req.auth.role === "parent") await ensureHouseholdParentConversations(req.auth.sub);
-  await pool.query(
-    `update message_receipts receipt
-     set received_at=coalesce(receipt.received_at,now())
-     from messages message
-     where receipt.message_id=message.id
-       and receipt.recipient_id=$1
-       and receipt.received_at is null`,
-    [req.auth.sub],
-  );
-  const result = await pool.query(`
+function serializeConversationMessage(message) {
+  const content = decryptMessageContent(message);
+  return {
+    id: message.id,
+    conversationId: message.conversation_id ?? message.conversationId,
+    senderId: message.sender_id ?? message.senderId,
+    text: content.body,
+    mediaName: content.mediaName,
+    mediaType: content.mediaType,
+    messageKind: message.message_kind ?? message.messageKind ?? "user",
+    createdAt: message.created_at ?? message.createdAt,
+    deliveryStatus: message.delivery_status ?? message.deliveryStatus ?? null,
+    syncVersion: String(message.sync_version ?? message.syncVersion ?? "0"),
+  };
+}
+
+async function currentConversationSyncCursor(executor = pool) {
+  const result = await executor.query("select last_value::text as cursor from message_sync_version_seq");
+  return normalizeConversationSyncCursor(result.rows[0]?.cursor) ?? "0";
+}
+
+async function listConversationSummaries(accountId, executor = pool) {
+  const result = await executor.query(`
     select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
       a.status as contact_status, a.communication_schedule,
       (
@@ -2441,22 +2590,30 @@ app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) 
           select family_id from family_memberships where parent_id=$1
         )
       ) as is_family_member,
-      coalesce(json_agg(json_build_object(
-        'id',m.id,
-        'conversationId',m.conversation_id,
-        'senderId',m.sender_id,
-        'text',m.body,
-        'mediaName',m.media_name,
-        'mediaType',m.media_type,
-        'bodyCiphertext',m.body_ciphertext,
-        'mediaNameCiphertext',m.media_name_ciphertext,
-        'mediaTypeCiphertext',m.media_type_ciphertext,
-        'contentEncryptionVersion',m.content_encryption_version,
-        'contentEncryptionKeyId',m.content_encryption_key_id,
-        'messageKind',m.message_kind,
-        'createdAt',m.created_at,
+      latest_message.payload as latest_message,
+      latest_message.created_at as latest_message_at
+    from conversation_members mine
+    join conversations c on c.id=mine.conversation_id
+    join conversation_members other on other.conversation_id=c.id and other.account_id<>mine.account_id
+    join accounts a on a.id=other.account_id
+    left join lateral (
+      select latest.created_at, json_build_object(
+        'id',latest.id,
+        'conversationId',latest.conversation_id,
+        'senderId',latest.sender_id,
+        'text',latest.body,
+        'mediaName',latest.media_name,
+        'mediaType',latest.media_type,
+        'bodyCiphertext',latest.body_ciphertext,
+        'mediaNameCiphertext',latest.media_name_ciphertext,
+        'mediaTypeCiphertext',latest.media_type_ciphertext,
+        'contentEncryptionVersion',latest.content_encryption_version,
+        'contentEncryptionKeyId',latest.content_encryption_key_id,
+        'messageKind',latest.message_kind,
+        'createdAt',latest.created_at,
+        'syncVersion',latest.sync_version,
         'deliveryStatus',case
-          when m.sender_id<>$1 then null
+          when latest.sender_id<>$1 then null
           else coalesce((
             select case
               when count(*)=0 then 'sent'
@@ -2465,15 +2622,15 @@ app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) 
               else 'sent'
             end
             from message_receipts receipt
-            where receipt.message_id=m.id
+            where receipt.message_id=latest.id
           ),'sent')
         end
-      ) order by m.created_at) filter (where m.id is not null),'[]') as messages
-    from conversation_members mine
-    join conversations c on c.id=mine.conversation_id
-    join conversation_members other on other.conversation_id=c.id and other.account_id<>mine.account_id
-    join accounts a on a.id=other.account_id
-    left join messages m on m.conversation_id=c.id
+      ) as payload
+      from messages latest
+      where latest.conversation_id=c.id
+      order by latest.created_at desc,latest.id desc
+      limit 1
+    ) latest_message on true
     where mine.account_id=$1
       and (
         not exists(select 1 from family_parent_conversations family_parent where family_parent.conversation_id=c.id)
@@ -2484,35 +2641,154 @@ app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) 
             and $1 in (family_parent.parent_one_id,family_parent.parent_two_id)
         )
       )
-    group by c.id,a.id
-    order by max(m.created_at) desc nulls last`, [req.auth.sub]);
-  const conversations = result.rows.map((conversation) => ({
+    order by latest_message.created_at desc nulls last,c.id`, [accountId]);
+  return result.rows.map((conversation) => ({
     ...conversation,
-    messages: conversation.messages.map((message) => {
-      const content = decryptMessageContent(message);
-      const {
-        bodyCiphertext: _bodyCiphertext,
-        mediaNameCiphertext: _mediaNameCiphertext,
-        mediaTypeCiphertext: _mediaTypeCiphertext,
-        contentEncryptionVersion: _contentEncryptionVersion,
-        contentEncryptionKeyId: _contentEncryptionKeyId,
-        ...publicMessage
-      } = message;
-      return {
-        ...publicMessage,
-        text: content.body,
-        mediaName: content.mediaName,
-        mediaType: content.mediaType,
-      };
-    }),
+    communication_schedule: serializeCommunicationSchedule(conversation.communication_schedule),
+    latest_message: conversation.latest_message
+      ? serializeConversationMessage(conversation.latest_message)
+      : null,
   }));
-  res.json({ conversations });
+}
+
+async function markMessagesReceived(accountId, messageIds, executor = pool) {
+  if (!messageIds.length) return;
+  await executor.query(
+    `update message_receipts
+     set received_at=coalesce(received_at,clock_timestamp())
+     where recipient_id=$1
+       and message_id=any($2::uuid[])
+       and received_at is null`,
+    [accountId, messageIds],
+  );
+}
+
+app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) => {
+  await ensureFamilyConversations(req.auth.sub);
+  if (req.auth.role === "parent") await ensureHouseholdParentConversations(req.auth.sub);
+  const syncCursor = await currentConversationSyncCursor();
+  const conversations = await listConversationSummaries(req.auth.sub);
+  res.json({ conversations, syncCursor });
+});
+
+app.get("/api/conversations/sync", requireAuth, requireActiveChild, async (req, res) => {
+  const cursor = normalizeConversationSyncCursor(req.query.cursor);
+  if (cursor === null) throw httpError(400, "Curseur de synchronisation invalide.");
+  const watermark = await currentConversationSyncCursor();
+  const result = await pool.query(`
+    select message.id,message.conversation_id,message.sender_id,
+      message.body,message.media_name,message.media_type,
+      message.body_ciphertext,message.media_name_ciphertext,message.media_type_ciphertext,
+      message.content_encryption_version,message.content_encryption_key_id,
+      message.message_kind,message.created_at,message.sync_version,
+      case
+        when message.sender_id<>$1 then null
+        else coalesce((
+          select case
+            when count(*)=0 then 'sent'
+            when bool_and(receipt.seen_at is not null) then 'seen'
+            when bool_and(receipt.received_at is not null) then 'received'
+            else 'sent'
+          end
+          from message_receipts receipt
+          where receipt.message_id=message.id
+        ),'sent')
+      end as delivery_status
+    from conversation_members mine
+    join messages message on message.conversation_id=mine.conversation_id
+    where mine.account_id=$1
+      and message.sync_version>$2::bigint
+      and message.sync_version<=$3::bigint
+      and (
+        not exists(select 1 from family_parent_conversations family_parent where family_parent.conversation_id=message.conversation_id)
+        or exists(
+          select 1 from family_parent_conversations family_parent
+          join family_memberships active_membership on active_membership.family_id=family_parent.family_id and active_membership.parent_id=$1
+          where family_parent.conversation_id=message.conversation_id
+            and $1 in (family_parent.parent_one_id,family_parent.parent_two_id)
+        )
+      )
+    order by message.sync_version,message.id
+    limit $4`, [req.auth.sub, cursor, watermark, conversationSyncPageSize + 1]);
+  const hasMore = result.rows.length > conversationSyncPageSize;
+  const changedRows = result.rows.slice(0, conversationSyncPageSize);
+  await markMessagesReceived(req.auth.sub, changedRows.map((message) => message.id));
+  const nextCursor = hasMore
+    ? String(changedRows.at(-1)?.sync_version ?? cursor)
+    : watermark;
+  const conversations = await listConversationSummaries(req.auth.sub);
+  res.json({
+    conversations,
+    messages: changedRows.map(serializeConversationMessage),
+    cursor: nextCursor,
+    hasMore,
+  });
+});
+
+app.get("/api/conversations/:id/messages", requireAuth, requireActiveChild, async (req, res) => {
+  const limit = normalizeMessagePageLimit(req.query.limit);
+  if (limit === null) throw httpError(400, "Limite de messages invalide.");
+  const pageCursor = decodeMessagePageCursor(req.query.before);
+  if (pageCursor === false) throw httpError(400, "Curseur de pagination invalide.");
+  if (!await isConversationMember(req.auth.sub, req.params.id)) {
+    throw httpError(403, "Conversation non autorisée.");
+  }
+  const result = await pool.query(`
+    select message.id,message.conversation_id,message.sender_id,
+      message.body,message.media_name,message.media_type,
+      message.body_ciphertext,message.media_name_ciphertext,message.media_type_ciphertext,
+      message.content_encryption_version,message.content_encryption_key_id,
+      message.message_kind,message.created_at,message.sync_version,
+      case
+        when message.sender_id<>$1 then null
+        else coalesce((
+          select case
+            when count(*)=0 then 'sent'
+            when bool_and(receipt.seen_at is not null) then 'seen'
+            when bool_and(receipt.received_at is not null) then 'received'
+            else 'sent'
+          end
+          from message_receipts receipt
+          where receipt.message_id=message.id
+        ),'sent')
+      end as delivery_status
+    from messages message
+    where message.conversation_id=$2
+      and (
+        $3::timestamptz is null
+        or (message.created_at,message.id)<($3::timestamptz,$4::uuid)
+      )
+    order by message.created_at desc,message.id desc
+    limit $5`, [
+    req.auth.sub,
+    req.params.id,
+    pageCursor?.createdAt ?? null,
+    pageCursor?.id ?? null,
+    limit + 1,
+  ]);
+  const hasMore = result.rows.length > limit;
+  const pageRows = result.rows.slice(0, limit);
+  await markMessagesReceived(req.auth.sub, pageRows.map((message) => message.id));
+  const messages = pageRows.reverse().map(serializeConversationMessage);
+  const oldest = messages[0];
+  res.json({
+    messages,
+    pageInfo: {
+      hasMore,
+      nextCursor: hasMore && oldest
+        ? encodeMessagePageCursor({ createdAt: oldest.createdAt, id: oldest.id })
+        : null,
+    },
+  });
 });
 
 app.post("/api/conversations/:id/read", requireAuth, requireActiveChild, async (req, res) => {
   if (!await isConversationMember(req.auth.sub, req.params.id)) {
     return res.status(403).json({ error: "Conversation non autorisée." });
   }
+  const messageIds = normalizeConversationMessageIds(req.body?.messageIds);
+  if (messageIds === null) throw httpError(400, "Liste de messages lus invalide.");
+  if (!messageIds.length) return res.json({ seenCount: 0 });
   const result = await pool.query(
     `update message_receipts receipt
      set received_at=coalesce(receipt.received_at,now()),
@@ -2521,8 +2797,9 @@ app.post("/api/conversations/:id/read", requireAuth, requireActiveChild, async (
      where receipt.message_id=message.id
        and receipt.recipient_id=$1
        and message.conversation_id=$2
+       and message.id=any($3::uuid[])
        and receipt.seen_at is null`,
-    [req.auth.sub, req.params.id],
+    [req.auth.sub, req.params.id, messageIds],
   );
   res.json({ seenCount: result.rowCount });
 });
@@ -4348,14 +4625,19 @@ const upload = multer({
 app.post("/api/conversations/:id/media", requireAuth, requireActiveChild, requireConversationMessagingAccess, requireBoundedMediaRequest, upload.array("media", 6), async (req, res) => {
   const receivedFiles = req.files ?? [];
   try {
-    const files = receivedFiles.filter((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/") || supportedAudioTypes.has(file.mimetype));
-    if (receivedFiles.some((file) => !files.includes(file))) return res.status(415).json({ error: "Format de média non pris en charge." });
+    let files;
+    try {
+      files = await validateUploadedMediaFiles(receivedFiles);
+    } catch (error) {
+      if (error instanceof MediaValidationError) throw httpError(error.statusCode, error.message);
+      throw error;
+    }
     if (!files.length) return res.status(400).json({ error: "Photo, vidéo ou message vocal requis." });
     const totalMediaBytes = files.reduce((total, file) => total + file.size, 0);
     if (totalMediaBytes > maxMediaPayloadBytes) {
       return res.status(413).json({ error: "L’envoi de médias est limité à 30 Mo au total." });
     }
-    const requiresVisualMedia = files.some((file) => file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/"));
+    const requiresVisualMedia = files.some((file) => file.kind === "image" || file.kind === "video");
     const client = await pool.connect();
     const inserted = [];
     try {
@@ -4472,17 +4754,7 @@ app.get("/api/media/:messageId", requireAuth, requireActiveChild, async (req, re
 });
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-app.get("/sw.js", (_req, res) => {
-  res.set({
-    "Cache-Control": "no-store, no-cache, must-revalidate",
-    Pragma: "no-cache",
-    Expires: "0",
-    "Service-Worker-Allowed": "/",
-  });
-  res.sendFile(path.join(root, "dist", "sw.js"));
-});
-app.use(express.static(path.join(root, "dist")));
-app.get("/{*path}", (_req, res) => res.sendFile(path.join(root, "dist", "index.html")));
+mountProductionAssets(app, { distPath: path.join(root, "dist") });
 app.use(async (error, req, res, _next) => {
   await removeUploadedFiles(req.files ?? []);
   const response = safeHttpErrorResponse(error, {

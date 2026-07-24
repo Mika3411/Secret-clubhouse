@@ -7,23 +7,39 @@ export const loginRateLimits = Object.freeze({
   ipFailures: 25,
 });
 
+export const registrationRateLimits = Object.freeze({
+  windowSeconds: 15 * 60,
+  blockSeconds: 15 * 60,
+  ipAttempts: 10,
+});
+
 const hashScope = (secret, scope, value) => crypto
   .createHmac("sha256", secret)
   .update(`login:${scope}:${value}`)
   .digest("hex");
 
-export function normalizeLoginIdentity({ email, contactId } = {}) {
+const normalizeClientAddress = (clientAddress) => (
+  String(clientAddress ?? "unknown").trim().slice(0, 128) || "unknown"
+);
+
+export function normalizeLoginIdentity({ email, username } = {}) {
   const normalizedEmail = String(email ?? "").trim().toLowerCase().slice(0, 320);
   if (normalizedEmail) return `parent:${normalizedEmail}`;
-  return `child:${String(contactId ?? "").trim().toUpperCase().slice(0, 64)}`;
+  return `child:${String(username ?? "").trim().toLowerCase().slice(0, 64)}`;
 }
 
-export function createLoginScopeKeys({ email, contactId, clientAddress, secret }) {
-  const identity = normalizeLoginIdentity({ email, contactId });
-  const normalizedAddress = String(clientAddress ?? "unknown").trim().slice(0, 128) || "unknown";
+export function createLoginScopeKeys({ email, username, clientAddress, secret }) {
+  const identity = normalizeLoginIdentity({ email, username });
+  const normalizedAddress = normalizeClientAddress(clientAddress);
   return {
     identityHash: hashScope(secret, "identity", identity),
     ipHash: hashScope(secret, "ip", normalizedAddress),
+  };
+}
+
+export function createRegistrationIpScopeKey({ clientAddress, secret }) {
+  return {
+    ipHash: hashScope(secret, "registration_ip", normalizeClientAddress(clientAddress)),
   };
 }
 
@@ -82,6 +98,39 @@ export async function recordLoginFailure(executor, { identityHash, ipHash }) {
   return blocks
     .filter(Boolean)
     .sort((first, second) => new Date(second).getTime() - new Date(first).getTime())[0] ?? null;
+}
+
+export async function consumeRegistrationIpAttempt(executor, { ipHash }) {
+  const { windowSeconds, blockSeconds, ipAttempts } = registrationRateLimits;
+  const result = await executor.query(
+    `insert into login_rate_limits(scope,key_hash,failure_count,window_started_at,blocked_until,updated_at)
+     values('registration_ip',$1,1,now(),null,now())
+     on conflict(scope,key_hash) do update set
+       failure_count=case
+         when login_rate_limits.blocked_until > now() then login_rate_limits.failure_count
+         when login_rate_limits.window_started_at <= now() - make_interval(secs => $2::int) then 1
+         else login_rate_limits.failure_count + 1
+       end,
+       window_started_at=case
+         when login_rate_limits.blocked_until > now() then login_rate_limits.window_started_at
+         when login_rate_limits.window_started_at <= now() - make_interval(secs => $2::int) then now()
+         else login_rate_limits.window_started_at
+       end,
+       blocked_until=case
+         when login_rate_limits.blocked_until > now() then login_rate_limits.blocked_until
+         when (
+           case
+             when login_rate_limits.window_started_at <= now() - make_interval(secs => $2::int) then 1
+             else login_rate_limits.failure_count + 1
+           end
+         ) > $3::int then now() + make_interval(secs => $4::int)
+         else null
+       end,
+       updated_at=now()
+     returning blocked_until`,
+    [ipHash, windowSeconds, ipAttempts, blockSeconds],
+  );
+  return result.rows[0]?.blocked_until ?? null;
 }
 
 export async function clearSuccessfulLogin(executor, { identityHash }) {

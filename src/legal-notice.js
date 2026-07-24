@@ -1,6 +1,7 @@
 import { legalDocumentVersions } from "./legal-framework.js";
+import { isLegalNoticePath, legalNoticeRoute } from "./legal-routes.js";
 
-export const legalNoticeRoute = "/mentions-legales";
+export { isLegalNoticePath, legalNoticeRoute };
 export const legalNoticeVersion = legalDocumentVersions.legalNotice.label;
 
 export const legalPublisher = Object.freeze({
@@ -51,7 +52,3 @@ export const legalNoticeSections = Object.freeze([
     ]),
   }),
 ]);
-
-export function isLegalNoticePath(pathname) {
-  return pathname === legalNoticeRoute;
-}

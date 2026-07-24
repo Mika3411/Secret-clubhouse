@@ -95,6 +95,15 @@ export default function PhaserMemoryGame({ onComplete }) {
     let game;
     let cancelled = false;
     let fallbackTimer;
+    const sceneTimers = new Set();
+
+    const scheduleSceneAction = (delay, action) => {
+      const timer = window.setTimeout(() => {
+        sceneTimers.delete(timer);
+        if (!cancelled) action();
+      }, delay);
+      sceneTimers.add(timer);
+    };
 
     const useCompatibleGame = () => {
       if (cancelled) return;
@@ -103,7 +112,7 @@ export default function PhaserMemoryGame({ onComplete }) {
       setStatus("fallback");
     };
 
-    import("phaser/dist/phaser-arcade-physics.min.js").then((phaserModule) => {
+    import("./phaser-memory-runtime").then((phaserModule) => {
       const Phaser = phaserModule.default ?? phaserModule.Phaser ?? window.Phaser;
       if (!Phaser) {
         useCompatibleGame();
@@ -147,30 +156,32 @@ export default function PhaserMemoryGame({ onComplete }) {
         }
 
         createCard(x, y, data) {
-          const container = this.add.container(x, y);
-          const face = this.add.rectangle(0, 0, 58, 66, CARD_COLORS[data.pairIndex], 1).setStrokeStyle(2, 0xffffff);
-          const symbol = this.add.text(0, 1, data.symbol, {
+          const face = this.add.rectangle(x, y, 58, 66, CARD_COLORS[data.pairIndex], 1).setStrokeStyle(2, 0xffffff);
+          const symbol = this.add.text(x, y + 1, data.symbol, {
             fontFamily: "Arial, sans-serif",
             fontSize: "30px",
             fontStyle: "bold",
             color: "#120966",
           }).setOrigin(0.5);
-          const cover = this.add.rectangle(0, 0, 58, 66, 0x6549ce, 1).setStrokeStyle(2, 0xffffff);
-          const question = this.add.text(0, 0, "?", {
+          const cover = this.add.rectangle(x, y, 58, 66, 0x6549ce, 1)
+            .setStrokeStyle(2, 0xffffff)
+            .setInteractive({ useHandCursor: true });
+          const question = this.add.text(x, y, "?", {
             fontFamily: "Nunito, sans-serif",
             fontSize: "25px",
             fontStyle: "bold",
             color: "#dffff5",
           }).setOrigin(0.5);
 
-          container.add([face, symbol, cover, question]);
-          container.setSize(58, 66).setInteractive({ useHandCursor: true });
-          container.cardData = data;
-          container.cover = cover;
-          container.question = question;
-          container.isOpen = false;
-          container.isMatched = false;
-          container.on("pointerdown", () => this.revealCard(container));
+          const card = {
+            cardData: data,
+            cover,
+            question,
+            objects: [face, symbol, cover, question],
+            isOpen: false,
+            isMatched: false,
+          };
+          cover.on("pointerdown", () => this.revealCard(card));
         }
 
         revealCard(card) {
@@ -178,7 +189,11 @@ export default function PhaserMemoryGame({ onComplete }) {
           card.isOpen = true;
           card.cover.setVisible(false);
           card.question.setVisible(false);
-          this.tweens.add({ targets: card, scaleX: 1.06, scaleY: 1.06, duration: 90, yoyo: true });
+          [1.03, 1.06, 1.03, 1].forEach((scale, index) => {
+            scheduleSceneAction((index + 1) * 45, () => {
+              card.objects.forEach((object) => object.setScale(scale));
+            });
+          });
           this.openCards.push(card);
           if (this.openCards.length !== 2) return;
 
@@ -191,13 +206,13 @@ export default function PhaserMemoryGame({ onComplete }) {
             this.matchedPairs += 1;
             this.statusText.setText(`${this.matchedPairs} paire${this.matchedPairs > 1 ? "s" : ""} · ${this.moves} essai${this.moves > 1 ? "s" : ""}`);
             if (this.matchedPairs === CARD_SYMBOLS.length) {
-              this.time.delayedCall(350, () => onCompleteRef.current?.());
+              scheduleSceneAction(350, () => onCompleteRef.current?.());
             }
             return;
           }
 
           this.locked = true;
-          this.time.delayedCall(650, () => {
+          scheduleSceneAction(650, () => {
             [first, second].forEach((openCard) => {
               openCard.isOpen = false;
               openCard.cover.setVisible(true);
@@ -233,6 +248,8 @@ export default function PhaserMemoryGame({ onComplete }) {
     return () => {
       cancelled = true;
       window.clearTimeout(fallbackTimer);
+      sceneTimers.forEach((timer) => window.clearTimeout(timer));
+      sceneTimers.clear();
       game?.destroy(true);
     };
   }, []);

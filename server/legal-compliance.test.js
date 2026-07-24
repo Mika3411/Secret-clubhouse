@@ -139,10 +139,11 @@ test("l’API refuse un jeton push tant que le consentement conjoint est incompl
 });
 
 test("le schéma, l’API et l’interface câblent les preuves et le retrait", async () => {
-  const [databaseSource, serverSource, appSource, apiSource, registerSource] = await Promise.all([
+  const [databaseSource, serverSource, publicAuthSource, notificationSource, apiSource, registerSource] = await Promise.all([
     readFile(new URL("./db.js", import.meta.url), "utf8"),
     readFile(new URL("./index.js", import.meta.url), "utf8"),
-    readFile(new URL("../src/App.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/PublicAuth.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/features/NotificationSettings.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/api.js", import.meta.url), "utf8"),
     readFile(new URL("../docs/registre-bases-legales.md", import.meta.url), "utf8"),
   ]);
@@ -152,8 +153,8 @@ test("le schéma, l’API et l’interface câblent les preuves et le retrait", 
   assert.match(serverSource, /recordRegistrationLegalEvents/);
   assert.match(serverSource, /assertActiveNotificationConsent\(pool, req\.auth\.sub\)/);
   assert.match(serverSource, /guardian_agreed_at is not null/);
-  assert.match(appSource, /registrationLegalEvidence\(\)/);
-  assert.match(appSource, /ChildNotificationConsentSetting/);
+  assert.match(publicAuthSource, /registrationLegalEvidence\(\)/);
+  assert.match(notificationSource, /ChildNotificationConsentSetting/);
   assert.match(apiSource, /setChildNotificationConsent/);
   assert.match(registerSource, /Test de mise en balance/);
   assert.match(registerSource, /permission technique distincte/);

@@ -24,6 +24,8 @@ services:
         value: "43200"
       - key: NODE_ENV
         value: production
+      - key: VITE_PUBLIC_APP_URL
+        value: https://secret-clubhouse.onrender.com
       - key: PARENTAL_TIME_ZONE
         value: Europe/Paris
       - key: RTC_CALL_TIMEOUT_SECONDS
@@ -54,6 +56,10 @@ services:
         value: contact@secret-clubhouse.fr
       - key: PRIVACY_ADMIN_ENABLED
         value: "false"
+      - key: ADMIN_ANALYTICS_ENABLED
+        value: "false"
+      - key: PLATFORM_ADMIN_EMAILS
+        sync: false
   - type: cron
     name: secret-clubhouse-retention
     runtime: node

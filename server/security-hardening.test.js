@@ -84,6 +84,28 @@ test("les conteneurs natifs refusent sauvegarde Android et transport en clair", 
   assert.doesNotMatch(iosInfo, /NSExceptionAllowsInsecureHTTPLoads/u);
 });
 
+test("iOS n’envoie un jeton d’action d’appel qu’à l’origine API et au chemin natif autorisés", async () => {
+  const [iosCoordinator, iosInfo, androidClient] = await Promise.all([
+    readSource("ios/App/App/NativeCallCoordinator.swift"),
+    readSource("ios/App/App/Info.plist"),
+    readSource("android/app/src/main/java/fr/secretclubhouse/app/nativecall/NativeCallActionClient.java"),
+  ]);
+
+  assert.match(iosInfo, /<key>NativeApiOrigin<\/key>\s*<string>https:\/\/secret-clubhouse\.onrender\.com<\/string>/u);
+  assert.match(iosCoordinator, /object\(forInfoDictionaryKey: "NativeApiOrigin"\)/u);
+  assert.match(iosCoordinator, /candidate\.scheme\?\.lowercased\(\) == "https"/u);
+  assert.match(iosCoordinator, /originHost\.caseInsensitiveCompare\(candidateHost\) == \.orderedSame/u);
+  assert.match(iosCoordinator, /\(origin\.port \?\? 443\) == \(candidate\.port \?\? 443\)/u);
+  assert.match(iosCoordinator, /candidate\.path\.hasPrefix\("\/api\/native\/calls\/"\)/u);
+  assert.ok(
+    (iosCoordinator.match(/isTrustedNativeCallURL\(url\)/gu) ?? []).length >= 2,
+    "Les actions POST et le suivi GET doivent revérifier l’URL avant d’ajouter le jeton.",
+  );
+
+  assert.match(androidClient, /origin\.getHost\(\)\.equalsIgnoreCase\(target\.getHost\(\)\)/u);
+  assert.match(androidClient, /target\.getPath\(\)\.startsWith\("\/api\/native\/calls\/"\)/u);
+});
+
 test("la production ne distribue jamais l’APK de débogage du dépôt", async () => {
   const [indexSource, appSource] = await Promise.all([
     readSource("server/index.js"),

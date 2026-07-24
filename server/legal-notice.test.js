@@ -26,7 +26,7 @@ test("les mentions légales ont une route publique stable", async () => {
   assert.equal(isLegalNoticePath(legalNoticeRoute), true);
   assert.equal(isLegalNoticePath("/"), false);
 
-  const authSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+  const authSource = await readFile(new URL("../src/PublicAuth.jsx", import.meta.url), "utf8");
   assert.match(authSource, /openLegalNotice/);
   assert.match(authSource, /<LegalNoticeModal/);
   assert.match(authSource, /Mentions légales/);

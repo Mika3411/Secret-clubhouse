@@ -1,4 +1,7 @@
 import { legalBasisRegister, legalDocumentVersions, notificationConsentCopy } from "./legal-framework.js";
+import { privacyAudienceFromPath, privacyRoutes } from "./legal-routes.js";
+
+export { privacyAudienceFromPath, privacyRoutes };
 
 const env = import.meta.env ?? {};
 
@@ -8,17 +11,6 @@ export const privacyController = Object.freeze({
   email: env.VITE_PRIVACY_CONTACT_EMAIL || "contact@secret-clubhouse.fr",
   dpo: null,
 });
-
-export const privacyRoutes = Object.freeze({
-  parent: "/confidentialite",
-  child: "/confidentialite-enfants",
-});
-
-export function privacyAudienceFromPath(pathname) {
-  if (pathname === privacyRoutes.parent) return "parent";
-  if (pathname === privacyRoutes.child) return "child";
-  return null;
-}
 
 export const privacyPolicyVersion = legalDocumentVersions.privacy.label;
 
@@ -36,7 +28,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       title: "Enfants",
-      text: "Prénom ou pseudonyme, âge, nom d’utilisateur privé, mot de passe sous forme de hash, identifiant privé, avatar, état actif ou en pause, réglages de sécurité et horaires définis par le parent.",
+      text: "Prénom ou pseudonyme, âge, nom d’utilisateur privé utilisé uniquement pour la connexion, mot de passe sous forme de hash, identifiant de contact opaque distinct utilisé pour le QR et les demandes approuvées, avatar, état actif ou en pause, réglages de sécurité et horaires définis par le parent.",
     },
     {
       title: "Communications et activités",
@@ -45,6 +37,10 @@ export const parentPrivacyPolicy = Object.freeze({
     {
       title: "Données techniques et de sécurité",
       text: "Session web placée dans un cookie sécurisé, HttpOnly et inaccessible à JavaScript ; session native temporaire limitée à la session de l’application ; seul un hash de session révocable est conservé dans PostgreSQL. S’ajoutent l’adresse e-mail parent mémorisée localement, la présence récente, l’indicateur de saisie, les abonnements de notification, le type d’appareil et le hash irréversible de l’adresse IP utilisé pour limiter les tentatives de connexion.",
+    },
+    {
+      title: "Statistiques agrégées du service",
+      text: "Le nombre de familles et de comptes, les dates de création et de dernière activité, les ouvertures de session et les volumes d’actions déjà horodatées sont regroupés pour mesurer l’activité sur 7 et 30 jours et le retour des familles après 30 jours. Le tableau d’administration ne contient aucun nom, identifiant, contact, message, média ni détail individuel.",
     },
     {
       title: "Caméra et microphone",
@@ -67,6 +63,7 @@ export const parentPrivacyPolicy = Object.freeze({
     "Chaque message, média ou appel est accessible uniquement à son auteur, aux participants autorisés de la conversation et aux systèmes techniques nécessaires à son acheminement.",
     "Les parents et co-parents autorisés accèdent aux profils, contacts, réglages et alertes de sécurité de leur famille. Ils ne voient pas dans le tableau de bord le contenu des conversations de leurs enfants avec leurs amis.",
     "L’éditeur et les personnes strictement habilitées peuvent intervenir lorsque cela est nécessaire à la sécurité, au support ou à l’exercice d’un droit.",
+    "Un administrateur nominativement autorisé peut consulter des nombres agrégés sur les familles, l’activité et la fidélité du service. Ses accès sont journalisés ; son propre compte et sa famille sont exclus des calculs.",
     "Les autorités administratives ou judiciaires reçoivent uniquement les données dont la communication est légalement exigée.",
     "Aucune donnée n’est vendue, louée, utilisée pour de la publicité ciblée ou communiquée à un annuaire public.",
   ],
@@ -137,7 +134,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       data: "Progression Clubhouse",
-      duration: "Les activités terminées, étoiles, relectures et jours de série sont conservés pendant la durée de vie du profil enfant afin de restituer sa progression privée. Ils sont supprimés immédiatement avec ce profil, ou avec la famille après 2 ans d’inactivité.",
+      duration: "Les activités terminées, étoiles, parties rejouées, jours de série, défis quotidiens, récompenses débloquées et décoration choisie sont conservés pendant la durée de vie du profil enfant afin de restituer sa progression privée. Ils sont supprimés immédiatement avec ce profil, ou avec la famille après 2 ans d’inactivité.",
     },
     {
       data: "Sécurité et limitation des connexions",
@@ -184,12 +181,17 @@ export const childPrivacyCards = Object.freeze([
   {
     icon: "backpack",
     title: "Ce que l’application garde",
-    text: "Ton prénom ou pseudo, ton âge, ton avatar, ton identifiant secret, tes contacts approuvés, tes messages, tes médias, tes jeux et les réglages choisis par ton parent.",
+    text: "Ton prénom ou pseudo, ton âge, ton avatar, ton pseudo secret pour te connecter et un ID de contact différent pour ton QR, tes contacts approuvés, tes messages, tes médias, tes jeux, ta progression, tes récompenses et les réglages choisis par ton parent.",
   },
   {
     icon: "sparkle",
     title: "Pourquoi on les utilise",
     text: "Pour ouvrir ton espace, envoyer ce que tu choisis à la bonne personne, faire marcher les appels et les jeux, et appliquer les protections décidées avec ton parent.",
+  },
+  {
+    icon: "person",
+    title: "Des nombres, jamais ton histoire",
+    text: "La personne qui gère l’application peut voir combien de familles reviennent et combien de sessions ou d’activités ont eu lieu au total. Elle ne voit pas ton nom, ton ID, tes contacts ni tes messages dans ces statistiques.",
   },
   {
     icon: "sparkle",

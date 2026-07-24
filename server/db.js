@@ -65,7 +65,26 @@ export async function initializeDatabase() {
     create trigger accounts_set_inactivity_deadline
       before insert or update of last_activity_at on accounts
       for each row execute function set_account_inactivity_deadline();
-    create unique index if not exists accounts_parent_username_unique on accounts(parent_id, lower(username)) where role = 'child';
+    update accounts
+      set username='club.' || substring(replace(id::text,'-','') from 1 for 10)
+      where role='child' and (username is null or char_length(btrim(username)) < 3);
+    with duplicate_usernames as (
+      select id,username,
+        row_number() over(partition by lower(username) order by created_at,id) as duplicate_rank
+      from accounts
+      where role='child'
+    )
+    update accounts account
+      set username='club.' || substring(replace(account.id::text,'-','') from 1 for 10)
+      from duplicate_usernames duplicate
+      where account.id=duplicate.id and duplicate.duplicate_rank>1;
+    alter table accounts drop constraint if exists accounts_child_username_required;
+    alter table accounts
+      add constraint accounts_child_username_required
+      check (role<>'child' or (username is not null and char_length(btrim(username)) between 3 and 64));
+    drop index if exists accounts_parent_username_unique;
+    create unique index if not exists accounts_child_username_unique
+      on accounts(lower(username)) where role='child';
     create index if not exists accounts_parent_children_idx on accounts(parent_id, created_at) where role = 'child';
     create index if not exists accounts_inactive_after_idx on accounts(inactive_after);
 
@@ -114,7 +133,7 @@ export async function initializeDatabase() {
     create index if not exists legal_events_retention_idx on legal_events(retain_until);
 
     create table if not exists login_rate_limits (
-      scope text not null check (scope in ('identity', 'ip')),
+      scope text not null check (scope in ('identity', 'ip', 'registration_ip')),
       key_hash text not null,
       failure_count integer not null default 0 check (failure_count >= 0),
       window_started_at timestamptz not null default now(),
@@ -122,6 +141,10 @@ export async function initializeDatabase() {
       updated_at timestamptz not null default now(),
       primary key (scope, key_hash)
     );
+    alter table login_rate_limits drop constraint if exists login_rate_limits_scope_check;
+    alter table login_rate_limits
+      add constraint login_rate_limits_scope_check
+      check (scope in ('identity', 'ip', 'registration_ip'));
     create index if not exists login_rate_limits_updated_idx on login_rate_limits(updated_at);
     delete from login_rate_limits where updated_at < now() - interval '48 hours';
 
@@ -141,6 +164,13 @@ export async function initializeDatabase() {
     );
     create unique index if not exists family_memberships_one_primary_idx
       on family_memberships(family_id) where role = 'primary';
+
+    create table if not exists platform_administrators (
+      account_id uuid primary key references accounts(id) on delete cascade,
+      grant_source text not null default 'manual'
+        check (grant_source in ('manual','environment')),
+      granted_at timestamptz not null default now()
+    );
 
     create table if not exists family_children (
       family_id uuid not null references families(id) on delete cascade,
@@ -634,6 +664,8 @@ export async function initializeDatabase() {
     create index if not exists native_call_action_tokens_expiry_idx
       on native_call_action_tokens(expires_at);
 
+    create sequence if not exists message_sync_version_seq;
+
     create table if not exists messages (
       id uuid primary key default gen_random_uuid(),
       conversation_id uuid not null references conversations(id) on delete cascade,
@@ -650,6 +682,7 @@ export async function initializeDatabase() {
       content_encryption_key_id text,
       message_kind text not null default 'user',
       created_at timestamptz not null default now(),
+      sync_version bigint not null default nextval('message_sync_version_seq'),
       expires_at timestamptz not null default now() + interval '365 days'
     );
     alter table messages add column if not exists body_ciphertext text;
@@ -658,6 +691,19 @@ export async function initializeDatabase() {
     alter table messages add column if not exists media_ciphertext bytea;
     alter table messages add column if not exists content_encryption_version smallint;
     alter table messages add column if not exists content_encryption_key_id text;
+    alter table messages add column if not exists sync_version bigint;
+    alter table messages alter column sync_version set default nextval('message_sync_version_seq');
+    update messages set sync_version=nextval('message_sync_version_seq') where sync_version is null;
+    alter table messages alter column sync_version set not null;
+    select setval(
+      'message_sync_version_seq',
+      greatest(
+        coalesce((select max(sync_version) from messages),0),
+        (select last_value from message_sync_version_seq),
+        1
+      ),
+      true
+    );
     update messages set content_encryption_version=0 where content_encryption_version is null;
     alter table messages alter column content_encryption_version set default 0;
     alter table messages alter column content_encryption_version set not null;
@@ -752,9 +798,35 @@ export async function initializeDatabase() {
       recipient_id uuid not null references accounts(id) on delete cascade,
       received_at timestamptz,
       seen_at timestamptz,
+      updated_at timestamptz not null default clock_timestamp(),
       primary key(message_id,recipient_id),
       check (seen_at is null or received_at is not null)
     );
+    alter table message_receipts add column if not exists updated_at timestamptz;
+    update message_receipts set updated_at=clock_timestamp() where updated_at is null;
+    alter table message_receipts alter column updated_at set default clock_timestamp();
+    alter table message_receipts alter column updated_at set not null;
+
+    create or replace function touch_message_receipt_sync_version()
+    returns trigger
+    language plpgsql
+    as $$
+    begin
+      if old.received_at is distinct from new.received_at
+        or old.seen_at is distinct from new.seen_at then
+        new.updated_at=clock_timestamp();
+        update messages
+          set sync_version=nextval('message_sync_version_seq')
+          where id=new.message_id;
+      end if;
+      return new;
+    end;
+    $$;
+
+    drop trigger if exists message_receipts_touch_sync_version on message_receipts;
+    create trigger message_receipts_touch_sync_version
+      before update of received_at,seen_at on message_receipts
+      for each row execute function touch_message_receipt_sync_version();
 
     create table if not exists security_events (
       id bigserial primary key,
@@ -867,22 +939,70 @@ export async function initializeDatabase() {
       after insert on messages
       for each row execute function provision_message_receipts();
 
+    create table if not exists clubhouse_unlocks (
+      id text primary key,
+      kind text not null check (kind in ('badge','color','decor')),
+      label text not null,
+      accent text not null check (accent ~ '^#[0-9a-fA-F]{6}$')
+    );
+
+    insert into clubhouse_unlocks(id,kind,label,accent) values
+      ('mint-comet','decor','Comète menthe','#65efc5'),
+      ('violet-outline','color','Violet cosmique','#8d6df3'),
+      ('mime-master','badge','As du mime','#ff8b76'),
+      ('story-bunting','decor','Guirlande à histoires','#b99af7'),
+      ('paper-ears','badge','Créature de papier','#56d9bd'),
+      ('sound-wave','decor','Onde musicale','#60bff5'),
+      ('kindness-glow','color','Halo bienveillant','#ffb85c'),
+      ('family-banner','decor','Fanion de famille','#9c7bf7'),
+      ('teamwork-badge','badge','Équipe créative','#5bdbbe'),
+      ('handshake-spark','badge','Complice secret','#f690c1'),
+      ('cozy-lights','decor','Lampions douillets','#ffd166'),
+      ('comic-frame','decor','Cadre BD','#748cf3'),
+      ('memory-crown','badge','Mémoire d’étoile','#a887f5'),
+      ('explorer-green','color','Vert explorateur','#31c9a8'),
+      ('detective-lamp','decor','Lampe de détective','#f4b94b'),
+      ('team-flag','decor','Drapeau des copains','#72e7c7')
+    on conflict(id) do update
+      set kind=excluded.kind,label=excluded.label,accent=excluded.accent;
+
     create table if not exists clubhouse_activities (
       id text primary key,
       reward smallint not null check (reward > 0 and reward <= 500),
       active boolean not null default true
     );
 
-    insert into clubhouse_activities(id,reward,active) values
-      ('color-hunt',25,true),
-      ('one-line-drawing',20,true),
-      ('mystery-mime',30,true),
-      ('multiplayer-games',40,true),
-      ('memory-pairs',30,true),
-      ('nature-quiz',20,true),
-      ('odd-one-out',20,true)
+    alter table clubhouse_activities add column if not exists kind text not null default 'challenge';
+    alter table clubhouse_activities add column if not exists rotation_rank smallint not null default 0;
+    alter table clubhouse_activities add column if not exists fixed_catalog boolean not null default false;
+    alter table clubhouse_activities add column if not exists daily_eligible boolean not null default false;
+    alter table clubhouse_activities add column if not exists unlock_id text references clubhouse_unlocks(id);
+
+    insert into clubhouse_activities(id,reward,active,kind,rotation_rank,fixed_catalog,daily_eligible,unlock_id) values
+      ('color-hunt',25,true,'challenge',10,false,true,'mint-comet'),
+      ('one-line-drawing',20,true,'challenge',20,false,true,'violet-outline'),
+      ('mystery-mime',30,true,'challenge',30,false,false,'mime-master'),
+      ('three-word-story',25,true,'challenge',40,false,true,'story-bunting'),
+      ('paper-creature',30,true,'challenge',50,false,true,'paper-ears'),
+      ('sound-inventor',25,true,'challenge',60,false,true,'sound-wave'),
+      ('kindness-mission',30,true,'challenge',70,false,false,'kindness-glow'),
+      ('family-time-capsule',35,true,'challenge',80,false,false,'family-banner'),
+      ('friend-collage',35,true,'challenge',90,false,false,'teamwork-badge'),
+      ('secret-handshake',30,true,'challenge',100,false,false,'handshake-spark'),
+      ('cozy-corner',25,true,'challenge',110,false,true,'cozy-lights'),
+      ('comic-four-panels',35,true,'challenge',120,false,true,'comic-frame'),
+      ('memory-pairs',30,true,'game',10,true,false,'memory-crown'),
+      ('nature-quiz',20,true,'game',20,true,false,'explorer-green'),
+      ('odd-one-out',20,true,'game',30,true,false,'detective-lamp'),
+      ('multiplayer-games',40,true,'multiplayer',40,true,false,'team-flag')
     on conflict(id) do update
-      set reward=excluded.reward,active=excluded.active;
+      set reward=excluded.reward,
+          active=excluded.active,
+          kind=excluded.kind,
+          rotation_rank=excluded.rotation_rank,
+          fixed_catalog=excluded.fixed_catalog,
+          daily_eligible=excluded.daily_eligible,
+          unlock_id=excluded.unlock_id;
 
     create table if not exists clubhouse_activity_progress (
       child_id uuid not null references accounts(id) on delete cascade,
@@ -901,11 +1021,29 @@ export async function initializeDatabase() {
       primary key(child_id,activity_date)
     );
 
-    create index if not exists messages_conversation_created_idx on messages(conversation_id, created_at);
+    create table if not exists clubhouse_daily_challenges (
+      child_id uuid not null references accounts(id) on delete cascade,
+      challenge_date date not null,
+      activity_id text not null references clubhouse_activities(id),
+      completed_at timestamptz not null default now(),
+      primary key(child_id,challenge_date)
+    );
+
+    create table if not exists clubhouse_appearance (
+      child_id uuid primary key references accounts(id) on delete cascade,
+      unlock_id text not null references clubhouse_unlocks(id),
+      updated_at timestamptz not null default now()
+    );
+
+    create index if not exists messages_conversation_created_idx on messages(conversation_id, created_at, id);
+    create index if not exists messages_conversation_created_id_idx on messages(conversation_id,created_at,id);
+    create index if not exists messages_sync_version_idx on messages(sync_version);
+    create index if not exists messages_conversation_sync_idx on messages(conversation_id,sync_version);
     create index if not exists messages_expiry_idx on messages(expires_at);
     create index if not exists message_receipts_recipient_idx on message_receipts(recipient_id,seen_at,received_at);
     create index if not exists clubhouse_progress_child_idx on clubhouse_activity_progress(child_id,last_completed_at desc);
     create index if not exists clubhouse_daily_child_idx on clubhouse_daily_activity(child_id,activity_date desc);
+    create index if not exists clubhouse_daily_challenges_child_idx on clubhouse_daily_challenges(child_id,challenge_date desc);
     create index if not exists conversation_members_account_idx on conversation_members(account_id);
   `);
   await initializeAuthSessionStore(pool);

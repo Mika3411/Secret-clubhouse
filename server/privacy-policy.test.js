@@ -73,7 +73,7 @@ test("les deux politiques ont une route publique stable avant inscription", asyn
   assert.equal(privacyAudienceFromPath(privacyRoutes.child), "child");
   assert.equal(privacyAudienceFromPath("/"), null);
 
-  const authSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8");
+  const authSource = await readFile(new URL("../src/PublicAuth.jsx", import.meta.url), "utf8");
   assert.match(authSource, /openPrivacy\("parent"\)/);
   assert.match(authSource, /openPrivacy\("child"\)/);
   assert.match(authSource, /Avant l’inscription/);

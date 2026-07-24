@@ -315,6 +315,7 @@ final class NativeCallCoordinator: NSObject {
     ) {
         guard
             let url = context.url(for: action),
+            isTrustedNativeCallURL(url),
             let token = context.actionToken,
             !token.isEmpty
         else {
@@ -394,7 +395,13 @@ final class NativeCallCoordinator: NSObject {
     }
 
     private func pollStatus(_ context: NativeCallContext) {
-        guard let url = context.statusURL, let token = context.actionToken else { return }
+        guard
+            let url = context.statusURL,
+            isTrustedNativeCallURL(url),
+            let token = context.actionToken
+        else {
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 5
@@ -611,12 +618,30 @@ final class NativeCallCoordinator: NSObject {
         guard
             let value,
             let url = URL(string: value),
-            url.scheme?.lowercased() == "https",
-            url.host != nil
+            isTrustedNativeCallURL(url)
         else {
             return nil
         }
         return url
+    }
+
+    private func isTrustedNativeCallURL(_ candidate: URL) -> Bool {
+        guard
+            let configuredOrigin = Bundle.main.object(forInfoDictionaryKey: "NativeApiOrigin") as? String,
+            let origin = URL(string: configuredOrigin),
+            origin.scheme?.lowercased() == "https",
+            candidate.scheme?.lowercased() == "https",
+            let originHost = origin.host,
+            let candidateHost = candidate.host,
+            originHost.caseInsensitiveCompare(candidateHost) == .orderedSame,
+            (origin.port ?? 443) == (candidate.port ?? 443),
+            candidate.path.hasPrefix("/api/native/calls/"),
+            candidate.user == nil,
+            candidate.password == nil
+        else {
+            return false
+        }
+        return true
     }
 
     private func expirationDate(in payload: [String: Any]) -> Date {

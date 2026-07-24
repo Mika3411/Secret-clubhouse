@@ -53,6 +53,133 @@ test("les routes applicatives protègent la connexion et la présence", async (t
     assert.match((await response.json()).error, /conditions d’utilisation.*autorité parentale/i);
   });
 
+  await t.test("connecte l’enfant par pseudo privé sans laisser son ID de contact verrouiller ce compte", async (subtest) => {
+    const passwordHash = await bcrypt.hash("MotDePasseEnfant!", 4);
+    const originalCompare = bcrypt.compare;
+    const limiterState = new Map();
+    const usernameLookups = [];
+    let contactIdLookups = 0;
+    bcrypt.compare = async (submittedPassword, storedHash) => (
+      submittedPassword === "MotDePasseEnfant!" && storedHash === passwordHash
+    );
+    subtest.after(() => {
+      bcrypt.compare = originalCompare;
+    });
+
+    pool.query = async (sql, params = []) => {
+      const statement = String(sql).replace(/\s+/g, " ").trim();
+      if (statement.startsWith("select blocked_until from login_rate_limits")) {
+        const now = Date.now();
+        const activeBlocks = [
+          limiterState.get(`identity:${params[0]}`)?.blockedUntil,
+          limiterState.get(`ip:${params[1]}`)?.blockedUntil,
+        ].filter((blockedUntil) => blockedUntil > now);
+        const blockedUntil = activeBlocks.sort((first, second) => second - first)[0];
+        return queryResult(blockedUntil ? [{ blocked_until: new Date(blockedUntil).toISOString() }] : []);
+      }
+      if (statement.startsWith("insert into login_rate_limits")) {
+        const [scope, keyHash, windowSeconds, maxFailures, blockSeconds] = params;
+        const stateKey = `${scope}:${keyHash}`;
+        const now = Date.now();
+        const existing = limiterState.get(stateKey);
+        const windowExpired = !existing || existing.windowStartedAt <= now - (windowSeconds * 1000);
+        const failureCount = windowExpired ? 1 : existing.failureCount + 1;
+        const blockedUntil = existing?.blockedUntil > now
+          ? existing.blockedUntil
+          : failureCount >= maxFailures
+            ? now + (blockSeconds * 1000)
+            : null;
+        limiterState.set(stateKey, {
+          failureCount,
+          windowStartedAt: windowExpired ? now : existing.windowStartedAt,
+          blockedUntil,
+        });
+        return queryResult([{ blocked_until: blockedUntil ? new Date(blockedUntil).toISOString() : null }]);
+      }
+      if (statement.includes("role='child' and contact_id=$1")) {
+        contactIdLookups += 1;
+        return queryResult();
+      }
+      if (statement.includes("role='child' and lower(username)=$1")) {
+        usernameLookups.push(params[0]);
+        if (params[0] !== "lina.club") return queryResult();
+        return queryResult([{
+          id: "33333333-3333-4333-8333-333333333333",
+          role: "child",
+          email: null,
+          contact_id: "SC-333-444-555",
+          username: "lina.club",
+          password_hash: passwordHash,
+          display_name: "Lina",
+          parent_id: "22222222-2222-4222-8222-222222222222",
+          age: 9,
+          avatar_color: "mint",
+          status: "active",
+          safety_settings: {},
+          communication_schedule: {},
+        }]);
+      }
+      if (statement.startsWith("delete from login_rate_limits where scope='identity'")) {
+        limiterState.delete(`identity:${params[0]}`);
+        return queryResult();
+      }
+      if (statement.startsWith("update accounts set last_activity_at=now()")) return queryResult();
+      if (statement.startsWith("insert into security_events")) return queryResult();
+      if (statement.startsWith("insert into auth_sessions")) {
+        return queryResult([{
+          id: "44444444-4444-4444-8444-444444444444",
+          account_id: "33333333-3333-4333-8333-333333333333",
+          client_type: "native",
+          device_id: null,
+          created_at: new Date().toISOString(),
+          expires_at: params[4],
+          revoked_at: null,
+        }]);
+      }
+      throw new Error(`Requête SQL inattendue pendant le test de connexion enfant : ${statement}`);
+    };
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const response = await fetch(`${baseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: "SC-333-444-555",
+          password: "MotDePasseEnfant!",
+        }),
+      });
+      assert.equal(response.status, attempt === 5 ? 429 : 401);
+      await response.body.cancel();
+    }
+
+    const validResponse = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Secret-Clubhouse-Client": "native",
+      },
+      body: JSON.stringify({
+        username: "Lina Club",
+        password: "MotDePasseEnfant!",
+      }),
+    });
+    const payload = await validResponse.json();
+    assert.equal(validResponse.status, 200);
+    assert.equal(payload.account.role, "child");
+    assert.equal(payload.account.username, "lina.club");
+    assert.equal(payload.account.schedule.timeZone, "Europe/Paris");
+    assert.equal(typeof payload.token, "string");
+    assert.equal(contactIdLookups, 0);
+    assert.deepEqual(usernameLookups, [
+      "sc.333.444.555",
+      "sc.333.444.555",
+      "sc.333.444.555",
+      "sc.333.444.555",
+      "sc.333.444.555",
+      "lina.club",
+    ]);
+  });
+
   await t.test("bloque une identité après cinq échecs sans continuer à lire le compte", async () => {
     const passwordHash = await bcrypt.hash("MotDePasseValide!", 4);
     const limiterState = new Map();
@@ -409,6 +536,107 @@ test("les routes applicatives protègent la connexion et la présence", async (t
     } finally {
       console.error = originalConsoleError;
     }
+  });
+
+  await t.test("refuse en HTTP un faux message vocal avant toute insertion", async () => {
+    const accountId = "99999999-9999-4999-8999-999999999999";
+    const conversationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let membershipChecks = 0;
+
+    pool.query = async (sql, params = []) => {
+      const statement = String(sql).replace(/\s+/g, " ").trim();
+      if (statement.includes("from auth_sessions session")) {
+        return queryResult([{
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          account_id: accountId,
+          client_type: "native",
+          device_id: null,
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          revoked_at: null,
+          role: "parent",
+        }]);
+      }
+      if (statement.includes("select processing_restricted_at,processing_restriction_reason from accounts")) {
+        return queryResult([{ processing_restricted_at: null, processing_restriction_reason: null }]);
+      }
+      if (statement.startsWith("select 1 from conversation_members member")) {
+        membershipChecks += 1;
+        assert.deepEqual(params, [accountId, conversationId]);
+        return queryResult([{ "?column?": 1 }]);
+      }
+      if (statement.includes("from conversation_members member join accounts account")) {
+        assert.deepEqual(params, [conversationId]);
+        return queryResult();
+      }
+      throw new Error(`Requête SQL inattendue pendant le test du message vocal : ${statement}`);
+    };
+
+    const form = new FormData();
+    form.append(
+      "media",
+      new Blob(["contenu qui n'est pas un fichier audio"], { type: "audio/wav" }),
+      "message-vocal.wav",
+    );
+    const token = Buffer.alloc(32, 9).toString("base64url");
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/media`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "X-Secret-Clubhouse-Client": "native",
+      },
+      body: form,
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 415);
+    assert.match(payload.error, /contenu du média n’est pas reconnu/i);
+    assert.equal(membershipChecks, 1);
+  });
+
+  await t.test("bloque la mutation du consentement quand le traitement RGPD est restreint", async () => {
+    const accountId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    let queryCount = 0;
+
+    pool.query = async (sql) => {
+      queryCount += 1;
+      const statement = String(sql).replace(/\s+/g, " ").trim();
+      if (statement.includes("from auth_sessions session")) {
+        return queryResult([{
+          id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          account_id: accountId,
+          client_type: "native",
+          device_id: null,
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          revoked_at: null,
+          role: "parent",
+        }]);
+      }
+      if (statement.includes("select processing_restricted_at,processing_restriction_reason from accounts")) {
+        return queryResult([{
+          processing_restricted_at: new Date().toISOString(),
+          processing_restriction_reason: "Demande de limitation en cours",
+        }]);
+      }
+      throw new Error(`La route restreinte a poursuivi son traitement : ${statement}`);
+    };
+
+    const token = Buffer.alloc(32, 10).toString("base64url");
+    const response = await fetch(`${baseUrl}/api/privacy/notification-consent`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "X-Secret-Clubhouse-Client": "native",
+      },
+      body: JSON.stringify({ agreed: true }),
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 423);
+    assert.equal(payload.processingRestricted, true);
+    assert.equal(queryCount, 2);
   });
 
   await t.test("omet la présence d’un identifiant sans relation autorisée", async () => {

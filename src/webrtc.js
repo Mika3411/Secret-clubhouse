@@ -1,43 +1,66 @@
+import { defaultParentalTimeZone, minutesInTimeZone } from "./policy-time.js";
+
 function timeToMinutes(time) {
   const [hours, minutes] = time.split(":").map(Number);
   return hours * 60 + minutes;
 }
 
+function formatFriendlyTime(time) {
+  const [hours, minutes] = String(time).split(":");
+  const readableHours = String(Number(hours));
+  return minutes === "00" ? `${readableHours} h` : `${readableHours} h ${minutes}`;
+}
+
+function formatFriendlyTimeZone(timeZone) {
+  return timeZone === "Europe/Paris" ? "heure de Paris" : `fuseau ${timeZone}`;
+}
+
 export function getChannelPolicy(schedule, channelKey, now = new Date()) {
   const channel = schedule?.[channelKey];
-  if (!channel) return { allowed: false, reason: "Ce type de communication n’est pas configuré." };
+  if (!channel) return { allowed: false, reason: "Cette option est en pause pour le moment.", detail: "Demande de l’aide à un parent." };
   if (!schedule.enabled) return { allowed: true, detail: "Disponible à toute heure" };
   if (!channel.enabled) {
     const disabledReason = channelKey === "video"
-      ? "Les appels visio sont désactivés par un parent."
+      ? "La visio est en pause pour le moment."
       : channelKey === "calls"
-        ? "Les appels audio sont désactivés par un parent."
-        : "Les messages sont désactivés par un parent.";
+        ? "Les appels audio sont en pause pour le moment."
+        : "Les messages sont en pause pour le moment.";
     return {
       allowed: false,
       reason: disabledReason,
-      detail: "Un parent peut modifier ce réglage dans Mode calme.",
+      detail: "Un parent pourra choisir quand ce sera disponible.",
     };
   }
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const timeZone = schedule.timeZone || defaultParentalTimeZone;
+  let currentMinutes;
+  try {
+    currentMinutes = minutesInTimeZone(now, timeZone);
+  } catch {
+    return {
+      allowed: false,
+      reason: "Cette option est en pause pour le moment.",
+      detail: "Demande de l’aide à un parent.",
+    };
+  }
   const startMinutes = timeToMinutes(channel.start);
   const endMinutes = timeToMinutes(channel.end);
   const isInsideWindow = startMinutes <= endMinutes
     ? currentMinutes >= startMinutes && currentMinutes <= endMinutes
     : currentMinutes >= startMinutes || currentMinutes <= endMinutes;
-  const readableWindow = `${channel.start.replace(":", " h ")}–${channel.end.replace(":", " h ")}`;
+  const readableWindow = `${formatFriendlyTime(channel.start)}–${formatFriendlyTime(channel.end)}`;
+  const readableTimeZone = formatFriendlyTimeZone(timeZone);
 
   return isInsideWindow
-    ? { allowed: true, detail: `Autorisé aujourd’hui de ${readableWindow}` }
+    ? { allowed: true, detail: `Disponible aujourd’hui de ${readableWindow} (${readableTimeZone})` }
     : {
         allowed: false,
         reason: channelKey === "video"
-          ? "La visio est fermée pour le moment."
+          ? "La visio est en pause pour le moment."
           : channelKey === "calls"
-            ? "Les appels audio sont fermés pour le moment."
-            : "Le mode calme est actif pour les messages.",
-        detail: `Horaire autorisé : ${readableWindow}`,
+            ? "Les appels audio sont en pause pour le moment."
+            : "Les messages sont en pause pour le moment.",
+        detail: `Tu pourras réessayer à ${formatFriendlyTime(channel.start)} (${readableTimeZone}).`,
       };
 }
 

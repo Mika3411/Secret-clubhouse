@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.9 ferme A07 sur le périmètre restreint et conserve les actions non prouvées", () => {
-  assert.equal(aipdVersion, "1.9");
+test("la réévaluation 1.11 ferme A07 sur le périmètre restreint et conserve les actions non prouvées", () => {
+  assert.equal(aipdVersion, "1.11");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -175,8 +175,8 @@ test("A07 est fermée uniquement tant que les flux fournisseur et natifs restent
   assert.equal(action?.status, "closed");
   assert.equal(action?.closedAt, "2026-07-23");
   assert.ok(action?.evidence?.includes("docs/a07-evaluation-securite-2026-07-23.md"));
-  assert.match(action?.scopeRestriction ?? "", /RTC, Web Push, APNs\/FCM[\s\S]+désactivés/i);
-  assert.match(action?.scopeRestriction ?? "", /activation ou distribution native rouvre A07/i);
+  assert.match(action?.scopeRestriction ?? "", /RTC, Web Push, APNs\/FCM[\s\S]+agrégats administrateur[\s\S]+désactivés/i);
+  assert.match(action?.scopeRestriction ?? "", /activation de ces canaux ou distribution native rouvre A07/i);
 });
 
 test("A04 reste ouverte sans contrôle réel des services et secrets actifs", () => {

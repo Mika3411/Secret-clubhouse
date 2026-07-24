@@ -43,9 +43,22 @@ Documentation officielle : [Blueprints Render](https://render.com/docs/infrastru
 - Les charges Web Push, APNs et FCM contiennent des identifiants opaques de routage et des libellés génériques. Elles n’incluent jamais le texte d’un message, le nom d’un fichier, le nom d’un enfant ou celui d’un contact ; un appel entrant affiche le libellé neutre « Contact autorisé ».
 - Le gestionnaire central n’expose que les erreurs 4xx explicitement déclarées comme publiques. Une erreur inattendue devient `Erreur interne.` ; chaque réponse porte `X-Request-ID`, et le JSON du gestionnaire d’erreurs répète cet identifiant dans `requestId` pour permettre la corrélation avec les journaux serveur sans divulguer de détail interne.
 
+### Tableau de bord administrateur
+
+La route `/administration` présente uniquement des agrégats : nombre de familles, utilisateurs actifs sur 7 et 30 jours, retour des familles après 30 jours, sessions ouvertes et volumes d’activités. Elle ne renvoie aucun nom, identifiant de contact, conversation, message ou média. Les comptes administrateurs et leur propre famille sont exclus des calculs.
+
+L’accès réutilise une véritable session parent et exige une nomination explicite. Aucun compte ni mot de passe administrateur par défaut n’existe :
+
+1. créer ou conserver un compte parent nominatif ;
+2. renseigner son e-mail normalisé dans `PLATFORM_ADMIN_EMAILS` sur Render ;
+3. vérifier l’accès, la journalisation et les métriques sur un environnement contrôlé ;
+4. définir `ADMIN_ANALYTICS_ENABLED=true` seulement après cette vérification.
+
+Au premier accès autorisé, PostgreSQL inscrit le compte dans `platform_administrators`. Chaque lecture est consignée dans `security_events` avec l’identifiant de requête et sans contenu utilisateur. Le Blueprint conserve la fonctionnalité désactivée par défaut ; toute activation réelle doit être ajoutée aux preuves A04 et A08.
+
 ### Activation contrôlée des fournisseurs
 
-En production, `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` valent `false` par défaut et dans le Blueprint. Les routes correspondantes répondent `503` et aucun jeton push n’est enregistré. Une valeur ambiguë fait échouer la configuration.
+En production, `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED`, `PRIVACY_ADMIN_ENABLED` et `ADMIN_ANALYTICS_ENABLED` valent `false` par défaut et dans le Blueprint. Les routes correspondantes restent indisponibles et aucun jeton push n’est enregistré. Une valeur ambiguë fait échouer la configuration.
 
 Un flux ne peut être activé qu’après fermeture de son dossier dans `docs/registre-sous-traitants-et-transferts.md` :
 
