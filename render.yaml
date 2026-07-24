@@ -48,8 +48,12 @@ services:
         value: "false"
       - key: WEB_PUSH_TIMEOUT_MS
         value: "6000"
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
       - key: WEB_PUSH_ENABLED
-        value: "false"
+        value: "true"
       - key: APNS_BUNDLE_ID
         value: fr.secretclubhouse.app
       - key: APNS_VOIP_TOPIC

@@ -1,7 +1,7 @@
 # Analyse d’impact relative à la protection des données (AIPD)
 
 **Traitement :** Secret Clubhouse — service familial privé de communication et d’activités pour enfants de 6 à 13 ans
-**Version :** 1.12<br>
+**Version :** 1.13<br>
 **Date d’évaluation :** 24 juillet 2026
 **Responsable du traitement :** Mickael Thorez, éditeur individuel non professionnel
 **Contact RGPD :** `contact@secret-clubhouse.fr`
@@ -13,7 +13,7 @@ Ce dossier applique la méthode CNIL : contexte, respect des principes fondament
 
 > **PRODUCTION BLOQUÉE**
 
-La condition demandée d’une clôture vérifiée de `A02` à `A08` n’est pas satisfaite. `A05` et `A06` disposent de preuves permettant de retenir leur clôture avec les réserves décrites ci-dessous. `A07`, auparavant fermée pour le seul périmètre web sans RTC, est rouverte par l’activation contrôlée de Cloudflare Realtime TURN. `A02`, `A03`, `A04`, `A07` et `A08` restent ouvertes. L’AIPD n’est donc pas formellement approuvée et les risques `R01`, `R02`, `R06`, `R08` et `R10` restent élevés.
+La condition demandée d’une clôture vérifiée de `A02` à `A08` n’est pas satisfaite. `A05` et `A06` disposent de preuves permettant de retenir leur clôture avec les réserves décrites ci-dessous. `A07`, auparavant fermée pour le seul périmètre web sans RTC ni Web Push, est rouverte par leur activation contrôlée. `A02`, `A03`, `A04`, `A07` et `A08` restent ouvertes. L’AIPD n’est donc pas formellement approuvée et les risques `R01`, `R02`, `R06`, `R08` et `R10` restent élevés.
 
 Avant l’ouverture à des enfants réels, le responsable doit :
 
@@ -80,7 +80,7 @@ Cette version repose notamment sur :
 - `docs/registre-bases-legales.md`, `src/privacy-policy.js` et `src/legal-framework.js` pour les finalités, bases légales et informations fournies.
 - `docs/a02-protocole-consultation.md` pour le protocole vierge préparatoire de l’action `A02`.
 - `docs/a04-procedure-gestion-acces-et-cles.md`, `docs/a04-checklist-preuves.md` et `.audit/2026-07-23-a04-access-key-audit/audit.md` pour l’audit et la préparation de l’action `A04`.
-- `docs/a07-evaluation-securite-2026-07-23.md` comme preuve historique du périmètre sans RTC, `docs/d2-cloudflare-turn-review-2026-07-24.md` pour la préparation TURN et les tests de garde des routes et drapeaux ; `A07` est rouverte.
+- `docs/a07-evaluation-securite-2026-07-23.md` comme preuve historique du périmètre restreint, `docs/d2-cloudflare-turn-review-2026-07-24.md` et `docs/d3-web-push-review-2026-07-24.md` pour les activations TURN et Web Push ; `A07` est rouverte.
 - `docs/a08-checklist-configuration-production-2026-07-23.md` et `.audit/2026-07-23-a08-production-config-audit/evidence-index.md` pour la comparaison expurgée entre le Blueprint et Render réellement déployé.
 - `docs/production-deblocage-minimal.md` pour les seules interventions privées ou humaines encore nécessaires au périmètre web restreint.
 
@@ -281,11 +281,11 @@ Les scénarios détaillés — menaces, impacts, contrôles et liens d’action 
 | Action | État vérifié au 24/07/2026 | Preuves contrôlées | Conclusion |
 |---|---|---|---|
 | A02 | **Ouverte** | `docs/a02-protocole-consultation.md` se déclare vierge ; aucune consultation réelle et aucune décision signée établissant qu’elle ne serait pas appropriée ne sont référencées | Le protocole est un gabarit ; aucune des deux voies de clôture prévues par l’article 35(9) n’est prouvée |
-| A03 | **Ouverte** | `docs/registre-sous-traitants-et-transferts.md` regroupe les preuves en cinq dossiers ; la revue D2 documente la préparation TURN, tandis que Web Push, FCM et APNs restent fermés | D2 reste limité aux essais contrôlés et attend les pièces privées et la décision de transfert ; D1 Render reste dépourvu de dossier privé vérifié |
+| A03 | **Ouverte** | `docs/registre-sous-traitants-et-transferts.md` regroupe les preuves en cinq dossiers ; D2 et D3 documentent les activations TURN et Web Push, tandis que FCM et APNs restent fermés | D2 et D3 restent limités aux essais contrôlés et attendent leurs pièces privées et décisions de transfert ; D1 Render reste dépourvu de dossier privé vérifié |
 | A04 | **Ouverte** | Procédure et audit A04 ; checklist encore vierge | Pour les services réellement actifs, les accès nominatifs, l’authentification adaptée, le moindre privilège et les essais représentatifs de récupération/révocation ne sont pas prouvés |
 | A05 | **Fermée avec réserve** | Procédure, registre, exercice `SIM-A05-2026-07-23`, manifeste et cinq contrôles automatisés réussis lors du rejeu | L’exercice synthétique couvre le contrôle préparatoire ; le 23/07/2027 est un objectif interne de revue, pas une échéance légale fixe |
 | A06 | **Fermée avec réserve** | Rapport A06 et nouveau rejeu sur PostgreSQL 18.4 local neuf : purge 1/1, droits 1/1, cycle complet 5/5 et commande de purge réussis | La date du 23/10/2026 est un objectif interne fondé sur le risque, non une périodicité légale. A06 ne prouve pas Render |
-| A07 | **Rouverte** | Rapport historique A07 sans RTC ; activation TURN préparée le 24 juillet 2026 ; garde-fou de démarrage exigeant un relais TURN complet | Le périmètre RTC réellement déployé doit être évalué ; aucun enfant réel n’est autorisé avant clôture |
+| A07 | **Rouverte** | Rapport historique A07 sans RTC ni Web Push ; activations TURN et VAPID du 24 juillet 2026 ; garde-fous de démarrage | Le périmètre RTC/Web Push réellement déployé doit être évalué ; aucun enfant réel n’est autorisé avant clôture |
 | A08 | **Ouverte** | Checklist Render datée : 9 cases cochées et 29 non cochées ; index de preuves expurgé | Ressources observées en Oregon, Cron absent, déploiement refusé, SHA servi ancien, sessions de 168 h et restauration/alertes non prouvées |
 
 **Conclusion de vérification :** la prémisse « A02 à A08 clôturées » est fausse. Aucun score ci-dessous ne peut être présenté comme un score définitif après clôture complète.
@@ -294,11 +294,11 @@ Les scénarios détaillés — menaces, impacts, contrôles et liens d’action 
 
 | Risque | Preuves vérifiées | Vraisemblance précédente → actuelle | Explication | Résiduel actuel |
 |---|---|---:|---|---|
-| R01 | Contrôles d’autorisation, session et chiffrement évalués ; A07 rouverte ; A04 et A08 ouvertes | 3 → 3 | Les défauts locaux élevés du périmètre historique ont été corrigés, mais le périmètre RTC actif, les accès privilégiés, la récupération des clés et le déploiement conforme ne sont pas prouvés. Aucune baisse n’est justifiée | 4×3=12 — **Élevé** |
+| R01 | Contrôles d’autorisation, session et chiffrement évalués ; A07 rouverte ; A04 et A08 ouvertes | 3 → 3 | Les défauts locaux élevés du périmètre historique ont été corrigés, mais le périmètre RTC/Web Push actif, les accès privilégiés, la récupération des clés et le déploiement conforme ne sont pas prouvés. Aucune baisse n’est justifiée | 4×3=12 — **Élevé** |
 | R02 | Limitation, cookie/Bearer, révocation et erreurs évalués ; A07 et A08 ouvertes | 2 → 3 | Le code évalué impose 12 h, mais la version observée sur Render sert encore des sessions de 168 h. Tant que cette version n’est pas remplacée et prouvée, la hausse demeure | 4×3=12 — **Élevé** |
-| R03 | Approbation parentale, règles serveur et gardes des routes évaluées ; A05 fermée, A02/A07 ouvertes | 2 → 2 | Les barrières réduisent le scénario à « possible », mais A02 n’a suivi aucune de ses deux voies de décision et le nouveau périmètre RTC reste à évaluer ; une baisse à 1 n’est pas justifiée | 4×2=8 — **Modéré** |
+| R03 | Approbation parentale, règles serveur et gardes des routes évaluées ; A05 fermée, A02/A07 ouvertes | 2 → 2 | Les barrières réduisent le scénario à « possible », mais A02 n’a suivi aucune de ses deux voies de décision et le nouveau périmètre RTC/Web Push reste à évaluer ; une baisse à 1 n’est pas justifiée | 4×2=8 — **Modéré** |
 | R04 | Restrictions de présence et exports vérifiés ; tableau administrateur limité à des agrégats ; A06 fermée ; A02 ouverte | 2 → 2 | La nouvelle vue n’ajoute pas d’événement comportemental et ne révèle aucun détail individuel, mais ni consultation appropriée ni décision circonstanciée de ne pas consulter n’est documentée | 3×2=6 — **Modéré** |
-| R05 | Push fermé dans le périmètre cible ; A03, A07 et A08 ouvertes | 2 → 3 | La désactivation est testée dans le dépôt mais pas encore prouvée sur Render réel ; les routes, durées, sous-traitants et contrats de tout flux futur restent à établir | 2×3=6 — **Modéré** |
+| R05 | Web Push activé pour essais ; A03, A07 et A08 ouvertes | 3 → 3 | Les charges sont génériques et le consentement conjoint est imposé, mais les fournisseurs réellement choisis par les navigateurs, leurs contrats, pays et durées ne sont pas encore documentés | 2×3=6 — **Modéré** |
 | R06 | RTC préparé avec TURN ; A03, A07 et A08 ouvertes | 3 → 3 | Les secrets TURN sont déclarés hors Git et un garde-fou échoue fermé, mais le contrat privé, la décision de transfert, la rotation et l’évaluation du déploiement actif ne sont pas clos | 3×3=9 — **Élevé** |
 | R07 | A06 rejouée sur une base neuve avec restauration et tombstones ; A08 ouverte | 2 → 2 | A06 confirme la logique locale et empêche une hausse ; l’absence de Cron et de restauration Render réels empêche une baisse à 1 | 4×2=8 — **Modéré** |
 | R08 | Registre A03 regroupé en cinq dossiers, tous ouverts ; A08 constate l’Oregon | 3 → 3 | Le transfert et les accès hors EEE sont plausibles et observés pour Render ; aucun dossier contractuel complet ni décision de transfert datée ne permet une baisse | 4×3=12 — **Élevé** |
@@ -322,7 +322,7 @@ Ces retraits ne modifient aucun score : ils allègent la forme de la preuve, pas
 
 La version 1.10 conserve la fermeture de `A07` pour un périmètre web restreint après correction de quatre constats et réussite des contrôles locaux. Elle ajoute au périmètre Clubhouse le catalogue rotatif, le défi quotidien, les jours protégés de la série et les récompenses d’apparence persistées avec le profil enfant. Cette évolution n’ajoute aucun prestataire, suivi public ou finalité commerciale. Elle ne réduit pas encore les scores dépendant de `A04` et `A08`, car le déploiement réellement observé ne correspond pas à la version évaluée.
 
-La version 1.12 rouvre `A07` à la date du 24 juillet 2026 : le responsable a créé une application Cloudflare Realtime TURN et confirmé le stockage des deux secrets nécessaires dans Render. Le Blueprint active RTC uniquement avec ces secrets et le serveur échoue fermé si aucun relais TURN complet n’est disponible. La revue publique D2 établit le cadre Self-Serve/DPA/CCT et la minimisation technique, mais ne remplace ni les pièces privées du compte, ni la décision de transfert, ni l’évaluation de sécurité et la preuve du déploiement réel. Aucun enfant réel n’est autorisé sur ce périmètre.
+La version 1.13 conserve `A07` ouverte à la date du 24 juillet 2026 : le responsable a activé Cloudflare Realtime TURN et Web Push, avec les secrets TURN et VAPID exclusivement dans Render. Le serveur échoue fermé si la configuration fournisseur nécessaire manque. Les revues D2 et D3 établissent la préparation et la minimisation techniques, mais ne remplacent ni les pièces privées, ni les décisions de transfert, ni l’évaluation de sécurité et la preuve du déploiement réel. Aucun enfant réel n’est autorisé sur ce périmètre.
 
 ### 10.4 Consultation préalable de la CNIL
 
@@ -346,12 +346,12 @@ L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-do
 | A04 | Administration et cycle de vie des clés | Sécurité/exploitation | Avant production | Pour les services actifs : accès nominatifs, authentification adaptée au risque, moindre privilège, séparation des secrets et essai représentatif de rotation/remplacement, récupération et révocation ; services inactifs `N/A` avec preuve | **Ouverte** |
 | A05 | Réponse aux incidents et violations | Responsable du traitement | Avant production, après incident/changement matériel, puis selon le risque | Procédure, registre et exercice incluant qualification, confinement, familles, enfants et CNIL sous 72 h | **Fermée avec réserve le 23/07/2026 ; objectif interne de revue 23/07/2027** |
 | A06 | Purge, droits, effacement et restauration | Exploitation | Avant production, après changement matériel, puis selon le risque | Toutes les durées, purge, droits, suppressions, tombstones et restauration réussis sur PostgreSQL local isolé via `TEST_DATABASE_URL` | **Fermée avec réserve le 23/07/2026 ; objectif interne de revue 23/10/2026** |
-| A07 | Évaluation de sécurité proportionnée | Évaluateur compétent | Avant production puis changement majeur | Évaluation du périmètre réellement actif, y compris WebRTC/TURN, sans constat critique ou élevé non corrigé | **Rouverte le 24/07/2026** |
+| A07 | Évaluation de sécurité proportionnée | Évaluateur compétent | Avant production puis changement majeur | Évaluation du périmètre réellement actif, y compris WebRTC/TURN et Web Push, sans constat critique ou élevé non corrigé | **Rouverte le 24/07/2026** |
 | A08 | Preuve de configuration de production | Exploitation | Chaque déploiement | Preuves datées de l’état Render réel et lien non ambigu entre la version servie, les tests et le build par SHA ou provenance équivalente | **Ouverte** |
 
 Une action n’est « fermée » qu’avec une pièce datée, un auteur et un résultat vérifiable. La seule présence d’une option dans `render.yaml` ne prouve pas sa valeur effective.
 
-L’audit A04 du 23 juillet 2026 conclut à un état **ouvert**. Les mécanismes de clé active/précédente pour le contenu sont présents et testés avec des données synthétiques, mais les accès privilégiés et l’authentification des services actifs, la révocation d’un accès représentatif et la récupération réelle des secrets ne sont pas prouvés. Si Web Push est activé, le rollover VAPID reste bloquant : une seule paire est chargée, les souscriptions ne portent pas d’identifiant de paire et la clé privée peut être conservée dans PostgreSQL en l’absence de variables Render. Si le canal est désactivé, ces contrôles sont `N/A` avec preuve technique. La procédure et la checklist sont des préparatifs, jamais une preuve d’exercice.
+L’audit A04 du 23 juillet 2026 conclut à un état **ouvert**. Les mécanismes de clé active/précédente pour le contenu sont présents et testés avec des données synthétiques, mais les accès privilégiés et l’authentification des services actifs, la révocation d’un accès représentatif et la récupération réelle des secrets ne sont pas prouvés. Web Push est maintenant actif avec la paire VAPID conservée dans Render, mais son rollover reste bloquant : une seule paire est chargée et les souscriptions ne portent pas d’identifiant de paire. La procédure et la checklist sont des préparatifs, jamais une preuve d’exercice.
 
 L’audit A08 du 23 juillet 2026 conclut également à un état **ouvert**. Render affiche le service web et PostgreSQL en Oregon, aucun Cron Secret Clubhouse, six noms de variables seulement et un dernier déploiement refusé faute de `DATABASE_TRANSPORT`. Le commit réellement servi utilise encore des JWT de sept jours, ne contient pas le chiffrement applicatif versionné ni le workflow CI, et aucune restauration réelle n’est prouvée. La checklist datée conserve les constats expurgés ; le `render.yaml` actuel reste uniquement l’état cible.
 
@@ -359,7 +359,7 @@ L’audit A08 du 23 juillet 2026 conclut également à un état **ouvert**. Rend
 
 L’évaluation `docs/a07-evaluation-securite-2026-07-23.md` a identifié puis fermé deux constats élevés et deux constats modérés : distribution publique d’un APK de débogage, activation implicite de fournisseurs, dépassement de la limite HTTP de 30 Mio et configuration Android trop permissive. La suite complète réussit 132 tests hors base, les cinq suites PostgreSQL réelles réussissent 9 tests supplémentaires, l’audit npm ne trouve aucune vulnérabilité et le build web réussit.
 
-Cette clôture historique valait uniquement tant que `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` restaient à `false` et qu’aucun APK/AAB/IPA n’était distribué. La préparation de `RTC_ENABLED=true` avec Cloudflare Realtime TURN rouvre donc `A07`. La fiche `docs/d2-cloudflare-turn-review-2026-07-24.md`, les tests de garde et un essai contrôlé entre deux comptes sont des entrées de la nouvelle évaluation, mais ne suffisent pas seuls à la fermer.
+Cette clôture historique valait uniquement tant que `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` restaient à `false` et qu’aucun APK/AAB/IPA n’était distribué. Les activations RTC et Web Push rouvrent donc `A07`. Les fiches D2/D3, les tests de garde, un essai d’appel entre deux comptes et un essai de notification consentie sont des entrées de la nouvelle évaluation, mais ne suffisent pas seuls à la fermer.
 
 ### Preuve de clôture A05
 
@@ -385,13 +385,13 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 | Périmètre | Ensemble des traitements listés au § 3 : comptes familiaux et enfants, contacts, communications et médias, présence, WebRTC, notifications, règles parentales, Clubhouse et jeux, sécurité, conservation, droits, Render/PostgreSQL et fournisseurs réseau/push |
 | Décision proposée | **Ne pas valider l’AIPD et ne pas autoriser la production** |
 | Motif | La clôture de A02 à A08 n’est pas vérifiée ; A02, A03, A04, A07 et A08 restent ouvertes ; R01, R02, R06, R08 et R10 restent élevés |
-| Réserves impératives | Aucun enfant réel ; RTC est limité à des essais contrôlés avec TURN et doit être désactivé si D2 ne peut pas être validé ; Web Push, FCM, APNs, administration RGPD partagée, tableau d’agrégats administrateur et distribution native restent désactivés ; A05 reste un exercice synthétique ; A06 reste une validation locale et non une preuve Render |
+| Réserves impératives | Aucun enfant réel ; RTC et Web Push sont limités à des essais contrôlés et doivent être désactivés si D2/D3 ne peuvent pas être validés ; FCM, APNs, administration RGPD partagée, tableau d’agrégats administrateur et distribution native restent désactivés ; A05 reste un exercice synthétique ; A06 reste une validation locale et non une preuve Render |
 | Consultation CNIL | À réexaminer après les mesures encore réalisables. Obligatoire avant le traitement concerné si un risque résiduel élevé subsiste alors, ou si Mickael Thorez conclut qu’il ne peut pas être réduit |
 | Prochaine révision | Au plus tard le **5 septembre 2026**, avant la première échéance de recontrôle DPF inscrite dans A03, et plus tôt dès que A02, A03, A04 ou A08 reçoit une nouvelle preuve ou qu’un flux exclu d’A07 est activé |
 
 ### Déclaration réservée à Mickael Thorez
 
-> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.12, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
+> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.13, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
 
 | Champ à compléter personnellement | Valeur |
 |---|---|

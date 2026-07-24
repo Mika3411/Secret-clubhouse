@@ -1,4 +1,4 @@
-export const aipdVersion = "1.12";
+export const aipdVersion = "1.13";
 export const aipdAssessmentDate = "2026-07-24";
 
 export const aipdRiskScale = Object.freeze({
@@ -138,14 +138,15 @@ export const aipdActions = Object.freeze([
     evidence: Object.freeze([
       "docs/a07-evaluation-securite-2026-07-23.md",
       "docs/d2-cloudflare-turn-review-2026-07-24.md",
+      "docs/d3-web-push-review-2026-07-24.md",
       "server/route-authorization.test.js",
       "server/production-features.test.js",
       "server/security-hardening.test.js",
     ]),
     acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
     reopenedAt: "2026-07-24",
-    reopenedBy: "Activation contrôlée de Cloudflare Realtime TURN pour les essais WebRTC",
-    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC. L’activation de RTC rouvre A07 jusqu’à une évaluation du périmètre WebRTC réellement déployé ; Web Push, APNs/FCM, administration RGPD partagée, tableau d’agrégats administrateur et distribution native restent exclus.",
+    reopenedBy: "Activation contrôlée de Cloudflare Realtime TURN et de Web Push pour les essais du prototype",
+    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC ni Web Push. Leur activation rouvre A07 jusqu’à une évaluation du périmètre réellement déployé ; APNs/FCM, administration RGPD partagée, tableau d’agrégats administrateur et distribution native restent exclus.",
   }),
   Object.freeze({
     id: "A08",

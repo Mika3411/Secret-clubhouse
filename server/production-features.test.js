@@ -54,11 +54,16 @@ test("le Blueprint active RTC avec des secrets Render et laisse les autres flux 
   const blueprint = await readFile(new URL("../render.yaml", import.meta.url), "utf8");
   assert.match(blueprint, /key:\s*RTC_ENABLED\s*\r?\n\s*value:\s*"true"/u);
   assert.match(blueprint, /key:\s*RTC_STUN_URLS\s*\r?\n\s*value:\s*stun:stun\.cloudflare\.com:3478/u);
-  for (const key of ["RTC_TURN_KEY_ID", "RTC_TURN_API_TOKEN"]) {
+  assert.match(blueprint, /key:\s*WEB_PUSH_ENABLED\s*\r?\n\s*value:\s*"true"/u);
+  for (const key of [
+    "RTC_TURN_KEY_ID",
+    "RTC_TURN_API_TOKEN",
+    "VAPID_PUBLIC_KEY",
+    "VAPID_PRIVATE_KEY",
+  ]) {
     assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*sync:\\s*false`, "u"));
   }
   for (const key of [
-    "WEB_PUSH_ENABLED",
     "NATIVE_PUSH_ENABLED",
     "PRIVACY_ADMIN_ENABLED",
     "ADMIN_ANALYTICS_ENABLED",
@@ -71,7 +76,6 @@ test("le Blueprint active RTC avec des secrets Render et laisse les autres flux 
     "FCM_SERVICE_ACCOUNT_JSON_BASE64",
     "APNS_PRIVATE_KEY",
     "APNS_PRIVATE_KEY_BASE64",
-    "VAPID_PRIVATE_KEY",
     "PRIVACY_ADMIN_TOKEN",
   ]) {
     assert.doesNotMatch(blueprint, new RegExp(`key:\\s*${secretKey}\\b`, "u"));
