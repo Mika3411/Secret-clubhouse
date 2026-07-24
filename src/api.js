@@ -77,6 +77,8 @@ async function request(path, options = {}) {
     const error = new Error(payload.error || "Le serveur est indisponible.");
     error.status = response.status;
     error.payload = payload;
+    const retryAfter = Number.parseInt(response.headers?.get?.("Retry-After") || "", 10);
+    if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfter = retryAfter;
     throw error;
   }
   if (payload.token) await storeToken(payload.token);

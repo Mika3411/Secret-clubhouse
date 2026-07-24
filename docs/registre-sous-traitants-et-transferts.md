@@ -13,7 +13,7 @@ L’audit public est terminé, mais les preuves privées d’acceptation des con
 | Dossier | Périmètre | Statut |
 |---|---|---|
 | D1 | Render et Render Postgres | Ouvert |
-| D2 | Cloudflare STUN/TURN | Cible désactivée ; preuve Render requise |
+| D2 | Cloudflare STUN/TURN | Activation prototype contrôlée ; dossier privé et validation finale requis |
 | D3 | Web Push selon le navigateur | Cible désactivée ; preuve Render requise |
 | D4 | Firebase Cloud Messaging Android | Cible désactivée ; preuve Render requise |
 | D5 | Apple APNs et PushKit | Cible désactivée ; preuve Render requise |
@@ -22,7 +22,7 @@ Ce regroupement simplifie la preuve sans supprimer les obligations. Un dossier p
 
 Pour tout fournisseur actif agissant comme sous-traitant, le contrat applicable doit satisfaire aux exigences de l’article 28 du RGPD.
 
-Le périmètre minimal de `render.yaml` fixe `RTC_ENABLED=false`, `WEB_PUSH_ENABLED=false` et `NATIVE_PUSH_ENABLED=false`. Le serveur refuse alors les routes d’appel et d’inscription push, ne fournit aucun STUN/TURN par défaut en production et ne demande aucun secret Cloudflare, FCM, APNs ou VAPID. Cette correction prépare la fermeture technique de D2 à D5, mais ne la prouve pas sur la ressource Render existante : `A08` doit encore constater les drapeaux réellement déployés.
+Le Blueprint du 24 juillet 2026 prépare `RTC_ENABLED=true` avec `RTC_TURN_KEY_ID` et `RTC_TURN_API_TOKEN` conservés exclusivement dans Render ; le serveur échoue fermé si le relais TURN complet manque. `WEB_PUSH_ENABLED=false` et `NATIVE_PUSH_ENABLED=false` restent inchangés. Cette activation RTC est limitée aux essais contrôlés du prototype sans enfant réel : D2, A03, A04, A07 et A08 restent ouverts jusqu’aux preuves privées, à l’évaluation de sécurité du périmètre actif et à la validation finale.
 
 ## 2. Preuve minimale commune
 
@@ -41,7 +41,7 @@ Les contrats, captures, justificatifs d’identité, tickets et décisions sign�
 | Dossier | Rôle et données | Cadre public connu | Point restant à prouver | Décision actuelle |
 |---|---|---|---|---|
 | D1 — Render Services, Inc. | Sous-traitant pour l’hébergement de l’application, PostgreSQL, sauvegardes et journaux. Données familiales, contenus applicativement chiffrés et métadonnées | [DPA Render](https://render.com/dpa), CCT intégrées et DPF lorsqu’applicable. Le Blueprint cible Francfort, mais les opérations et sous-traitants peuvent impliquer les États-Unis | DPA réellement applicable au compte, titulaire, région réelle du service/de la base/du Cron, plan de sauvegarde, accès support et fiche DPF datée | **Ouvert. Hébergement non validé** |
-| D2 — Cloudflare | TURN peut agir comme sous-traitant réseau. STUN/TURN voit notamment IP, ports, horaires et volumes ; le média WebRTC reste chiffré | [DPA Cloudflare](https://www.cloudflare.com/cloudflare-customer-dpa/), CCT et DPF lorsqu’applicables | Pour activation future : compte, produit, contrat, pays, rétention et accès support. Pour le périmètre minimal : preuve Render de `RTC_ENABLED=false` | **Cible désactivée ; non encore prouvé sur Render** |
+| D2 — Cloudflare | TURN agit comme sous-traitant réseau. STUN/TURN voit notamment IP, ports, horaires et volumes ; le média WebRTC reste chiffré | [DPA Cloudflare](https://www.cloudflare.com/cloudflare-customer-dpa/), CCT intégrées, accord Self-Serve incorporant le DPA et revue publique datée dans `docs/d2-cloudflare-turn-review-2026-07-24.md` | Preuve privée du compte et de la date contractuelle, liste des sous-traitants archivée, durées Realtime, accès support, décision de transfert et validation humaine | **Activation prototype contrôlée ; dossier ouvert** |
 | D3 — Web Push | Service Push imposé par le navigateur ; endpoint, IP, horaires, taille et charge chiffrée générique | Standards Web Push et conditions propres à Chrome/Edge/Firefox/Safari | Pour activation future : matrice des navigateurs, rôle, transfert et rétention. Pour le périmètre minimal : preuve Render de `WEB_PUSH_ENABLED=false` | **Cible désactivée ; non encore prouvé sur Render** |
 | D4 — Firebase/FCM | Google traite le jeton FCM, l’installation ID, le package et des métadonnées pour remettre les notifications Android | [Conditions de traitement Firebase](https://firebase.google.com/terms/data-processing-terms), CCT et DPF lorsqu’applicables | Pour activation future : compte, conditions, sous-traitants, suppression et transfert. Pour le périmètre minimal : preuve Render de `NATIVE_PUSH_ENABLED=false` | **Cible désactivée ; non encore prouvé sur Render** |
 | D5 — Apple Push Notification service (APNs)/PushKit | Apple reçoit jetons, topics, identifiants opaques et métadonnées techniques pour alertes et appels iOS | [Apple Developer Program License Agreement](https://developer.apple.com/support/terms/apple-developer-program-license-agreement/) et annexe APNs | Pour activation future : accord, rôle, pays, rétention, sous-traitants et transfert. Pour le périmètre minimal : preuve Render de `NATIVE_PUSH_ENABLED=false` et absence de distribution iOS | **Cible désactivée ; non encore prouvé sur Render** |
@@ -62,6 +62,8 @@ Le réglage `region: frankfurt` de `render.yaml` ne prouve pas la région d’un
 
 ## 5. Dossier D2 — Cloudflare STUN/TURN
 
+La revue publique et technique du 24 juillet 2026 est consignée dans `docs/d2-cloudflare-turn-review-2026-07-24.md`. Elle confirme le rôle de sous-traitant prévu par l’accord Self-Serve et le DPA, les CCT, les données techniques annoncées par Realtime TURN et les mesures de minimisation du prototype. Le responsable a confirmé séparément la création de l’application TURN et le stockage des deux secrets dans Render, sans les communiquer.
+
 Pièces regroupées attendues :
 
 - compte, plan et produit Realtime utilisés ;
@@ -71,7 +73,7 @@ Pièces regroupées attendues :
 - fiche DPF Cloudflare datée ou CCT/AITD applicable ;
 - décision unique distinguant TURN contractuel et STUN public.
 
-Sans confirmation sur le STUN public, celui-ci doit être remplacé par un service contractuellement couvert ou les appels doivent rester désactivés.
+L’activation actuelle reste limitée aux essais contrôlés sans enfant réel. Avant une production réelle, les pièces privées ci-dessus et la décision de transfert doivent être achevées ; sinon les appels doivent être désactivés.
 
 ## 6. Dossier D3 — Web Push
 
@@ -115,7 +117,7 @@ Une politique de confidentialité Apple ou l’accord public non rattaché au co
 | Dossier | Flux couverts | Mesures existantes | Risque et condition de fermeture |
 |---|---|---|---|
 | D1 | Application, PostgreSQL, journaux, sauvegardes et support Render | Francfort demandé, réseau privé, TLS, chiffrement applicatif des contenus, hachage des mots de passe et sessions | Risque élevé tant que région, compte, support et mécanisme ne sont pas prouvés |
-| D2 | STUN et TURN WebRTC | DTLS-SRTP pour le média, identifiants TURN courts, signalisation applicativement chiffrée | TURN peut être accepté avec contrat et preuves ; STUN reste bloquant sans confirmation |
+| D2 | STUN et TURN WebRTC | DTLS-SRTP pour le média, identifiants TURN courts générés côté Render, signalisation applicativement chiffrée, aucune identité applicative envoyée au relais | Activation limitée aux essais du prototype ; production réelle interdite tant que le dossier privé et la décision de transfert ne sont pas validés |
 | D3 | Web Push Chrome, Edge, Firefox et Safari | Charge chiffrée, texte générique, TTL court, consentement révocable | Décision obligatoire par navigateur ; désactivation si le cadre ne peut pas être démontré |
 | D4 | FCM Android natif | HTTPS, payload générique, jetons opaques et suppression des jetons invalides | Acceptation conditionnée au compte, aux conditions, au transfert et au test de suppression |
 | D5 | APNs et PushKit iOS | TLS/HTTP2, payload générique, TTL court ou nul pour les appels | Risque juridique élevé tant que rôle et transfert ne sont pas qualifiés |
@@ -138,7 +140,7 @@ Ces dates sont des échéances de recontrôle, pas des dates de conformité auto
 | Dossier | Condition de fermeture | État |
 |---|---|---|
 | D1 | Index privé complet et décision Render datée | Ouvert |
-| D2 | Index privé complet, ou `RTC_ENABLED=false` réellement déployé | En attente de preuve A08 |
+| D2 | Index privé complet et décision de transfert pour l’activation RTC ; à défaut `RTC_ENABLED=false` réellement déployé | Activation prototype contrôlée ; ouvert |
 | D3 | Matrice signée, ou `WEB_PUSH_ENABLED=false` réellement déployé | En attente de preuve A08 |
 | D4 | Index privé complet, ou `NATIVE_PUSH_ENABLED=false` réellement déployé sans FCM | En attente de preuve A08 |
 | D5 | Index privé complet, ou `NATIVE_PUSH_ENABLED=false` réellement déployé sans distribution iOS | En attente de preuve A08 |

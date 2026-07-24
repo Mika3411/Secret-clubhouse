@@ -156,14 +156,15 @@ function FamilyPublicApp() {
   };
 
   const loginChild = async (username, password) => {
-    try {
-      const { account: authenticatedAccount } = await api.login({ username, password });
-      if (authenticatedAccount.role !== "child") return false;
-      setAccount(authenticatedAccount);
-      return true;
-    } catch {
-      return false;
+    const { account: authenticatedAccount } = await api.login({ username, password });
+    if (authenticatedAccount.role !== "child") {
+      await api.logout().catch(() => undefined);
+      const invalidCredentialsError = new Error("Identifiants incorrects.");
+      invalidCredentialsError.status = 401;
+      throw invalidCredentialsError;
     }
+    setAccount(authenticatedAccount);
+    return true;
   };
 
   if (account) {

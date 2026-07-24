@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.11 ferme A07 sur le périmètre restreint et conserve les actions non prouvées", () => {
-  assert.equal(aipdVersion, "1.11");
+test("la réévaluation 1.12 rouvre A07 pour RTC et conserve les actions non prouvées", () => {
+  assert.equal(aipdVersion, "1.12");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -142,7 +142,7 @@ test("la réévaluation 1.11 ferme A07 sur le périmètre restreint et conserve 
       A04: "open",
       A05: "closed",
       A06: "closed",
-      A07: "closed",
+      A07: "open",
       A08: "open",
     },
   );
@@ -167,16 +167,17 @@ test("la réévaluation 1.11 ferme A07 sur le périmètre restreint et conserve 
     .filter(({ residual }) => aipdRiskLevel(residual) === "high")
     .map(({ id }) => id);
   assert.deepEqual(highRiskIds, ["R01", "R02", "R06", "R08", "R10"]);
-  assert.match(aipdDecision.reason, /A02, A03, A04 et A08 restent ouvertes/i);
+  assert.match(aipdDecision.reason, /A02, A03, A04, A07 et A08 restent ouvertes/i);
 });
 
-test("A07 est fermée uniquement tant que les flux fournisseur et natifs restent désactivés", () => {
+test("A07 est rouverte par l’activation RTC", () => {
   const action = aipdActions.find(({ id }) => id === "A07");
-  assert.equal(action?.status, "closed");
-  assert.equal(action?.closedAt, "2026-07-23");
+  assert.equal(action?.status, "open");
+  assert.equal(action?.reopenedAt, "2026-07-24");
   assert.ok(action?.evidence?.includes("docs/a07-evaluation-securite-2026-07-23.md"));
-  assert.match(action?.scopeRestriction ?? "", /RTC, Web Push, APNs\/FCM[\s\S]+agrégats administrateur[\s\S]+désactivés/i);
-  assert.match(action?.scopeRestriction ?? "", /activation de ces canaux ou distribution native rouvre A07/i);
+  assert.ok(action?.evidence?.includes("docs/d2-cloudflare-turn-review-2026-07-24.md"));
+  assert.match(action?.scopeRestriction ?? "", /activation de RTC rouvre A07/i);
+  assert.match(action?.scopeRestriction ?? "", /évaluation du périmètre WebRTC réellement déployé/i);
 });
 
 test("A04 reste ouverte sans contrôle réel des services et secrets actifs", () => {

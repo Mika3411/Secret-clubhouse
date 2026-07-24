@@ -12,7 +12,8 @@ import { UserPlus } from "@phosphor-icons/react/UserPlus";
 import { UsersThree } from "@phosphor-icons/react/UsersThree";
 import { WaveSine } from "@phosphor-icons/react/WaveSine";
 import { Brand } from "./Brand";
-import { childUsernameMaxLength, isValidChildUsername, normalizeChildUsername } from "./child-username";
+import { childLoginFeedback } from "./auth-feedback";
+import { childUsernameMaxLength, isPrivateContactId, isValidChildUsername, normalizeChildUsername } from "./child-username";
 import { isLegalNoticePath, legalNoticeRoute, privacyAudienceFromPath, privacyRoutes } from "./legal-routes";
 import { legalDocumentVersions, registrationLegalEvidence } from "./legal-versions";
 
@@ -52,7 +53,7 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
   const showChildAuthError = (message, fields, fieldToFocus) => {
     setError(message);
     setInvalidChildFields(fields);
-    window.requestAnimationFrame(() => fieldToFocus.current?.focus());
+    if (fieldToFocus) window.requestAnimationFrame(() => fieldToFocus.current?.focus());
   };
 
   useEffect(() => {
@@ -119,6 +120,14 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
   const submitAuth = async (event) => {
     event.preventDefault();
     if (audience === "child") {
+      if (isPrivateContactId(childUsername)) {
+        showChildAuthError(
+          "Cet identifiant SC-… sert maintenant au QR et aux contacts. Pour te connecter, utilise le pseudo privé affiché dans l’espace parent.",
+          ["username"],
+          childUsernameRef,
+        );
+        return;
+      }
       const cleanUsername = normalizeChildUsername(childUsername);
       const hasValidUsername = isValidChildUsername(cleanUsername);
       const hasValidPassword = password.length >= 6;
@@ -134,11 +143,18 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
         );
         return;
       }
-      if (!await onChildLogin(cleanUsername, password)) {
+      try {
+        const isLoggedIn = await onChildLogin(cleanUsername, password);
+        if (isLoggedIn) return;
+        const invalidCredentialsError = new Error("Identifiants incorrects.");
+        invalidCredentialsError.status = 401;
+        throw invalidCredentialsError;
+      } catch (authError) {
+        const feedback = childLoginFeedback(authError);
         showChildAuthError(
-          "Pseudo privé ou mot de passe incorrect.",
-          ["username", "password"],
-          childUsernameRef,
+          feedback.message,
+          feedback.invalidFields,
+          feedback.focus === "username" ? childUsernameRef : null,
         );
       }
       return;
@@ -207,7 +223,7 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
           <form className="auth-form" onSubmit={submitAuth}>
             <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
             {audience === "parent" && mode === "register" && <label className="auth-field"><span>Prénom du parent</span><input value={name} onChange={(event) => { setName(event.target.value); setError(""); }} autoComplete="given-name" placeholder="Marie" /></label>}
-            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton pseudo privé</span><input ref={childUsernameRef} value={childUsername} onChange={(event) => { setChildUsername(event.target.value.slice(0, childUsernameMaxLength)); clearAuthError(); }} autoComplete="username" autoCapitalize="none" spellCheck="false" placeholder="jules.club" aria-invalid={invalidChildFields.includes("username")} aria-describedby={error ? "auth-error" : undefined} /><small>Il sert seulement à te connecter. Ton QR utilise un autre identifiant.</small></label>}
+            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton pseudo privé</span><input ref={childUsernameRef} value={childUsername} onChange={(event) => { setChildUsername(event.target.value.slice(0, childUsernameMaxLength)); clearAuthError(); }} autoComplete="username" autoCapitalize="none" spellCheck="false" placeholder="jules.club" aria-invalid={invalidChildFields.includes("username")} aria-describedby={error ? "auth-error" : undefined} /><small>Utilise le pseudo choisi avec ton parent, jamais l’identifiant SC-… du QR.</small></label>}
             <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input ref={audience === "child" ? passwordRef : undefined} type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); clearAuthError(); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder={audience === "child" ? "6 caractères minimum" : "8 caractères minimum"} minLength={audience === "child" ? 6 : 8} aria-invalid={audience === "child" && invalidChildFields.includes("password")} aria-describedby={audience === "child" && error ? "auth-error" : undefined} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
             {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> Votre e-mail et les profils créés servent à fournir et sécuriser le service familial. L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
             {audience === "parent" && mode === "register" && (

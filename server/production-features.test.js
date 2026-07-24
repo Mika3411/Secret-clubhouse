@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  assertProductionFeatureConfiguration,
   resolveFeatureFlag,
   resolveProductionFeatures,
 } from "./production-features.js";
@@ -49,10 +50,14 @@ test("les environnements de test conservent leurs fonctionnalités sauf désacti
   });
 });
 
-test("le Blueprint de production désactive les flux non qualifiés sans demander leurs secrets", async () => {
+test("le Blueprint active RTC avec des secrets Render et laisse les autres flux non qualifiés fermés", async () => {
   const blueprint = await readFile(new URL("../render.yaml", import.meta.url), "utf8");
+  assert.match(blueprint, /key:\s*RTC_ENABLED\s*\r?\n\s*value:\s*"true"/u);
+  assert.match(blueprint, /key:\s*RTC_STUN_URLS\s*\r?\n\s*value:\s*stun:stun\.cloudflare\.com:3478/u);
+  for (const key of ["RTC_TURN_KEY_ID", "RTC_TURN_API_TOKEN"]) {
+    assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*sync:\\s*false`, "u"));
+  }
   for (const key of [
-    "RTC_ENABLED",
     "WEB_PUSH_ENABLED",
     "NATIVE_PUSH_ENABLED",
     "PRIVACY_ADMIN_ENABLED",
@@ -61,7 +66,6 @@ test("le Blueprint de production désactive les flux non qualifiés sans demande
     assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*value:\\s*\"false\"`, "u"));
   }
   for (const secretKey of [
-    "RTC_TURN_API_TOKEN",
     "RTC_TURN_CREDENTIAL",
     "FCM_SERVICE_ACCOUNT_JSON",
     "FCM_SERVICE_ACCOUNT_JSON_BASE64",
@@ -74,6 +78,25 @@ test("le Blueprint de production désactive les flux non qualifiés sans demande
   }
 });
 
+test("RTC échoue fermé en production sans relais TURN complet", () => {
+  const features = resolveProductionFeatures({ NODE_ENV: "production", RTC_ENABLED: "true" });
+  assert.throws(
+    () => assertProductionFeatureConfiguration(features, { NODE_ENV: "production" }),
+    /configuration TURN complète/u,
+  );
+  assert.doesNotThrow(() => assertProductionFeatureConfiguration(features, {
+    NODE_ENV: "production",
+    RTC_TURN_KEY_ID: "turn-key-id",
+    RTC_TURN_API_TOKEN: "turn-api-token",
+  }));
+  assert.doesNotThrow(() => assertProductionFeatureConfiguration(features, {
+    NODE_ENV: "production",
+    RTC_TURN_URLS: "turns:turn.example.test:5349",
+    RTC_TURN_USERNAME: "temporary-user",
+    RTC_TURN_CREDENTIAL: "temporary-password",
+  }));
+});
+
 test("l’API refuse les routes fournisseur lorsque le drapeau est fermé", async () => {
   const source = await readFile(new URL("./index.js", import.meta.url), "utf8");
   assert.match(source, /app\.use\("\/api\/calls", requireRtcFeature\)/u);
@@ -84,14 +107,17 @@ test("l’API refuse les routes fournisseur lorsque le drapeau est fermé", asyn
   assert.match(source, /if \(!productionFeatures\.privacyAdministration\) return false/u);
 });
 
-test("le client masque les contrôles désactivés annoncés par l’API", async () => {
-  const [serverSource, appSource, notificationSource] = await Promise.all([
+test("le client suit le drapeau RTC et conserve les deux actions d’appel", async () => {
+  const [serverSource, appSource, conversationSource, notificationSource] = await Promise.all([
     readFile(new URL("./index.js", import.meta.url), "utf8"),
     readFile(new URL("../src/App.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/features/ConversationsSpace.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/features/NotificationSettings.jsx", import.meta.url), "utf8"),
   ]);
   assert.match(serverSource, /features:\s*\{[\s\S]{0,180}rtc:\s*productionFeatures\.rtc/u);
   assert.match(appSource, /session\.features\?\.rtc === true \? openRealtimeCall : null/u);
+  assert.match(conversationSource, /onStartCall\(selectedThread,\s*"audio"\)/u);
+  assert.match(conversationSource, /onStartCall\(selectedThread,\s*"video"\)/u);
   assert.match(appSource, /session\.features\?\.nativePush !== true/u);
   assert.match(notificationSource, /if \(!enabled\) return null/u);
 });

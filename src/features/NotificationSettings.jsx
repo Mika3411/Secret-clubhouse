@@ -3,13 +3,15 @@ import { Bell } from "@phosphor-icons/react/Bell";
 import { Capacitor, PushNotifications, NativeCallNotifications, getNativeInstallationId, nativeApnsEnvironmentKey, nativeInstallationKey, nativePushOptInKey, nativeTokenDetails, registerForNativePushToken } from "../native-notifications";
 import { api } from "../api";
 import { notificationConsentCopy } from "../legal-framework";
+import { hasUsablePushManager, inspectWebPushBrowser } from "../web-push-support";
 import "../styles/notifications.css";
 
 export function PushNotificationButton({ features }) {
   const native = Capacitor.isNativePlatform();
   const enabled = native ? features?.nativePush === true : features?.webPush === true;
   const isWindowsWeb = !native && /Windows/i.test(navigator.userAgent);
-  const supported = enabled && (native || ("serviceWorker" in navigator && "PushManager" in window && "Notification" in window));
+  const webPushBrowser = native ? { supported: true, reason: "" } : inspectWebPushBrowser();
+  const supported = enabled && (native || webPushBrowser.supported);
   const [status, setStatus] = useState(supported ? "checking" : "unsupported");
   const [consent, setConsent] = useState(null);
   const [error, setError] = useState("");
@@ -26,6 +28,10 @@ export function PushNotificationButton({ features }) {
         if (!consentResult.consent.active) {
           if (!native) {
             const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+            if (!hasUsablePushManager(registration)) {
+              setStatus("unsupported");
+              return;
+            }
             const subscription = await registration.pushManager.getSubscription();
             if (subscription) {
               await api.unsubscribePush(subscription.endpoint).catch(() => undefined);
@@ -53,6 +59,10 @@ export function PushNotificationButton({ features }) {
         }
 
         const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+        if (!hasUsablePushManager(registration)) {
+          if (active) setStatus("unsupported");
+          return;
+        }
         await registration.update().catch(() => undefined);
         const subscription = await registration.pushManager.getSubscription();
         if (subscription) await api.subscribePush(subscription.toJSON());
@@ -158,7 +168,11 @@ export function PushNotificationButton({ features }) {
     : status === "denied"
       ? isWindowsWeb ? "Bloquées dans les paramètres de notifications Windows ou du navigateur" : "Bloquées dans les réglages du téléphone"
       : status === "unsupported"
-        ? "Non disponibles sur ce navigateur"
+        ? isWindowsWeb
+          ? webPushBrowser.reason === "insecure-context"
+            ? "Ouvrez la version sécurisée de Secret Clubhouse"
+            : "Ouvrez Secret Clubhouse dans Chrome ou Edge, hors navigation privée"
+          : "Notifications non prises en charge dans ce navigateur"
         : isWindowsWeb ? "Recevoir les messages et demandes dans Windows" : "Recevoir les nouveaux messages en veille";
 
   if (!enabled) return null;

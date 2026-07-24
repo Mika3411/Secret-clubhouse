@@ -1,4 +1,4 @@
-export const aipdVersion = "1.11";
+export const aipdVersion = "1.12";
 export const aipdAssessmentDate = "2026-07-24";
 
 export const aipdRiskScale = Object.freeze({
@@ -134,17 +134,18 @@ export const aipdActions = Object.freeze([
     title: "Réaliser une évaluation de sécurité proportionnée",
     owner: "Responsable sécurité / évaluateur compétent",
     deadline: "Avant mise en production puis après changement majeur",
-    status: "closed",
-    closedAt: "2026-07-23",
-    closedBy: "Codex — revue locale du périmètre web restreint",
+    status: "open",
     evidence: Object.freeze([
       "docs/a07-evaluation-securite-2026-07-23.md",
+      "docs/d2-cloudflare-turn-review-2026-07-24.md",
       "server/route-authorization.test.js",
       "server/production-features.test.js",
       "server/security-hardening.test.js",
     ]),
     acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
-    scopeRestriction: "Fermée uniquement pour le web/API avec RTC, Web Push, APNs/FCM, administration RGPD partagée, tableau d’agrégats administrateur et distribution native désactivés. Toute activation de ces canaux ou distribution native rouvre A07.",
+    reopenedAt: "2026-07-24",
+    reopenedBy: "Activation contrôlée de Cloudflare Realtime TURN pour les essais WebRTC",
+    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC. L’activation de RTC rouvre A07 jusqu’à une évaluation du périmètre WebRTC réellement déployé ; Web Push, APNs/FCM, administration RGPD partagée, tableau d’agrégats administrateur et distribution native restent exclus.",
   }),
   Object.freeze({
     id: "A08",
@@ -294,6 +295,6 @@ export const aipdRisks = Object.freeze([
 export const aipdDecision = Object.freeze({
   status: "blocked",
   productionApproved: false,
-  reason: "La clôture globale A02 à A08 n’est pas vérifiée : A02, A03, A04 et A08 restent ouvertes, et les risques résiduels R01, R02, R06, R08 et R10 restent élevés.",
+  reason: "La clôture globale A02 à A08 n’est pas vérifiée : A02, A03, A04, A07 et A08 restent ouvertes, et les risques résiduels R01, R02, R06, R08 et R10 restent élevés.",
   priorConsultationRule: "Les mesures encore réalisables doivent être achevées avant toute production. Si un risque résiduel élevé subsiste ensuite, ou si le responsable décide qu’il ne peut pas le réduire, il doit consulter la CNIL préalablement au traitement concerné.",
 });

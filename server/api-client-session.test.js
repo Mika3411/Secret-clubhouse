@@ -77,6 +77,21 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
     }
     assert.equal(webClient.hasNativeSession(), false);
 
+    const successfulFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 429,
+      headers: new Headers({ "Retry-After": "900" }),
+      async json() {
+        return { error: "Trop de tentatives. Réessayez plus tard." };
+      },
+    });
+    await assert.rejects(
+      webClient.api.login({ username: "enfant.test", password: "secret-test" }),
+      (error) => error.status === 429 && error.retryAfter === 900,
+    );
+    globalThis.fetch = successfulFetch;
+
     globalThis.androidBridge = {};
     globalThis.Capacitor.PluginHeaders = [{
       name: "NativeSessionMemory",

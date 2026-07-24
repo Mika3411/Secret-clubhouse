@@ -819,14 +819,15 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   };
 
   const loginChild = async (username, password) => {
-    try {
-      const { account } = await api.login({ username, password });
-      if (account.role !== "child") return false;
-      await openChildSession(account);
-      return true;
-    } catch {
-      return false;
+    const { account } = await api.login({ username, password });
+    if (account.role !== "child") {
+      await api.logout().catch(() => undefined);
+      const invalidCredentialsError = new Error("Identifiants incorrects.");
+      invalidCredentialsError.status = 401;
+      throw invalidCredentialsError;
     }
+    await openChildSession(account);
+    return true;
   };
 
   const logoutParent = () => {

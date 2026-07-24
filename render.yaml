@@ -30,8 +30,14 @@ services:
         value: Europe/Paris
       - key: RTC_CALL_TIMEOUT_SECONDS
         value: "45"
+      - key: RTC_STUN_URLS
+        value: stun:stun.cloudflare.com:3478
+      - key: RTC_TURN_KEY_ID
+        sync: false
+      - key: RTC_TURN_API_TOKEN
+        sync: false
       - key: RTC_ENABLED
-        value: "false"
+        value: "true"
       - key: RTC_NEUTRAL_DECLINE_MESSAGE
         value: Je ne peux pas répondre pour le moment.
       - key: FCM_ANDROID_PACKAGE

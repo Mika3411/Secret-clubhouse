@@ -1,6 +1,10 @@
 export const childUsernameMinLength = 3;
 export const childUsernameMaxLength = 18;
 
+export function isPrivateContactId(value) {
+  return /^SC-\d{3}-\d{3}-\d{3}$/iu.test(String(value ?? "").trim());
+}
+
 export function normalizeChildUsername(value) {
   return String(value ?? "")
     .normalize("NFD")

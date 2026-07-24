@@ -27,7 +27,7 @@ Le fichier `render.yaml` décrit le service web Node.js, la base PostgreSQL, le 
 3. Connecter le dépôt et conserver le chemin Blueprint par défaut : `render.yaml`.
 4. Vérifier le service `secret-clubhouse`, puis lancer **Deploy Blueprint**.
 
-Render fournit automatiquement une URL HTTPS en `onrender.com`. `DATABASE_URL`, `JWT_SECRET` et la clé dédiée `CONTENT_ENCRYPTION_KEY` sont configurés par le Blueprint. Le périmètre initial ferme explicitement WebRTC, Web Push, APNs/FCM et le canal d’administration RGPD partagé : aucun secret fournisseur n’est demandé pour créer les ressources. Pour valider le Blueprint avec la CLI Render avant le déploiement :
+Render fournit automatiquement une URL HTTPS en `onrender.com`. `DATABASE_URL`, `JWT_SECRET` et la clé dédiée `CONTENT_ENCRYPTION_KEY` sont configurés par le Blueprint. Le prototype peut activer WebRTC uniquement avec les deux secrets TURN conservés dans Render ; le serveur échoue fermé s’ils manquent. Web Push, APNs/FCM et le canal d’administration RGPD partagé restent explicitement fermés. Pour valider le Blueprint avec la CLI Render avant le déploiement :
 
 ```bash
 render blueprints validate render.yaml
@@ -58,11 +58,11 @@ Au premier accès autorisé, PostgreSQL inscrit le compte dans `platform_adminis
 
 ### Activation contrôlée des fournisseurs
 
-En production, `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED`, `PRIVACY_ADMIN_ENABLED` et `ADMIN_ANALYTICS_ENABLED` valent `false` par défaut et dans le Blueprint. Les routes correspondantes restent indisponibles et aucun jeton push n’est enregistré. Une valeur ambiguë fait échouer la configuration.
+En production, tous les drapeaux fournisseur valent `false` par défaut. Le Blueprint du prototype fixe seulement `RTC_ENABLED=true` et exige `RTC_TURN_KEY_ID` avec `RTC_TURN_API_TOKEN` dans Render ; `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED`, `PRIVACY_ADMIN_ENABLED` et `ADMIN_ANALYTICS_ENABLED` restent à `false`. Une valeur ambiguë ou RTC sans relais TURN complet fait échouer la configuration.
 
-Un flux ne peut être activé qu’après fermeture de son dossier dans `docs/registre-sous-traitants-et-transferts.md` :
+Un flux destiné à une production réelle ne peut être activé qu’après fermeture de son dossier dans `docs/registre-sous-traitants-et-transferts.md` :
 
-- WebRTC : ajouter la configuration STUN/TURN privée dans Render, puis définir `RTC_ENABLED=true` ;
+- WebRTC : conserver `RTC_TURN_KEY_ID` et `RTC_TURN_API_TOKEN` uniquement dans Render ; toute production réelle reste bloquée tant que D2, A03, A04, A07 et A08 ne sont pas validés ;
 - Web Push : ajouter `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY`, puis définir `WEB_PUSH_ENABLED=true` ;
 - Android/iOS : ajouter soit la configuration FCM, soit la configuration APNs complète, puis définir `NATIVE_PUSH_ENABLED=true` ;
 - administration des demandes RGPD : le canal historique à jeton partagé reste désactivé tant qu’il n’est pas remplacé par un accès nominatif et traçable.
@@ -95,7 +95,7 @@ Le traitement d’enfants, de conversations et médias privés, le suivi réguli
 
 L’action `A04` reste ouverte. Sa [procédure d’administration et de rotation](docs/a04-procedure-gestion-acces-et-cles.md), sa [checklist de preuves](docs/a04-checklist-preuves.md) et l’[audit du 23 juillet 2026](.audit/2026-07-23-a04-access-key-audit/audit.md) distinguent les contrôles du dépôt des preuves fournisseurs. Aucun test automatisé ou gabarit ne remplace l’exercice réel de rotation, récupération avec anciennes clés et révocation exigé avant clôture.
 
-L’action `A07` est fermée uniquement pour le [périmètre web restreint évalué le 23 juillet 2026](docs/a07-evaluation-securite-2026-07-23.md). Toute activation RTC/push/administration partagée ou toute distribution native la rouvre automatiquement.
+L’action `A07` a été rouverte le 24 juillet 2026 par l’activation contrôlée de RTC. Le [rapport du 23 juillet](docs/a07-evaluation-securite-2026-07-23.md) reste une preuve historique du périmètre web restreint sans RTC ; la [revue TURN du 24 juillet](docs/d2-cloudflare-turn-review-2026-07-24.md) documente la préparation fournisseur sans autoriser l’usage par des enfants réels.
 
 ## États persistants
 

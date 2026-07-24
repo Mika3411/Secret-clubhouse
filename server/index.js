@@ -62,7 +62,11 @@ import {
 import { migrateLegacyMessageContent } from "./message-encryption-migration.js";
 import { decryptCallSignal, encryptCallSignal } from "./encryption/call-signal-content.js";
 import { migrateLegacyCallSignals } from "./call-signal-encryption-migration.js";
-import { resolveFeatureFlag, resolveProductionFeatures } from "./production-features.js";
+import {
+  assertProductionFeatureConfiguration,
+  resolveFeatureFlag,
+  resolveProductionFeatures,
+} from "./production-features.js";
 import {
   conversationSyncPageSize,
   decodeMessagePageCursor,
@@ -98,6 +102,7 @@ const neutralCallReply = String(process.env.RTC_NEUTRAL_DECLINE_MESSAGE || "Je n
 const privacyContactEmail = String(process.env.PRIVACY_CONTACT_EMAIL || "contact@secret-clubhouse.fr").trim().toLowerCase();
 const privacyAdminToken = String(process.env.PRIVACY_ADMIN_TOKEN || "");
 const productionFeatures = resolveProductionFeatures(process.env);
+assertProductionFeatureConfiguration(productionFeatures, process.env);
 const adminAnalyticsEnabled = resolveFeatureFlag(process.env, "ADMIN_ANALYTICS_ENABLED");
 const platformAdminEmails = configuredPlatformAdminEmails(process.env);
 const invalidLoginPasswordHash = "$2b$12$YoNVhfH0Ezc9Sc/m1jloOu2rXeLxQwenmlqLzPmOOqpV4ztVtWWju";

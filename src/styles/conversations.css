@@ -3443,8 +3443,10 @@
 /* Parent inbox: mobile detail view, tablet master-detail workspace */
 .parent-messages-workspace {
   display: grid;
+  height: 100%;
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .parent-messages-workspace > .parent-messages-header,
@@ -3459,16 +3461,23 @@
 }
 
 .parent-inbox-layout {
+  height: 100%;
   min-height: 0;
+  padding-bottom: calc(78px + env(safe-area-inset-bottom));
+  overflow: hidden;
 }
 
 .parent-inbox-master {
+  height: 100%;
   min-height: 0;
+  overflow-y: auto;
 }
 
 .parent-thread-detail {
   display: none;
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
   background: #f8f6fc;
 }
 
