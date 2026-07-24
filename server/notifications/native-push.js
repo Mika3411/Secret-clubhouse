@@ -127,7 +127,7 @@ export function loadNativePushConfiguration(env = process.env) {
     const privateKey = decodePrivateKey(env.APNS_PRIVATE_KEY, env.APNS_PRIVATE_KEY_BASE64);
     const bundleId = String(env.APNS_BUNDLE_ID ?? "").trim();
     const voipTopic = String(env.APNS_VOIP_TOPIC || (bundleId ? `${bundleId}.voip` : "")).trim();
-    if (teamId || keyId || privateKey || bundleId) {
+    if (teamId || keyId || privateKey) {
       if (!teamId || !keyId || !privateKey || !bundleId) {
         throw new Error("APNS_TEAM_ID, APNS_KEY_ID, APNS_PRIVATE_KEY et APNS_BUNDLE_ID doivent être configurés ensemble.");
       }
@@ -138,6 +138,17 @@ export function loadNativePushConfiguration(env = process.env) {
   }
 
   return { fcm, apns, issues };
+}
+
+export function assertNativePushConfiguration(env = process.env) {
+  const configuration = loadNativePushConfiguration(env);
+  if (configuration.issues.length) {
+    throw new Error(`Configuration des notifications natives invalide : ${configuration.issues.join(" ")}`);
+  }
+  if (!configuration.fcm && !configuration.apns) {
+    throw new Error("NATIVE_PUSH_ENABLED exige une configuration FCM ou APNs complète en production.");
+  }
+  return configuration;
 }
 
 export function normalizeNativeTokenRegistration(input, env = process.env) {

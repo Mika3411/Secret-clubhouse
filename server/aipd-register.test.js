@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.13 conserve A07 ouverte pour RTC et Web Push", () => {
-  assert.equal(aipdVersion, "1.13");
+test("la réévaluation 1.14 conserve A07 ouverte pour RTC et les notifications", () => {
+  assert.equal(aipdVersion, "1.14");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -170,15 +170,16 @@ test("la réévaluation 1.13 conserve A07 ouverte pour RTC et Web Push", () => {
   assert.match(aipdDecision.reason, /A02, A03, A04, A07 et A08 restent ouvertes/i);
 });
 
-test("A07 est rouverte par l’activation RTC et Web Push", () => {
+test("A07 est rouverte par l’activation RTC, Web Push, FCM et APNs", () => {
   const action = aipdActions.find(({ id }) => id === "A07");
   assert.equal(action?.status, "open");
   assert.equal(action?.reopenedAt, "2026-07-24");
   assert.ok(action?.evidence?.includes("docs/a07-evaluation-securite-2026-07-23.md"));
   assert.ok(action?.evidence?.includes("docs/d2-cloudflare-turn-review-2026-07-24.md"));
   assert.ok(action?.evidence?.includes("docs/d3-web-push-review-2026-07-24.md"));
+  assert.ok(action?.evidence?.includes("docs/d4-d5-native-push-review-2026-07-24.md"));
   assert.match(action?.scopeRestriction ?? "", /activation rouvre A07/i);
-  assert.match(action?.scopeRestriction ?? "", /RTC ni Web Push/i);
+  assert.match(action?.scopeRestriction ?? "", /RTC, Web Push ni notifications natives/i);
 });
 
 test("A04 reste ouverte sans contrôle réel des services et secrets actifs", () => {

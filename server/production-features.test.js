@@ -50,21 +50,25 @@ test("les environnements de test conservent leurs fonctionnalités sauf désacti
   });
 });
 
-test("le Blueprint active RTC avec des secrets Render et laisse les autres flux non qualifiés fermés", async () => {
+test("le Blueprint active les fournisseurs qualifiés avec leurs secrets Render et laisse les flux administratifs fermés", async () => {
   const blueprint = await readFile(new URL("../render.yaml", import.meta.url), "utf8");
   assert.match(blueprint, /key:\s*RTC_ENABLED\s*\r?\n\s*value:\s*"true"/u);
   assert.match(blueprint, /key:\s*RTC_STUN_URLS\s*\r?\n\s*value:\s*stun:stun\.cloudflare\.com:3478/u);
   assert.match(blueprint, /key:\s*WEB_PUSH_ENABLED\s*\r?\n\s*value:\s*"true"/u);
+  assert.match(blueprint, /key:\s*NATIVE_PUSH_ENABLED\s*\r?\n\s*value:\s*"true"/u);
   for (const key of [
     "RTC_TURN_KEY_ID",
     "RTC_TURN_API_TOKEN",
     "VAPID_PUBLIC_KEY",
     "VAPID_PRIVATE_KEY",
+    "FCM_SERVICE_ACCOUNT_JSON_BASE64",
+    "APNS_TEAM_ID",
+    "APNS_KEY_ID",
+    "APNS_PRIVATE_KEY_BASE64",
   ]) {
     assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*sync:\\s*false`, "u"));
   }
   for (const key of [
-    "NATIVE_PUSH_ENABLED",
     "PRIVACY_ADMIN_ENABLED",
     "ADMIN_ANALYTICS_ENABLED",
   ]) {
@@ -73,9 +77,7 @@ test("le Blueprint active RTC avec des secrets Render et laisse les autres flux 
   for (const secretKey of [
     "RTC_TURN_CREDENTIAL",
     "FCM_SERVICE_ACCOUNT_JSON",
-    "FCM_SERVICE_ACCOUNT_JSON_BASE64",
     "APNS_PRIVATE_KEY",
-    "APNS_PRIVATE_KEY_BASE64",
     "PRIVACY_ADMIN_TOKEN",
   ]) {
     assert.doesNotMatch(blueprint, new RegExp(`key:\\s*${secretKey}\\b`, "u"));

@@ -39,6 +39,7 @@ import {
 } from "./services/privacy-service.js";
 import { getAdminAnalytics } from "./services/admin-analytics-service.js";
 import {
+  assertNativePushConfiguration,
   createNativePushService,
   createOpaqueCallActionToken,
   hashCallActionToken,
@@ -103,6 +104,9 @@ const privacyContactEmail = String(process.env.PRIVACY_CONTACT_EMAIL || "contact
 const privacyAdminToken = String(process.env.PRIVACY_ADMIN_TOKEN || "");
 const productionFeatures = resolveProductionFeatures(process.env);
 assertProductionFeatureConfiguration(productionFeatures, process.env);
+if (process.env.NODE_ENV === "production" && productionFeatures.nativePush) {
+  assertNativePushConfiguration(process.env);
+}
 const adminAnalyticsEnabled = resolveFeatureFlag(process.env, "ADMIN_ANALYTICS_ENABLED");
 const platformAdminEmails = configuredPlatformAdminEmails(process.env);
 const invalidLoginPasswordHash = "$2b$12$YoNVhfH0Ezc9Sc/m1jloOu2rXeLxQwenmlqLzPmOOqpV4ztVtWWju";

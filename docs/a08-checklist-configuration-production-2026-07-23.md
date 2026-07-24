@@ -7,6 +7,8 @@
 **Périmètre :** workspace Render connecté, dépôt GitHub `Mika3411/Secret-clubhouse` et commit réellement servi<br>
 **Décision :** **A08 OUVERTE — configuration de production non conforme et preuves incomplètes**
 
+> Mise à jour de périmètre du 24 juillet 2026 : ce constat reste l’audit historique du 23 juillet. Depuis, RTC, Web Push, FCM et APNs ont été activés pour des essais contrôlés et de nouveaux noms de variables masqués ont été montrés. Une nouvelle revue complète du tableau de bord et du SHA réellement `Live` reste nécessaire ; les observations historiques ci-dessous ne sont pas réécrites comme si elles prouvaient le nouvel état.
+
 ## 1. Règles de preuve et d’expurgation
 
 - `render.yaml` décrit l’état attendu ; il n’est jamais accepté comme preuve de l’état déployé.
@@ -107,7 +109,7 @@ Priorité immédiate :
 - [ ] configurer une session de 43 200 secondes puis prouver la durée créée côté serveur ;
 - [ ] établir un plan de migration des contenus existants avant d’activer `CONTENT_ENCRYPTION_KEY`, conserver les anciennes clés requises et valider le démarrage fermé ;
 - [ ] déployer une version contenant le chiffrement, les sessions opaques et les contrôles actuels, puis la relier sans ambiguïté aux tests et au build réussis ;
-- [ ] vérifier `RTC_ENABLED=false`, `WEB_PUSH_ENABLED=false`, `NATIVE_PUSH_ENABLED=false` et `PRIVACY_ADMIN_ENABLED=false` sur le service réel ; supprimer les anciennes variables fournisseur devenues inutiles du périmètre minimal ;
+- [ ] vérifier sur le service réel `RTC_ENABLED=true`, `WEB_PUSH_ENABLED=true`, `NATIVE_PUSH_ENABLED=true` et `PRIVACY_ADMIN_ENABLED=false`, puis relier les secrets TURN, VAPID, FCM et APNs masqués au SHA réellement servi sans exposer leurs valeurs ;
 - [ ] vérifier que `/downloads/Secret-Clubhouse.apk` n’est plus servi et qu’aucun APK/AAB/IPA de débogage n’est distribué ;
 - [ ] exécuter une restauration isolée réelle, rejouer les tombstones et la purge, puis documenter le résultat ;
 - [ ] documenter la capacité de détection et d’alerte ; si un essai de réception est réalisé hors production, conserver seulement sa conclusion expurgée ;
@@ -121,7 +123,7 @@ Conditions de clôture :
 - [ ] session réellement mesurée à 12 h ;
 - [ ] chiffrement et anciennes clés validés sur données de test représentatives ;
 - [ ] connexion privée attestée sans divulguer l’URL ;
-- [ ] quatre drapeaux de fonctions sensibles réellement à `false`, routes correspondantes refusées et aucun secret fournisseur requis ;
+- [ ] trois drapeaux fournisseur réellement à `true` avec configuration complète et canal RGPD partagé à `false`, routes et capacités conformes, secrets toujours masqués ;
 - [ ] sauvegarde et restauration réelle réussies ;
 - [ ] dernier run Cron réussi ;
 - [ ] capacité de détection et d’alerte proportionnée au risque, et journaux/rétention documentés ; un test de réception est recommandé mais n’est pas une forme de preuve imposée ;

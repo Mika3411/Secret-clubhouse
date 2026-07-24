@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
   apnsErrorInvalidatesToken,
+  assertNativePushConfiguration,
   buildApnsRequest,
   buildFcmMessage,
   createNativePushService,
@@ -32,6 +33,29 @@ test("charge les secrets fournisseur au format brut ou base64 sans les exposer",
   assert.match(configuration.fcm.privateKey, /\nTEST\n/);
   assert.equal(configuration.apns.voipTopic, "fr.secretclubhouse.app.voip");
   assert.deepEqual(configuration.issues, []);
+});
+
+test("refuse l’activation native sans fournisseur complet et accepte FCM seul avec le bundle iOS cible", () => {
+  const serviceAccount = {
+    project_id: "secret-clubhouse",
+    client_email: "push@secret-clubhouse.iam.gserviceaccount.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\\nTEST\\n-----END PRIVATE KEY-----",
+  };
+  assert.throws(
+    () => assertNativePushConfiguration({}),
+    /configuration FCM ou APNs complète/u,
+  );
+  assert.throws(
+    () => assertNativePushConfiguration({
+      APNS_TEAM_ID: "TEAMID1234",
+      APNS_BUNDLE_ID: "fr.secretclubhouse.app",
+    }),
+    /configuration des notifications natives invalide/i,
+  );
+  assert.doesNotThrow(() => assertNativePushConfiguration({
+    FCM_SERVICE_ACCOUNT_JSON_BASE64: Buffer.from(JSON.stringify(serviceAccount)).toString("base64"),
+    APNS_BUNDLE_ID: "fr.secretclubhouse.app",
+  }));
 });
 
 test("normalise les inscriptions FCM et APNs sans autoriser un croisement de plateforme", () => {

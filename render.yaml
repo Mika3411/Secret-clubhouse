@@ -42,10 +42,12 @@ services:
         value: Je ne peux pas répondre pour le moment.
       - key: FCM_ANDROID_PACKAGE
         value: fr.secretclubhouse.app
+      - key: FCM_SERVICE_ACCOUNT_JSON_BASE64
+        sync: false
       - key: NATIVE_PUSH_TIMEOUT_MS
         value: "6000"
       - key: NATIVE_PUSH_ENABLED
-        value: "false"
+        value: "true"
       - key: WEB_PUSH_TIMEOUT_MS
         value: "6000"
       - key: VAPID_PUBLIC_KEY
@@ -54,6 +56,12 @@ services:
         sync: false
       - key: WEB_PUSH_ENABLED
         value: "true"
+      - key: APNS_TEAM_ID
+        sync: false
+      - key: APNS_KEY_ID
+        sync: false
+      - key: APNS_PRIVATE_KEY_BASE64
+        sync: false
       - key: APNS_BUNDLE_ID
         value: fr.secretclubhouse.app
       - key: APNS_VOIP_TOPIC

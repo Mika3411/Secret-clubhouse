@@ -11,5 +11,6 @@ src/media-qa.jsx
 *.apk
 *.aab
 *.ipa
+android/app/google-services.json
 .env*
 !.env.example

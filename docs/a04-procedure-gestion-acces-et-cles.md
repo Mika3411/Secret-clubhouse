@@ -1,7 +1,7 @@
 # A04 — Procédure de gestion des accès privilégiés et du cycle de vie des clés
 
-**Version :** 1.0<br>
-**Date :** 23 juillet 2026<br>
+**Version :** 1.1<br>
+**Date :** 24 juillet 2026<br>
 **Propriétaire :** Responsable sécurité / exploitation<br>
 **Périmètre :** Render, GitHub, Cloudflare, Firebase/Google Cloud, Apple Developer/App Store Connect, PostgreSQL et secrets applicatifs de Secret Clubhouse<br>
 **Statut A04 :** **OUVERT — aucun exercice réel complet n’est encore consigné**
@@ -23,7 +23,7 @@ La rédaction de cette procédure, un contrôle du dépôt, un test unitaire, un
 
 Un fournisseur ou canal techniquement désactivé est noté « non applicable » avec une preuve de désactivation ; il n’a pas à être créé, activé ou testé uniquement pour fermer `A04`. Le RGPD n’impose ici ni cadence trimestrielle, ni nombre fixe d’administrateurs, ni vérificateur distinct, ni prestataire externe. Ces modalités peuvent être retenues comme mesures internes si le risque ou l’organisation le justifie.
 
-Le Blueprint cible ferme désormais RTC, Web Push, APNs/FCM et l’administration RGPD partagée. Il ne demande aucun de leurs secrets. Après constat de ces drapeaux sur Render réel, Cloudflare, Firebase, Apple, VAPID et `PRIVACY_ADMIN_TOKEN` pourront être inscrits `N/A` pour le périmètre minimal. Les seules preuves d’accès fournisseur encore attendues seront alors Render et GitHub, plus le coffre réellement utilisé pour les clés générées.
+Le Blueprint active désormais RTC, Web Push, FCM et APNs pour des essais contrôlés sans enfant réel. Les accès Cloudflare, Firebase/Google, Apple et les secrets TURN, VAPID, FCM et APNs entrent donc dans le périmètre actif d’A04 : ils ne peuvent plus être inscrits `N/A`. L’administration RGPD partagée reste désactivée et `PRIVACY_ADMIN_TOKEN` demeure non applicable tant que cette désactivation est prouvée.
 
 La décision de clôture est humaine. Elle est inscrite dans `server/aipd-register.js` et `docs/aipd-secret-clubhouse.md` seulement après vérification des pièces avec la checklist `docs/a04-checklist-preuves.md`.
 

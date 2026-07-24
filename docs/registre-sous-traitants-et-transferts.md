@@ -1,6 +1,6 @@
 # Registre simplifié des sous-traitants et transferts
 
-Version regroupée du 23 juillet 2026 — responsable du suivi : Mickael Thorez.
+Version regroupée mise à jour le 24 juillet 2026 — responsable du suivi : Mickael Thorez.
 
 Ce registre couvre les cinq familles de fournisseurs utilisées ou prévues par Secret Clubhouse. Il complète l’AIPD, le registre des bases légales et la politique de conservation.
 
@@ -15,14 +15,14 @@ L’audit public est terminé, mais les preuves privées d’acceptation des con
 | D1 | Render et Render Postgres | Ouvert |
 | D2 | Cloudflare STUN/TURN | Activation prototype contrôlée ; dossier privé et validation finale requis |
 | D3 | Web Push selon le navigateur | Activation prototype contrôlée ; matrice fournisseurs à compléter |
-| D4 | Firebase Cloud Messaging Android | Cible désactivée ; preuve Render requise |
-| D5 | Apple APNs et PushKit | Cible désactivée ; preuve Render requise |
+| D4 | Firebase Cloud Messaging Android | Activation prototype contrôlée ; dossier privé et test réel requis |
+| D5 | Apple APNs et PushKit | Activation prototype contrôlée ; dossier privé et test réel requis |
 
 Ce regroupement simplifie la preuve sans supprimer les obligations. Un dossier peut être fermé soit avec les garanties nécessaires, soit avec une décision vérifiable de désactiver le flux concerné en production.
 
 Pour tout fournisseur actif agissant comme sous-traitant, le contrat applicable doit satisfaire aux exigences de l’article 28 du RGPD.
 
-Le Blueprint du 24 juillet 2026 prépare `RTC_ENABLED=true` et `WEB_PUSH_ENABLED=true`, avec les secrets TURN et VAPID conservés exclusivement dans Render ; le serveur échoue fermé si le relais TURN complet ou la paire VAPID manque. `NATIVE_PUSH_ENABLED=false` reste inchangé. Ces activations sont limitées aux essais contrôlés du prototype sans enfant réel : D2, D3, A03, A04, A07 et A08 restent ouverts jusqu’aux preuves privées, à l’évaluation de sécurité du périmètre actif et à la validation finale.
+Le Blueprint du 24 juillet 2026 prépare `RTC_ENABLED=true`, `WEB_PUSH_ENABLED=true` et `NATIVE_PUSH_ENABLED=true`, avec les secrets TURN, VAPID, FCM et APNs conservés exclusivement dans Render. Le serveur échoue fermé si le relais TURN, la paire VAPID ou la configuration native requise manque ou est incomplète. Ces activations sont limitées aux essais contrôlés du prototype sans enfant réel : D2 à D5, A03, A04, A07 et A08 restent ouverts jusqu’aux preuves privées, aux tests réels, à l’évaluation de sécurité du périmètre actif et à la validation finale.
 
 ## 2. Preuve minimale commune
 
@@ -43,8 +43,8 @@ Les contrats, captures, justificatifs d’identité, tickets et décisions sign�
 | D1 — Render Services, Inc. | Sous-traitant pour l’hébergement de l’application, PostgreSQL, sauvegardes et journaux. Données familiales, contenus applicativement chiffrés et métadonnées | [DPA Render](https://render.com/dpa), CCT intégrées et DPF lorsqu’applicable. Le Blueprint cible Francfort, mais les opérations et sous-traitants peuvent impliquer les États-Unis | DPA réellement applicable au compte, titulaire, région réelle du service/de la base/du Cron, plan de sauvegarde, accès support et fiche DPF datée | **Ouvert. Hébergement non validé** |
 | D2 — Cloudflare | TURN agit comme sous-traitant réseau. STUN/TURN voit notamment IP, ports, horaires et volumes ; le média WebRTC reste chiffré | [DPA Cloudflare](https://www.cloudflare.com/cloudflare-customer-dpa/), CCT intégrées, accord Self-Serve incorporant le DPA et revue publique datée dans `docs/d2-cloudflare-turn-review-2026-07-24.md` | Preuve privée du compte et de la date contractuelle, liste des sous-traitants archivée, durées Realtime, accès support, décision de transfert et validation humaine | **Activation prototype contrôlée ; dossier ouvert** |
 | D3 — Web Push | Service Push imposé par le navigateur ; endpoint, IP, horaires, taille et charge générique minimisée | Standards Web Push, paire VAPID Render et revue technique `docs/d3-web-push-review-2026-07-24.md` | Matrice des navigateurs réellement supportés, fournisseurs observés, contrats, pays, transferts et rétention | **Activation prototype contrôlée ; dossier ouvert** |
-| D4 — Firebase/FCM | Google traite le jeton FCM, l’installation ID, le package et des métadonnées pour remettre les notifications Android | [Conditions de traitement Firebase](https://firebase.google.com/terms/data-processing-terms), CCT et DPF lorsqu’applicables | Pour activation future : compte, conditions, sous-traitants, suppression et transfert. Pour le périmètre minimal : preuve Render de `NATIVE_PUSH_ENABLED=false` | **Cible désactivée ; non encore prouvé sur Render** |
-| D5 — Apple Push Notification service (APNs)/PushKit | Apple reçoit jetons, topics, identifiants opaques et métadonnées techniques pour alertes et appels iOS | [Apple Developer Program License Agreement](https://developer.apple.com/support/terms/apple-developer-program-license-agreement/) et annexe APNs | Pour activation future : accord, rôle, pays, rétention, sous-traitants et transfert. Pour le périmètre minimal : preuve Render de `NATIVE_PUSH_ENABLED=false` et absence de distribution iOS | **Cible désactivée ; non encore prouvé sur Render** |
+| D4 — Firebase/FCM | Google traite le jeton FCM, l’installation ID, le package et des métadonnées pour remettre les notifications Android | [Conditions de traitement Firebase](https://firebase.google.com/terms/data-processing-terms), CCT et DPF lorsqu’applicables ; revue technique datée dans `docs/d4-d5-native-push-review-2026-07-24.md` | Compte, conditions applicables, sous-traitants, suppression réelle d’un jeton et d’une installation, pays, transfert et essai sur appareil verrouillé | **Activation prototype contrôlée ; dossier ouvert** |
+| D5 — Apple Push Notification service (APNs)/PushKit | Apple reçoit jetons, topics, identifiants opaques et métadonnées techniques pour alertes et appels iOS | [Apple Developer Program License Agreement](https://developer.apple.com/support/terms/apple-developer-program-license-agreement/) et annexe APNs ; revue technique datée dans `docs/d4-d5-native-push-review-2026-07-24.md` | Accord applicable, rôle, pays, rétention, sous-traitants, transfert et essais APNs/PushKit sur appareil verrouillé | **Activation prototype contrôlée ; dossier ouvert** |
 
 ## 4. Dossier D1 — Render
 
@@ -92,6 +92,8 @@ La matrice doit indiquer les versions effectivement supportées. Toute combinais
 
 ## 7. Dossier D4 — Firebase/FCM
 
+La revue technique du 24 juillet 2026 est consignée dans `docs/d4-d5-native-push-review-2026-07-24.md`. Le responsable a montré les noms de variables FCM/APNs masquées dans Render et confirmé l’activation du drapeau natif, sans communiquer aucun secret. Le fichier Firebase client local correspond au package attendu et reste hors Git. Ces éléments permettent les essais contrôlés mais ne ferment pas D4.
+
 Pièces regroupées attendues :
 
 - projet Firebase expurgé, titulaire et entité contractante ;
@@ -102,6 +104,8 @@ Pièces regroupées attendues :
 - décision consolidée sur les notifications Android.
 
 ## 8. Dossier D5 — Apple APNs et PushKit
+
+La même revue consigne la présence expurgée des variables APNs attendues et l’activation contrôlée. Elle ne prouve ni la validité des identifiants, ni une livraison APNs/PushKit réelle, ni l’accord applicable au compte Apple ; D5 reste ouvert.
 
 Pièces regroupées attendues :
 
@@ -121,8 +125,8 @@ Une politique de confidentialité Apple ou l’accord public non rattaché au co
 | D1 | Application, PostgreSQL, journaux, sauvegardes et support Render | Francfort demandé, réseau privé, TLS, chiffrement applicatif des contenus, hachage des mots de passe et sessions | Risque élevé tant que région, compte, support et mécanisme ne sont pas prouvés |
 | D2 | STUN et TURN WebRTC | DTLS-SRTP pour le média, identifiants TURN courts générés côté Render, signalisation applicativement chiffrée, aucune identité applicative envoyée au relais | Activation limitée aux essais du prototype ; production réelle interdite tant que le dossier privé et la décision de transfert ne sont pas validés |
 | D3 | Web Push Chrome, Edge, Firefox et Safari | Texte générique, TTL court, consentement conjoint révocable, aucune identité ou contenu de message dans la charge | Activation limitée aux essais ; décision obligatoire par navigateur et désactivation si le cadre ne peut pas être démontré |
-| D4 | FCM Android natif | HTTPS, payload générique, jetons opaques et suppression des jetons invalides | Acceptation conditionnée au compte, aux conditions, au transfert et au test de suppression |
-| D5 | APNs et PushKit iOS | TLS/HTTP2, payload générique, TTL court ou nul pour les appels | Risque juridique élevé tant que rôle et transfert ne sont pas qualifiés |
+| D4 | FCM Android natif | HTTPS, payload générique, jetons opaques et suppression des jetons invalides | Activation limitée aux essais ; acceptation conditionnée au compte, aux conditions, au transfert, au test de suppression et à la livraison réelle |
+| D5 | APNs et PushKit iOS | TLS/HTTP2, payload générique, TTL court ou nul pour les appels | Activation limitée aux essais ; risque juridique élevé tant que rôle, transfert et fonctionnement réel ne sont pas qualifiés |
 
 Une décision d’adéquation DPF effectivement applicable dispense d’AITD fondée sur l’article 46 pour le transfert couvert. Si le DPF ne couvre pas l’entité, le service ou cesse de s’appliquer, les CCT et l’analyse complémentaire requise doivent être documentées.
 
@@ -144,7 +148,7 @@ Ces dates sont des échéances de recontrôle, pas des dates de conformité auto
 | D1 | Index privé complet et décision Render datée | Ouvert |
 | D2 | Index privé complet et décision de transfert pour l’activation RTC ; à défaut `RTC_ENABLED=false` réellement déployé | Activation prototype contrôlée ; ouvert |
 | D3 | Matrice signée pour les navigateurs activés ; à défaut `WEB_PUSH_ENABLED=false` réellement déployé | Activation prototype contrôlée ; ouvert |
-| D4 | Index privé complet, ou `NATIVE_PUSH_ENABLED=false` réellement déployé sans FCM | En attente de preuve A08 |
-| D5 | Index privé complet, ou `NATIVE_PUSH_ENABLED=false` réellement déployé sans distribution iOS | En attente de preuve A08 |
+| D4 | Index privé complet et essais FCM Android réussis ; à défaut `NATIVE_PUSH_ENABLED=false` réellement déployé sans FCM | Activation prototype contrôlée ; ouvert |
+| D5 | Index privé complet et essais APNs/PushKit réussis ; à défaut `NATIVE_PUSH_ENABLED=false` réellement déployé sans distribution iOS | Activation prototype contrôlée ; ouvert |
 
 A03 est clôturable uniquement lorsque les cinq dossiers sont fermés, ou lorsque les fonctions correspondant à un dossier non validé sont techniquement désactivées en production et que cette limitation est prouvée. Chaque décision porte une date, identifie son auteur et prévoit une surveillance des changements proportionnée au risque.

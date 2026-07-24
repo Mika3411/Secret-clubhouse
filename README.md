@@ -27,7 +27,7 @@ Le fichier `render.yaml` décrit le service web Node.js, la base PostgreSQL, le 
 3. Connecter le dépôt et conserver le chemin Blueprint par défaut : `render.yaml`.
 4. Vérifier le service `secret-clubhouse`, puis lancer **Deploy Blueprint**.
 
-Render fournit automatiquement une URL HTTPS en `onrender.com`. `DATABASE_URL`, `JWT_SECRET` et la clé dédiée `CONTENT_ENCRYPTION_KEY` sont configurés par le Blueprint. Le prototype peut activer WebRTC et Web Push uniquement avec les secrets TURN et VAPID conservés dans Render ; le serveur échoue fermé s’ils manquent. APNs/FCM et le canal d’administration RGPD partagé restent explicitement fermés. Pour valider le Blueprint avec la CLI Render avant le déploiement :
+Render fournit automatiquement une URL HTTPS en `onrender.com`. `DATABASE_URL`, `JWT_SECRET` et la clé dédiée `CONTENT_ENCRYPTION_KEY` sont configurés par le Blueprint. Le prototype active WebRTC, Web Push, FCM et APNs uniquement avec les secrets TURN, VAPID, Firebase et Apple conservés dans Render ; le serveur échoue fermé si la configuration requise manque ou est incomplète. Le canal d’administration RGPD partagé reste explicitement fermé. Pour valider le Blueprint avec la CLI Render avant le déploiement :
 
 ```bash
 render blueprints validate render.yaml
@@ -38,7 +38,7 @@ Documentation officielle : [Blueprints Render](https://render.com/docs/infrastru
 ## Sécurité des données et des sessions
 
 - L’API chiffre le texte des messages, le nom et le type des médias, leurs octets, ainsi que les offres, réponses et candidats ICE WebRTC avant l’écriture dans PostgreSQL. Les enveloppes AES-256-GCM sont versionnées, authentifient leur contexte et portent un identifiant de clé pour permettre la rotation. Le service Render déchiffre le contenu seulement après avoir autorisé le participant : il s’agit d’un chiffrement applicatif, pas d’un chiffrement de bout en bout.
-- En production web, le jeton opaque n’est jamais rendu accessible à JavaScript : il reste dans le cookie `__Host-sc_session`, `Secure`, `HttpOnly` et `SameSite=Lax`. Le client natif conserve son secret Bearer uniquement dans la mémoire du module ; il disparaît avec le runtime WebView et n’entre ni dans `sessionStorage` ni dans `localStorage`. Les requêtes web incluent le cookie sans Bearer, les requêtes natives omettent les cookies et présentent l’en-tête client natif avec le Bearer, et le serveur vérifie cette correspondance avec le `client_type` enregistré. PostgreSQL ne conserve que le hash SHA-256 révocable du jeton ; la validité par défaut et celle du Blueprint sont de 12 heures.
+- En production web, le jeton opaque n’est jamais rendu accessible à JavaScript : il reste dans le cookie `__Host-sc_session`, `Secure`, `HttpOnly` et `SameSite=Lax`. Le client natif conserve son secret Bearer uniquement dans la mémoire du processus applicatif : il survit aux transitions arrière-plan/premier plan et à une recréation de la WebView dans ce même processus, puis disparaît lorsque le processus se termine. Il n’entre ni dans le stockage JavaScript, ni dans les préférences natives, fichiers, journaux ou sauvegardes. Les requêtes web incluent le cookie sans Bearer, les requêtes natives omettent les cookies et présentent l’en-tête client natif avec le Bearer, et le serveur vérifie cette correspondance avec le `client_type` enregistré. PostgreSQL ne conserve que le hash SHA-256 révocable du jeton ; la validité par défaut et celle du Blueprint sont de 12 heures.
 - `DATABASE_TRANSPORT=render-private` impose l’URL PostgreSQL interne de Render. Sur un runtime Render identifié par `RENDER=true`, cette URL privée sans domaine peut aussi être reconnue automatiquement lorsque la variable manque sur un service existant. Toute autre base doit utiliser `DATABASE_TRANSPORT=tls`, la vérification du certificat (`rejectUnauthorized: true`) et, si nécessaire, une CA de confiance ; les paramètres de l’URL ne peuvent pas désactiver cette politique.
 - Les charges Web Push, APNs et FCM contiennent des identifiants opaques de routage et des libellés génériques. Elles n’incluent jamais le texte d’un message, le nom d’un fichier, le nom d’un enfant ou celui d’un contact ; un appel entrant affiche le libellé neutre « Contact autorisé ».
 - Le gestionnaire central n’expose que les erreurs 4xx explicitement déclarées comme publiques. Une erreur inattendue devient `Erreur interne.` ; chaque réponse porte `X-Request-ID`, et le JSON du gestionnaire d’erreurs répète cet identifiant dans `requestId` pour permettre la corrélation avec les journaux serveur sans divulguer de détail interne.
@@ -58,13 +58,13 @@ Au premier accès autorisé, PostgreSQL inscrit le compte dans `platform_adminis
 
 ### Activation contrôlée des fournisseurs
 
-En production, tous les drapeaux fournisseur valent `false` par défaut. Le Blueprint du prototype fixe `RTC_ENABLED=true` et `WEB_PUSH_ENABLED=true`, avec les secrets TURN et VAPID exclusivement dans Render ; `NATIVE_PUSH_ENABLED`, `PRIVACY_ADMIN_ENABLED` et `ADMIN_ANALYTICS_ENABLED` restent à `false`. Une valeur ambiguë, RTC sans relais TURN complet ou Web Push sans paire VAPID fait échouer la configuration.
+En production, tous les drapeaux fournisseur valent `false` par défaut. Le Blueprint du prototype fixe `RTC_ENABLED=true`, `WEB_PUSH_ENABLED=true` et `NATIVE_PUSH_ENABLED=true`, avec les secrets TURN, VAPID, FCM et APNs exclusivement dans Render ; `PRIVACY_ADMIN_ENABLED` et `ADMIN_ANALYTICS_ENABLED` restent à `false`. Une valeur ambiguë, RTC sans relais TURN complet, Web Push sans paire VAPID ou notifications natives sans fournisseur complet fait échouer la configuration.
 
 Un flux destiné à une production réelle ne peut être activé qu’après fermeture de son dossier dans `docs/registre-sous-traitants-et-transferts.md` :
 
 - WebRTC : conserver `RTC_TURN_KEY_ID` et `RTC_TURN_API_TOKEN` uniquement dans Render ; toute production réelle reste bloquée tant que D2, A03, A04, A07 et A08 ne sont pas validés ;
 - Web Push : conserver `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY` uniquement dans Render ; toute production réelle reste bloquée tant que D3, A03, A04, A07 et A08 ne sont pas validés ;
-- Android/iOS : ajouter soit la configuration FCM, soit la configuration APNs complète, puis définir `NATIVE_PUSH_ENABLED=true` ;
+- Android/iOS : les configurations FCM et APNs sont déclarées comme secrets Render et le drapeau natif est actif pour les essais contrôlés ; toute utilisation par des enfants réels reste bloquée tant que D4, D5, A03, A04, A07 et A08 ne sont pas validés ;
 - administration des demandes RGPD : le canal historique à jeton partagé reste désactivé tant qu’il n’est pas remplacé par un accès nominatif et traçable.
 
 Ne jamais ajouter ces valeurs dans Git ou dans une capture d’audit.
@@ -95,7 +95,7 @@ Le traitement d’enfants, de conversations et médias privés, le suivi réguli
 
 L’action `A04` reste ouverte. Sa [procédure d’administration et de rotation](docs/a04-procedure-gestion-acces-et-cles.md), sa [checklist de preuves](docs/a04-checklist-preuves.md) et l’[audit du 23 juillet 2026](.audit/2026-07-23-a04-access-key-audit/audit.md) distinguent les contrôles du dépôt des preuves fournisseurs. Aucun test automatisé ou gabarit ne remplace l’exercice réel de rotation, récupération avec anciennes clés et révocation exigé avant clôture.
 
-L’action `A07` a été rouverte le 24 juillet 2026 par l’activation contrôlée de RTC et Web Push. Le [rapport du 23 juillet](docs/a07-evaluation-securite-2026-07-23.md) reste une preuve historique du périmètre restreint ; les revues [TURN](docs/d2-cloudflare-turn-review-2026-07-24.md) et [Web Push](docs/d3-web-push-review-2026-07-24.md) documentent la préparation fournisseur sans autoriser l’usage par des enfants réels.
+L’action `A07` a été rouverte le 24 juillet 2026 par l’activation contrôlée de RTC, Web Push, FCM et APNs. Le [rapport du 23 juillet](docs/a07-evaluation-securite-2026-07-23.md) reste une preuve historique du périmètre restreint ; les revues [TURN](docs/d2-cloudflare-turn-review-2026-07-24.md), [Web Push](docs/d3-web-push-review-2026-07-24.md) et [notifications natives](docs/d4-d5-native-push-review-2026-07-24.md) documentent la préparation fournisseur sans autoriser l’usage par des enfants réels.
 
 ## États persistants
 
