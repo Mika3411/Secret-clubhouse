@@ -112,6 +112,24 @@ input:focus-visible {
   font-weight: 700;
 }
 
+.session-restoring__status {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 6px;
+  place-items: center;
+  color: var(--navy);
+  border-radius: 50%;
+  background: var(--mint);
+  font-size: 28px;
+  font-weight: 900;
+}
+
+.session-restoring__retry {
+  min-width: 150px;
+  margin-top: 10px;
+}
+
 @keyframes session-restoring-spin {
   to { transform: rotate(360deg); }
 }
@@ -750,7 +768,17 @@ input:focus-visible {
 
 @media (min-width: 900px) and (orientation: landscape) {
   .mobile-prototype {
-    width: min(100vw, 1194px);
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .mobile-prototype {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
   }
 }
 

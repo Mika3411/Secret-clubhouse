@@ -18,6 +18,7 @@
 		B20000000000000000000002 /* BridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* BridgeViewController.swift */; };
 		B20000000000000000000003 /* NativeCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* NativeCallCoordinator.swift */; };
 		B20000000000000000000004 /* NativeCallNotificationsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* NativeCallNotificationsPlugin.swift */; };
+		B20000000000000000000006 /* NativeSessionMemoryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* NativeSessionMemoryPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		B10000000000000000000003 /* NativeCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallCoordinator.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* NativeCallNotificationsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallNotificationsPlugin.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* GenerateNotificationSounds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GenerateNotificationSounds.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* NativeSessionMemoryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSessionMemoryPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +77,7 @@
 				B10000000000000000000002 /* BridgeViewController.swift */,
 				B10000000000000000000003 /* NativeCallCoordinator.swift */,
 				B10000000000000000000004 /* NativeCallNotificationsPlugin.swift */,
+				B10000000000000000000006 /* NativeSessionMemoryPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -216,6 +219,7 @@
 				B20000000000000000000002 /* BridgeViewController.swift in Sources */,
 				B20000000000000000000003 /* NativeCallCoordinator.swift in Sources */,
 				B20000000000000000000004 /* NativeCallNotificationsPlugin.swift in Sources */,
+				B20000000000000000000006 /* NativeSessionMemoryPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

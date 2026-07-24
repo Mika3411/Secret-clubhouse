@@ -3,6 +3,7 @@ package fr.secretclubhouse.app;
 import android.content.Intent;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
+import fr.secretclubhouse.app.auth.NativeSessionMemoryPlugin;
 import fr.secretclubhouse.app.nativecall.NativeCallNotificationsPlugin;
 import fr.secretclubhouse.app.nativecall.NativeTelecomManager;
 import fr.secretclubhouse.app.notifications.SecretClubhouseNotifications;
@@ -11,6 +12,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        registerPlugin(NativeSessionMemoryPlugin.class);
         registerPlugin(NativeCallNotificationsPlugin.class);
         super.onCreate(savedInstanceState);
         SecretClubhouseNotifications.ensureChannels(this);

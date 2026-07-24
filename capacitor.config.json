@@ -3,6 +3,7 @@
   "appName": "Secret Clubhouse",
   "webDir": "dist",
   "bundledWebRuntime": false,
+  "loggingBehavior": "none",
   "plugins": {
     "CapacitorHttp": {
       "enabled": true

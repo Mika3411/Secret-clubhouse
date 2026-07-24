@@ -403,6 +403,15 @@
   }
 }
 
+@media (min-width: 700px) and (orientation: landscape) {
+  .parent-mode-navigation {
+    right: 0;
+    left: 0;
+    width: 100%;
+    transform: none;
+  }
+}
+
 @media (max-width: 420px) {
   .parent-mode-navigation button {
     gap: 4px;

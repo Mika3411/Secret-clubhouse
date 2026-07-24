@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 const nativeToken = Buffer.alloc(32, 11).toString("base64url");
 
@@ -34,6 +35,8 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
     },
   };
   const calls = [];
+  let nativeVaultToken = "";
+  const nativeVaultCalls = [];
 
   try {
     delete globalThis.androidBridge;
@@ -75,12 +78,35 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
     assert.equal(webClient.hasNativeSession(), false);
 
     globalThis.androidBridge = {};
+    globalThis.Capacitor.PluginHeaders = [{
+      name: "NativeSessionMemory",
+      methods: [
+        { name: "get", rtype: "promise" },
+        { name: "set", rtype: "promise" },
+        { name: "clear", rtype: "promise" },
+      ],
+    }];
+    globalThis.Capacitor.nativePromise = async (pluginName, methodName, options = {}) => {
+      nativeVaultCalls.push(methodName);
+      assert.equal(pluginName, "NativeSessionMemory");
+      if (methodName === "get") return { token: nativeVaultToken };
+      if (methodName === "set") {
+        nativeVaultToken = options.token;
+        return {};
+      }
+      if (methodName === "clear") {
+        nativeVaultToken = "";
+        return {};
+      }
+      throw new Error(`Méthode native inattendue : ${methodName}`);
+    };
     const nativeClient = await import(`${moduleUrl.href}?transport=native`);
     assert.equal("getToken" in nativeClient, false);
     assert.equal(nativeClient.hasNativeSession(), false);
 
     await nativeClient.api.login({ email: "parent@example.test", password: "secret-test" });
     assert.equal(nativeClient.hasNativeSession(), true);
+    assert.equal(nativeVaultToken, nativeToken);
     const nativeLogin = calls.shift();
     assert.equal(nativeLogin.options.credentials, "omit");
     assert.equal(new Headers(nativeLogin.options.headers).has("Authorization"), false);
@@ -106,15 +132,47 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
       `Bearer ${nativeToken}`,
     );
 
-    await nativeClient.api.logout();
-    assert.equal(nativeClient.hasNativeSession(), false);
+    const reloadedNativeClient = await import(`${moduleUrl.href}?transport=native-reloaded`);
+    await reloadedNativeClient.api.me();
+    assert.equal(reloadedNativeClient.hasNativeSession(), true);
+    const restoredNativeRequest = calls.shift();
+    assert.equal(
+      new Headers(restoredNativeRequest.options.headers).get("Authorization"),
+      `Bearer ${nativeToken}`,
+    );
+
+    await reloadedNativeClient.api.logout();
+    assert.equal(reloadedNativeClient.hasNativeSession(), false);
+    assert.equal(nativeVaultToken, "");
     assert.equal(calls.shift().options.credentials, "omit");
+    assert.deepEqual(nativeVaultCalls, ["get", "set", "get", "clear"]);
     assert.equal(storageAccess.reads, 0);
     assert.equal(storageAccess.writes, 0);
-    assert.ok(storageAccess.removals >= 4);
+    assert.ok(storageAccess.removals >= 6);
   } finally {
     for (const [name, previous] of Object.entries(previousGlobals)) {
       restoreGlobal(name, previous);
     }
   }
+});
+
+test("les coffres natifs de session restent volatils et ne touchent aucun stockage persistant", async () => {
+  const androidSource = await readFile(
+    new URL("../android/app/src/main/java/fr/secretclubhouse/app/auth/NativeSessionMemoryPlugin.java", import.meta.url),
+    "utf8",
+  );
+  const iosSource = await readFile(
+    new URL("../ios/App/App/NativeSessionMemoryPlugin.swift", import.meta.url),
+    "utf8",
+  );
+  const capacitorConfig = JSON.parse(await readFile(
+    new URL("../capacitor.config.json", import.meta.url),
+    "utf8",
+  ));
+
+  assert.match(androidSource, /static volatile String sessionToken/);
+  assert.doesNotMatch(androidSource, /SharedPreferences|KeyStore|FileOutputStream|SQLite/i);
+  assert.match(iosSource, /static var sessionToken/);
+  assert.doesNotMatch(iosSource, /UserDefaults|Keychain|SecItem|write\(to:/i);
+  assert.equal(capacitorConfig.loggingBehavior, "none");
 });

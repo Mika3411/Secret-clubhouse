@@ -1,9 +1,15 @@
 import { Capacitor } from "@capacitor/core";
+import {
+  clearNativeSessionToken,
+  readNativeSessionToken,
+  writeNativeSessionToken,
+} from "./native-session-memory.js";
 
 const LEGACY_TOKEN_KEY = "secret-clubhouse-session";
 const API_ORIGIN = (import.meta.env?.VITE_API_URL || "").replace(/\/$/, "");
 const isNativeClient = Capacitor.isNativePlatform();
 let nativeSessionToken = null;
+let nativeSessionRevision = 0;
 
 function removeLegacyStoredToken() {
   for (const storageName of ["sessionStorage", "localStorage"]) {
@@ -15,20 +21,42 @@ function removeLegacyStoredToken() {
   }
 }
 
-export const hasNativeSession = () => isNativeClient && nativeSessionToken !== null;
+const restoredSessionRevision = nativeSessionRevision;
+let nativeSessionReady = isNativeClient
+  ? readNativeSessionToken()
+      .then((token) => {
+        if (nativeSessionRevision === restoredSessionRevision && token) {
+          nativeSessionToken = token;
+        }
+      })
+      .catch(() => undefined)
+  : Promise.resolve();
+
+const waitForNativeSession = () => nativeSessionReady;
+
+export const hasNativeSession = () => isNativeClient && Boolean(nativeSessionToken);
 
 export const clearToken = () => {
+  nativeSessionRevision += 1;
   nativeSessionToken = null;
   removeLegacyStoredToken();
+  nativeSessionReady = isNativeClient
+    ? clearNativeSessionToken().catch(() => undefined)
+    : Promise.resolve();
+  return nativeSessionReady;
 };
 
-const storeToken = (token) => {
+const storeToken = async (token) => {
   if (!isNativeClient) return;
   if (typeof token !== "string" || !token.trim()) throw new Error("Session native invalide.");
+  nativeSessionRevision += 1;
   nativeSessionToken = token;
+  nativeSessionReady = writeNativeSessionToken(token).catch(() => undefined);
+  await nativeSessionReady;
 };
 
 async function request(path, options = {}) {
+  await waitForNativeSession();
   const headers = new Headers(options.headers);
   if (isNativeClient && nativeSessionToken) {
     headers.set("Authorization", `Bearer ${nativeSessionToken}`);
@@ -42,7 +70,7 @@ async function request(path, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401) clearToken();
+    if (response.status === 401) await clearToken();
     if (response.status === 423 && payload.processingRestricted && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("secret-clubhouse:processing-restricted", { detail: payload }));
     }
@@ -51,7 +79,7 @@ async function request(path, options = {}) {
     error.payload = payload;
     throw error;
   }
-  if (payload.token) storeToken(payload.token);
+  if (payload.token) await storeToken(payload.token);
   return payload;
 }
 
@@ -66,7 +94,7 @@ export const api = {
     try {
       await request("/auth/logout", { method: "POST" });
     } finally {
-      clearToken();
+      await clearToken();
     }
   },
   me: () => request("/me"),
@@ -158,6 +186,7 @@ export const api = {
   setTyping: (conversationId, active) => request(`/conversations/${encodeURIComponent(conversationId)}/typing`, { method: "POST", body: JSON.stringify({ active }) }),
   sendMedia: (conversationId, files) => { const body = new FormData(); files.forEach((file) => body.append("media", file)); return request(`/conversations/${conversationId}/media`, { method: "POST", body }); },
   media: async (messageId) => {
+    await waitForNativeSession();
     const headers = new Headers();
     if (isNativeClient && nativeSessionToken) {
       headers.set("Authorization", `Bearer ${nativeSessionToken}`);
@@ -170,7 +199,7 @@ export const api = {
       credentials: isNativeClient ? "omit" : "include",
     });
     if (!response.ok) {
-      if (response.status === 401) clearToken();
+      if (response.status === 401) await clearToken();
       throw new Error("Média indisponible.");
     }
     return URL.createObjectURL(await response.blob());

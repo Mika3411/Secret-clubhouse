@@ -3,9 +3,11 @@ import UIKit
 
 final class BridgeViewController: CAPBridgeViewController {
     private let nativeCallNotifications = NativeCallNotificationsPlugin()
+    private let nativeSessionMemory = NativeSessionMemoryPlugin()
 
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
+        bridge?.registerPluginInstance(nativeSessionMemory)
         bridge?.registerPluginInstance(nativeCallNotifications)
     }
 

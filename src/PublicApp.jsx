@@ -46,9 +46,23 @@ function SessionLoading() {
   );
 }
 
+function SessionUnavailable({ onRetry }) {
+  return (
+    <section className="session-restoring" role="alert">
+      <span className="session-restoring__status" aria-hidden="true">↻</span>
+      <strong>La connexion fait une petite pause</strong>
+      <small>Votre session est toujours là. Vérifiez votre connexion puis réessayez.</small>
+      <button type="button" className="primary-button session-restoring__retry" onClick={onRetry}>
+        Réessayer
+      </button>
+    </section>
+  );
+}
+
 function FamilyPublicApp() {
   const [account, setAccount] = useState(null);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [sessionRestoreError, setSessionRestoreError] = useState("");
   const [isInitialRegistration, setIsInitialRegistration] = useState(false);
   const [familyInviteToken, setFamilyInviteToken] = useState(() => readFamilyInviteToken());
   const [familyInvitation, setFamilyInvitation] = useState(null);
@@ -82,8 +96,10 @@ function FamilyPublicApp() {
     };
   }, [familyInviteToken]);
 
-  useEffect(() => {
-    api.me()
+  const restoreSession = () => {
+    setIsRestoringSession(true);
+    setSessionRestoreError("");
+    return api.me()
       .then(async ({ account: restoredAccount }) => {
         if (restoredAccount.role === "child" && familyInviteToken) {
           await api.logout().catch(() => clearToken());
@@ -91,8 +107,16 @@ function FamilyPublicApp() {
         }
         setAccount(restoredAccount);
       })
-      .catch(() => clearToken())
+      .catch((error) => {
+        if (error?.status !== 401) {
+          setSessionRestoreError(error?.message || "Le serveur ne répond pas pour le moment.");
+        }
+      })
       .finally(() => setIsRestoringSession(false));
+  };
+
+  useEffect(() => {
+    void restoreSession();
   }, []);
 
   const dismissFamilyInvitation = () => {
@@ -156,6 +180,8 @@ function FamilyPublicApp() {
         <div className="screen-scroll screen-scroll--full">
           {isRestoringSession
             ? <SessionLoading />
+            : sessionRestoreError
+              ? <SessionUnavailable onRetry={restoreSession} />
             : <AuthScreen
                 onLogin={loginParent}
                 onRegister={registerParent}
