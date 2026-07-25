@@ -4,6 +4,7 @@ import { Capacitor, PushNotifications, NativeCallNotifications, getNativeInstall
 import { api } from "../api";
 import { notificationConsentCopy } from "../legal-framework";
 import { hasUsablePushManager, inspectWebPushBrowser } from "../web-push-support";
+import { announceWebPushAvailability, decodeApplicationServerKey } from "../web-push-client";
 import "../styles/notifications.css";
 
 export function PushNotificationButton({ features }) {
@@ -37,6 +38,7 @@ export function PushNotificationButton({ features }) {
               await api.unsubscribePush(subscription.endpoint).catch(() => undefined);
               await subscription.unsubscribe().catch(() => undefined);
             }
+            announceWebPushAvailability(false);
           }
           setStatus(consentResult.consent.subjectAgreed && consentResult.consent.requiresGuardian ? "awaiting-parent" : "disabled");
           return;
@@ -66,6 +68,7 @@ export function PushNotificationButton({ features }) {
         await registration.update().catch(() => undefined);
         const subscription = await registration.pushManager.getSubscription();
         if (subscription) await api.subscribePush(subscription.toJSON());
+        announceWebPushAvailability(Boolean(subscription));
         if (active) setStatus(subscription ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
       } catch (refreshError) {
         if (active) {
@@ -99,6 +102,7 @@ export function PushNotificationButton({ features }) {
             await api.unsubscribePush(current.endpoint);
             await current.unsubscribe();
           }
+          announceWebPushAvailability(false);
         }
         const result = await api.setNotificationConsent(false);
         setConsent(result.consent);
@@ -150,11 +154,10 @@ export function PushNotificationButton({ features }) {
         return;
       }
       const { publicKey } = await api.pushPublicKey();
-      const padding = "=".repeat((4 - publicKey.length % 4) % 4);
-      const base64 = (publicKey + padding).replace(/-/g, "+").replace(/_/g, "/");
-      const applicationServerKey = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const applicationServerKey = decodeApplicationServerKey(publicKey);
       const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
       await api.subscribePush(subscription.toJSON());
+      announceWebPushAvailability(true);
       setStatus("enabled");
     } catch (pushError) {
       setError(pushError.message || "Impossible d’activer les notifications.");

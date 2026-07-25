@@ -1821,7 +1821,7 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
   } finally {
     client.release();
   }
-  await Promise.allSettled(terminatedCalls.map((call) => notifyNativeCallState(call)));
+  await Promise.allSettled(terminatedCalls.map((call) => notifyCallState(call)));
   res.json({ child: await serializeAccount(updatedChild) });
 });
 
@@ -3875,9 +3875,9 @@ function serializeNativeCallStatus(call) {
   };
 }
 
-async function notifyNativeCallState(call) {
+async function notifyCallState(call) {
   if (!call) return 0;
-  return notifyNativeAccounts([call.caller_id, call.callee_id], {
+  return notifyAccounts([call.caller_id, call.callee_id], {
     notificationType: "call-state",
     callId: call.id,
     conversationId: call.conversation_id,
@@ -3895,7 +3895,7 @@ async function expireStaleCalls(executor = pool) {
      returning id,conversation_id,caller_id,callee_id,call_type,status,expires_at,answered_at,ended_at,updated_at`,
   );
   if (executor === pool) {
-    await Promise.allSettled(result.rows.map((call) => notifyNativeCallState(call)));
+    await Promise.allSettled(result.rows.map((call) => notifyCallState(call)));
   }
   return result.rows;
 }
@@ -4006,7 +4006,7 @@ app.post("/api/conversations/:id/calls", requireAuth, requireActiveChild, async 
         );
       }
       await client.query("commit");
-      await Promise.allSettled(expiredCalls.map((expiredCall) => notifyNativeCallState(expiredCall)));
+      await Promise.allSettled(expiredCalls.map((expiredCall) => notifyCallState(expiredCall)));
       if (shouldReply) {
         await notifyAccounts([caller.id], {
           title: callee.display_name,
@@ -4054,7 +4054,7 @@ app.post("/api/conversations/:id/calls", requireAuth, requireActiveChild, async 
     );
     await client.query("commit");
 
-    await Promise.allSettled(expiredCalls.map((expiredCall) => notifyNativeCallState(expiredCall)));
+    await Promise.allSettled(expiredCalls.map((expiredCall) => notifyCallState(expiredCall)));
     await notifyAccounts([callee.id], {
       title: `${caller.display_name} vous appelle`,
       body: callType === "video" ? "Appel vidéo entrant" : "Appel audio entrant",
@@ -4263,7 +4263,7 @@ async function respondToNativeCall(req, res) {
     client.release();
   }
 
-  if (stateChanged) await Promise.allSettled([notifyNativeCallState(call)]);
+  if (stateChanged) await Promise.allSettled([notifyCallState(call)]);
   if (sendDeclineMessageNotification) {
     await notifyAccounts([call.caller_id], {
       title: "Appel refusé",
@@ -4425,7 +4425,7 @@ app.patch("/api/calls/:callId", requireAuth, async (req, res) => {
       );
       call = await getCallRow(call.id, client);
       await client.query("commit");
-      await Promise.allSettled([notifyNativeCallState(call)]);
+      await Promise.allSettled([notifyCallState(call)]);
       return res.status(409).json({ error: "Cet appel a expiré.", call: serializeCall(call, req.auth.sub) });
     }
 
@@ -4470,7 +4470,7 @@ app.patch("/api/calls/:callId", requireAuth, async (req, res) => {
 
     call = await getCallRow(call.id, client);
     await client.query("commit");
-    await Promise.allSettled([notifyNativeCallState(call)]);
+    await Promise.allSettled([notifyCallState(call)]);
     if (notify) {
       await notifyAccounts([notify.accountId], {
         title: notify.title,

@@ -30,7 +30,8 @@ import { api } from "../api";
 import { createWebRtcSession, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "../webrtc";
 import { clearContactRequestFromUrl, formatServerMessageTime } from "../app-core";
 import "../styles/conversations.css";
-import { endNativeSystemCall } from "../native-notifications";
+import { Capacitor, endNativeSystemCall } from "../native-notifications";
+import { beginIncomingCallAlert } from "../incoming-call-alerts";
 import { Avatar, ParentModeNavigation } from "./AuthenticatedShared";
 import {
   ConversationMediaMessage,
@@ -686,6 +687,7 @@ export function RealtimeCallScreen({
   initialCall = null,
   initialIceServers = [],
   acceptedNatively = false,
+  webNotificationEnabled = false,
   policy,
   onClose,
   onConversationRefresh,
@@ -819,6 +821,19 @@ export function RealtimeCallScreen({
     const timer = window.setInterval(() => setDuration((current) => current + 1), 1000);
     return () => window.clearInterval(timer);
   }, [phase]);
+
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()
+      || direction !== "incoming"
+      || phase !== "incoming"
+      || call?.status !== "ringing") return undefined;
+    return beginIncomingCallAlert({
+      callId: call.id,
+      conversationId: call.conversationId,
+      expiresAt: call.expiresAt,
+      showNotification: webNotificationEnabled,
+    });
+  }, [call?.id, call?.status, direction, phase, webNotificationEnabled]);
 
   useEffect(() => () => {
     const currentCall = callRef.current;

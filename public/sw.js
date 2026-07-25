@@ -12,15 +12,26 @@ self.addEventListener("push", (event) => {
     try {
       data = event.data?.json() ?? {};
     } catch {}
+    if (data.notificationType === "call-state" && data.callId) {
+      const notifications = await self.registration.getNotifications({ tag: `call-${data.callId}` });
+      notifications.forEach((notification) => notification.close());
+      return;
+    }
     await self.registration.showNotification(data.title || "Secret Clubhouse", {
       body: data.body || "Vous avez une nouvelle notification.",
       tag: data.tag || "secret-clubhouse",
-      renotify: true,
+      renotify: data.notificationType !== "incoming-call",
       requireInteraction: true,
       silent: false,
       timestamp: Date.now(),
       actions: [{ action: "open", title: "Ouvrir" }],
-      data: { conversationId: data.conversationId, notificationType: data.notificationType, url: data.url || "/" },
+      data: {
+        callId: data.callId,
+        conversationId: data.conversationId,
+        expiresAt: data.expiresAt,
+        notificationType: data.notificationType,
+        url: data.url || "/",
+      },
     });
   })());
 });

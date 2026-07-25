@@ -24,6 +24,8 @@ import {
   NativeCallNotifications,
   PushNotifications,
 } from "./native-notifications";
+import { armIncomingCallAudio } from "./incoming-call-alerts";
+import { announceWebPushAvailability, synchronizeWebPushSubscription } from "./web-push-client";
 import "./styles/authenticated.css";
 
 const lazyNamed = (loader, exportName) => lazy(() => loader().then((module) => ({ default: module[exportName] })));
@@ -317,6 +319,7 @@ function BottomNavigation({ active, onChange }) {
 export function App({ initialAccount = null, initialRegistration = false }) {
   const dragScrollRef = useMouseDragScroll();
   const [session, setSession] = useState(null);
+  const [webPushReady, setWebPushReady] = useState(false);
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [familyOwner, setFamilyOwner] = useState({ name: "", email: "", contactId: "" });
   const [family, setFamily] = useState(null);
@@ -368,6 +371,34 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   const activeSchedule = activeChild ? schedulesByChild[activeChild.id] ?? defaultCommunicationSchedule : defaultCommunicationSchedule;
   const parentUnreadMessages = parentThreads.reduce((total, thread) => total + thread.unread, 0);
   nativeContextRef.current = { session, parentThreads, serverConversations };
+
+  useEffect(() => armIncomingCallAudio(), []);
+
+  useEffect(() => {
+    const handleWebPushSync = (event) => setWebPushReady(Boolean(event.detail?.enabled));
+    window.addEventListener("secretclubhouse:web-push-synced", handleWebPushSync);
+    return () => window.removeEventListener("secretclubhouse:web-push-synced", handleWebPushSync);
+  }, []);
+
+  useEffect(() => {
+    if (!session || Capacitor.isNativePlatform() || session.features?.webPush !== true) {
+      setWebPushReady(false);
+      return undefined;
+    }
+    let active = true;
+    synchronizeWebPushSubscription(api)
+      .then((result) => {
+        if (!active) return;
+        setWebPushReady(result.enabled);
+        announceWebPushAvailability(result.enabled);
+      })
+      .catch(() => {
+        if (active) setWebPushReady(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [session?.features?.webPush, session?.id]);
 
   useEffect(() => {
     callOverlayRef.current = callOverlay;
@@ -1547,6 +1578,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
               initialCall={callOverlay.call}
               initialIceServers={callOverlay.initialIceServers}
               acceptedNatively={callOverlay.acceptedNatively}
+              webNotificationEnabled={webPushReady}
               policy={callOverlay.policy}
               onConversationRefresh={synchronizeConversationState}
               onClose={closeRealtimeCall}
