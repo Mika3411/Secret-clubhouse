@@ -25,6 +25,7 @@ La version suivante :
 - configure `/api/health` comme chemin de healthcheck Render ;
 - fournit `npm run production:verify -- <origine> <sha-complet>` ;
 - fait échouer cette vérification si HTTPS, le SHA, `no-store`, `X-Request-ID`, la page d’entrée ou ses ressources versionnées ne correspondent pas.
+- après chaque push sur `main`, la CI attend le déploiement Render puis exécute cette vérification sur `GITHUB_SHA` ; un SHA différent ou un déploiement absent après dix minutes fait échouer le workflow.
 
 Le SHA Git est public et ne révèle ni variable, ni identifiant de service, ni secret Render. Le healthcheck continue de vérifier PostgreSQL par `select 1`.
 

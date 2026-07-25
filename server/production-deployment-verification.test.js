@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { verifyProductionDeployment } from "./verify-production-deployment.js";
 
@@ -81,4 +82,13 @@ test("refuse HTTP et un SHA abrégé", async () => {
     }),
     /40 caractères/u,
   );
+});
+
+test("la CI attend Render et vérifie le SHA exact après chaque push sur main", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/quality.yml", import.meta.url), "utf8");
+  assert.match(workflow, /verify-production:/u);
+  assert.match(workflow, /needs:\s*verify/u);
+  assert.match(workflow, /github\.event_name == 'push'[\s\S]+github\.ref == 'refs\/heads\/main'/u);
+  assert.match(workflow, /verify-production-deployment\.js[\s\S]+secret-clubhouse\.onrender\.com[\s\S]+GITHUB_SHA/u);
+  assert.match(workflow, /for attempt in \$\(seq 1 60\)/u);
 });

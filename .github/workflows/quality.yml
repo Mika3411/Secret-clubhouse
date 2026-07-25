@@ -54,3 +54,33 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew testDebugUnitTest lint --no-daemon --console=plain
+
+  verify-production:
+    name: Vérifier le SHA servi par Render
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Récupérer le vérificateur
+        uses: actions/checkout@v5
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.14.0
+
+      - name: Attendre et vérifier le déploiement Render
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            if node server/verify-production-deployment.js \
+              https://secret-clubhouse.onrender.com "$GITHUB_SHA"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "Render ne sert pas le SHA attendu après dix minutes." >&2
+              exit 1
+            fi
+            sleep 10
+          done
