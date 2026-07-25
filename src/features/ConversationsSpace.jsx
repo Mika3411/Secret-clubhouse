@@ -714,6 +714,7 @@ export function RealtimeCallScreen({
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
   const [isSpeakerOff, setIsSpeakerOff] = useState(false);
+  const [isRemoteVideoReady, setIsRemoteVideoReady] = useState(false);
   const [duration, setDuration] = useState(0);
   const effectivePolicy = policy ?? { allowed: true, detail: "Tout est prêt." };
   acceptedNativelyRef.current = acceptedNatively;
@@ -728,6 +729,7 @@ export function RealtimeCallScreen({
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+    setIsRemoteVideoReady(false);
   };
 
   const updateCall = (nextCall) => {
@@ -737,7 +739,10 @@ export function RealtimeCallScreen({
 
   const attachStreams = () => {
     if (localVideoRef.current && localStreamRef.current) localVideoRef.current.srcObject = localStreamRef.current;
-    if (remoteVideoRef.current && remoteStreamRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    if (remoteVideoRef.current && remoteStreamRef.current && remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
+      setIsRemoteVideoReady(false);
+      remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    }
     if (remoteAudioRef.current && remoteStreamRef.current) remoteAudioRef.current.srcObject = remoteStreamRef.current;
   };
 
@@ -1096,7 +1101,23 @@ export function RealtimeCallScreen({
 
   return (
     <section className="video-call-screen" aria-label={`Visio avec ${conversation.name}`}>
-      <video ref={remoteVideoRef} className="remote-video" autoPlay playsInline aria-label={`Vidéo de ${conversation.name}`} />
+      <div className={`remote-video-placeholder ${isRemoteVideoReady ? "is-hidden" : ""}`} role="status" aria-live="polite" aria-hidden={isRemoteVideoReady}>
+        <Avatar person={conversation} size="hero" />
+        <strong>{phase === "outgoing-ringing" ? "En attente de sa réponse" : "Connexion de la vidéo…"}</strong>
+        <span>L’image de {conversation.name} apparaîtra ici.</span>
+      </div>
+      <video
+        ref={remoteVideoRef}
+        className={`remote-video remote-video--guarded ${isRemoteVideoReady ? "is-ready" : ""}`}
+        autoPlay
+        playsInline
+        disablePictureInPicture
+        aria-hidden={!isRemoteVideoReady}
+        aria-label={`Vidéo de ${conversation.name}`}
+        onLoadedData={() => setIsRemoteVideoReady(true)}
+        onPlaying={() => setIsRemoteVideoReady(true)}
+        onEmptied={() => setIsRemoteVideoReady(false)}
+      />
       <div className="video-call-shade" />
       <header className="video-call-topbar video-call-topbar--active"><div><span className={`connection-dot ${connectionState === "connected" ? "is-connected" : ""}`} /><span>{connectionLabel}</span></div><strong>{formatCallDuration(duration)}</strong></header>
       <div className="video-call-person"><strong>{conversation.name}</strong><span>{phase === "outgoing-ringing" ? "En attente de sa réponse" : "Contact autorisé"}</span></div>
