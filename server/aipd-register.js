@@ -1,4 +1,4 @@
-export const aipdVersion = "1.17";
+export const aipdVersion = "1.18";
 export const aipdAssessmentDate = "2026-07-25";
 
 export const aipdRiskScale = Object.freeze({
@@ -205,7 +205,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Compromission d’un compte ou d’une session", "Erreur d’autorisation horizontale", "Accès privilégié ou fuite de sauvegarde", "Compromission d’une clé applicative"],
     impacts: ["Atteinte à l’intimité et à la dignité", "Harcèlement, chantage ou exposition d’images", "Perte de confiance et détresse de l’enfant"],
     initial: { severity: 4, likelihood: 4 },
-    existingMeasures: ["Conversations limitées aux participants autorisés", "Sessions opaques révocables et cookie web HttpOnly", "Format binaire, MIME réel et durée maximale de deux minutes vérifiés côté serveur pour les messages vocaux", "AES-256-GCM applicatif avec contexte authentifié", "Base PostgreSQL privée Render", "Contenu des conversations enfant-ami masqué aux parents non participants"],
+    existingMeasures: ["Conversations limitées aux participants autorisés", "Réponses bornées à la conversation d’origine et transferts revalidés puis rechiffrés pour la destination autorisée", "Sessions opaques révocables et cookie web HttpOnly", "Format binaire, MIME réel et durée maximale de deux minutes vérifiés côté serveur pour les messages vocaux", "AES-256-GCM applicatif avec contexte authentifié", "Base PostgreSQL privée Render", "Contenu des conversations enfant-ami masqué aux parents non participants"],
     residual: { severity: 4, likelihood: 3 },
     actionIds: ["A04", "A07", "A08"],
   }),

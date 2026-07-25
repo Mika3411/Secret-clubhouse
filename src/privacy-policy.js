@@ -32,7 +32,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       title: "Communications et activités",
-      text: "Relations et demandes de contact, participants aux conversations, messages, photos, vidéos, messages vocaux, états de réception, invitations et parties multijoueurs, métadonnées et signaux techniques des appels. Le contenu, les métadonnées descriptives des messages et médias, ainsi que les offres, réponses et candidats ICE WebRTC sont chiffrés par l’API avant leur stockage PostgreSQL.",
+      text: "Relations et demandes de contact, participants aux conversations, messages, photos, vidéos, messages vocaux, réponses, transferts, réactions, états de réception, invitations et parties multijoueurs, métadonnées et signaux techniques des appels. Le contenu, les métadonnées descriptives des messages et médias, ainsi que les offres, réponses et candidats ICE WebRTC sont chiffrés par l’API avant leur stockage PostgreSQL.",
     },
     {
       title: "Données techniques et de sécurité",
@@ -118,7 +118,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       data: "Messages et médias",
-      duration: "Les messages texte ou automatiques sans fichier sont supprimés après 365 jours. Les photos, images, vidéos, messages vocaux et autres médias binaires sont supprimés après 90 jours.",
+      duration: "Les messages texte ou automatiques sans fichier, avec leurs références de réponse, indicateurs de transfert et réactions, sont supprimés après 365 jours. Les photos, images, vidéos, messages vocaux et autres médias binaires, avec ces mêmes interactions, sont supprimés après 90 jours.",
     },
     {
       data: "Appels, présence et saisie",

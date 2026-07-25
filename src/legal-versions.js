@@ -1,7 +1,7 @@
 export const legalDocumentVersions = Object.freeze({
   terms: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
   legalNotice: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-  privacy: Object.freeze({ id: "2026-07-25", label: "25 juillet 2026" }),
+  privacy: Object.freeze({ id: "2026-07-25-v2", label: "25 juillet 2026 — version 2" }),
   parentalAuthority: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
   notificationConsent: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
 });

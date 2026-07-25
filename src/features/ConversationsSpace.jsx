@@ -2,11 +2,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Anchor } from "@phosphor-icons/react/Anchor";
 import { ArrowLeft } from "@phosphor-icons/react/ArrowLeft";
+import { ArrowBendUpLeft } from "@phosphor-icons/react/ArrowBendUpLeft";
 import { CaretRight } from "@phosphor-icons/react/CaretRight";
 import { ChatCircleDots } from "@phosphor-icons/react/ChatCircleDots";
 import { Check } from "@phosphor-icons/react/Check";
 import { CheckCircle } from "@phosphor-icons/react/CheckCircle";
 import { Clock } from "@phosphor-icons/react/Clock";
+import { Copy } from "@phosphor-icons/react/Copy";
+import { DotsThree } from "@phosphor-icons/react/DotsThree";
 import { GameController } from "@phosphor-icons/react/GameController";
 import { GridFour } from "@phosphor-icons/react/GridFour";
 import { LockKey } from "@phosphor-icons/react/LockKey";
@@ -18,6 +21,7 @@ import { PhoneDisconnect } from "@phosphor-icons/react/PhoneDisconnect";
 import { Plus } from "@phosphor-icons/react/Plus";
 import { Shield } from "@phosphor-icons/react/Shield";
 import { ShieldCheck } from "@phosphor-icons/react/ShieldCheck";
+import { ShareFat } from "@phosphor-icons/react/ShareFat";
 import { Smiley } from "@phosphor-icons/react/Smiley";
 import { SpeakerHigh } from "@phosphor-icons/react/SpeakerHigh";
 import { SpeakerSlash } from "@phosphor-icons/react/SpeakerSlash";
@@ -30,6 +34,11 @@ import { api } from "../api";
 import { createWebRtcSession, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "../webrtc";
 import { clearContactRequestFromUrl, formatServerMessageTime } from "../app-core";
 import { splitMessageLinks } from "../message-links";
+import {
+  describeMessageContent,
+  getMessageReactionOption,
+  messageReactionOptions,
+} from "../../shared/message-interactions";
 import {
   callAvailabilityPolicy,
   normalizePresenceAvailability,
@@ -64,6 +73,199 @@ function MessageText({ text }) {
           )
         : <span key={`text-${index}`}>{part.value}</span>)}
     </span>
+  );
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text ?? "").trim();
+  if (!value) return false;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Certains WebView refusent l’API moderne malgré une action utilisateur.
+    }
+  }
+  const field = document.createElement("textarea");
+  field.value = value;
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.opacity = "0";
+  document.body.appendChild(field);
+  field.select();
+  const copied = document.execCommand("copy");
+  field.remove();
+  return copied;
+}
+
+function MessageReplyQuote({ message, messages, parent = false }) {
+  if (!message.replyToMessageId) return null;
+  const original = messages.find((candidate) => candidate.id === message.replyToMessageId);
+  return (
+    <div className={`message-reply-quote${parent ? " message-reply-quote--parent" : ""}`}>
+      <ArrowBendUpLeft size={14} weight="bold" aria-hidden="true" />
+      <span><strong>Réponse</strong><small>{describeMessageContent(original)}</small></span>
+    </div>
+  );
+}
+
+function MessageReactionBar({ message, parent = false, disabled = false, onReact }) {
+  if (!message.reactions?.length) return null;
+  return (
+    <div className={`message-reactions${parent ? " message-reactions--parent" : ""}`} aria-label="Réactions au message">
+      {message.reactions.map((reaction) => {
+        const option = getMessageReactionOption(reaction.code);
+        if (!option) return null;
+        return (
+          <button
+            type="button"
+            className={reaction.reactedByMe ? "is-mine" : ""}
+            key={reaction.code}
+            aria-label={`${option.label}, ${reaction.count} réaction${reaction.count > 1 ? "s" : ""}`}
+            aria-pressed={reaction.reactedByMe}
+            disabled={disabled}
+            onClick={() => onReact?.(message, reaction.reactedByMe ? null : reaction.code)}
+          >
+            <span aria-hidden="true">{option.emoji}</span>
+            <strong>{reaction.count}</strong>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessageActionSheet({
+  message,
+  forwardTargets = [],
+  parent = false,
+  busy = false,
+  feedback = "",
+  onClose,
+  onReply,
+  onCopy,
+  onForward,
+  onReact,
+}) {
+  const [showForwardTargets, setShowForwardTargets] = useState(false);
+  const currentReaction = message.reactions?.find((reaction) => reaction.reactedByMe)?.code ?? null;
+
+  useEffect(() => {
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [busy, onClose]);
+
+  return createPortal((
+    <div className="message-action-backdrop" role="presentation" onMouseDown={() => { if (!busy) onClose(); }}>
+      <section
+        className={`message-action-sheet${parent ? " message-action-sheet--parent" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="message-action-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <div>
+            <span>Message</span>
+            <h2 id="message-action-title">{showForwardTargets ? "Transférer à…" : "Que voulez-vous faire ?"}</h2>
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} aria-label="Fermer les actions"><X size={22} weight="bold" /></button>
+        </header>
+
+        {showForwardTargets ? (
+          <div className="message-forward-targets">
+            {forwardTargets.length ? forwardTargets.map((target) => (
+              <button type="button" key={target.id} disabled={busy} onClick={() => onForward(target)}>
+                <span aria-hidden="true">{target.initials || String(target.name ?? "?").slice(0, 2).toUpperCase()}</span>
+                <strong>{target.name}</strong>
+                <small>{target.relation || (target.isFamily ? "Famille" : "Contact autorisé")}</small>
+                <CaretRight size={18} weight="bold" aria-hidden="true" />
+              </button>
+            )) : (
+              <p>Aucune autre conversation n’est disponible pour le moment.</p>
+            )}
+            <button type="button" className="message-forward-back" onClick={() => setShowForwardTargets(false)} disabled={busy}>
+              <ArrowLeft size={17} weight="bold" /> Retour aux actions
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="message-reaction-picker" aria-label="Choisir une réaction">
+              {messageReactionOptions.map((reaction) => (
+                <button
+                  type="button"
+                  className={currentReaction === reaction.code ? "is-selected" : ""}
+                  key={reaction.code}
+                  aria-label={reaction.label}
+                  aria-pressed={currentReaction === reaction.code}
+                  disabled={busy}
+                  onClick={() => onReact(currentReaction === reaction.code ? null : reaction.code)}
+                >
+                  <span aria-hidden="true">{reaction.emoji}</span>
+                </button>
+              ))}
+            </div>
+            <div className="message-action-grid">
+              <button type="button" disabled={busy} onClick={onReply}><ArrowBendUpLeft size={21} weight="bold" /><span>Répondre</span></button>
+              <button type="button" disabled={busy || !message.text} onClick={onCopy}><Copy size={21} weight="bold" /><span>Copier</span></button>
+              <button type="button" disabled={busy || !forwardTargets.length || message.messageKind !== "user"} onClick={() => setShowForwardTargets(true)}><ShareFat size={21} weight="fill" /><span>Transférer</span></button>
+            </div>
+          </>
+        )}
+        {feedback && <p className="message-action-feedback" role="status">{feedback}</p>}
+      </section>
+    </div>
+  ), document.body);
+}
+
+function InteractiveConversationMessage({
+  message,
+  messages,
+  parent = false,
+  interactionsDisabled = false,
+  onOpenActions,
+  onReact,
+}) {
+  const textMessage = message.type === "text";
+  return (
+    <div className={`interactive-message interactive-message--${message.direction}${parent ? " interactive-message--parent" : ""}`}>
+      <div className="interactive-message__content">
+        {!textMessage && <MessageReplyQuote message={message} messages={messages} parent={parent} />}
+        {message.isForwarded && <span className="message-forwarded-label"><ShareFat size={13} weight="fill" /> Transféré</span>}
+        {message.type === "audio"
+          ? <ConversationVoiceMessage message={message} parent={parent} />
+          : message.type === "image" || message.type === "video"
+            ? <ConversationMediaMessage message={message} parent={parent} />
+            : parent
+              ? (
+                <div className={`parent-message-bubble parent-message-bubble--${message.direction} ${message.messageKind === "automatic" ? "is-automatic" : ""}`}>
+                  <MessageReplyQuote message={message} messages={messages} parent />
+                  <p><MessageText text={message.text} /></p>
+                  <span className="parent-message-meta">{message.messageKind === "automatic" && <em>Automatique</em>}<time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</span>
+                </div>
+                )
+              : (
+                <div className={`bubble bubble--${message.direction} bubble--interactive ${message.messageKind === "automatic" ? "bubble--automatic" : ""}`}>
+                  <MessageReplyQuote message={message} messages={messages} />
+                  <MessageText text={message.text} />
+                  <span className="bubble__meta">{message.messageKind === "automatic" && <small>Automatique</small>}{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</span>
+                </div>
+                )}
+        <MessageReactionBar message={message} parent={parent} disabled={interactionsDisabled} onReact={onReact} />
+      </div>
+      <button
+        type="button"
+        className="message-action-trigger"
+        onClick={() => onOpenActions(message)}
+        aria-label="Répondre, copier, transférer ou réagir à ce message"
+      >
+        <DotsThree size={22} weight="bold" aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -1225,13 +1427,34 @@ export function RealtimeCallScreen({
   );
 }
 
-export function ChatScreen({ child, conversation, settings, schedule, onBack, onLoadOlderMessages, onRetryMessages, onSendMessage, onSendMedia, onInviteGame, onOpenGames, onStartCall }) {
+export function ChatScreen({
+  child,
+  conversation,
+  settings,
+  schedule,
+  forwardTargets = [],
+  onBack,
+  onLoadOlderMessages,
+  onRetryMessages,
+  onSendMessage,
+  onSendMedia,
+  onReactMessage,
+  onForwardMessage,
+  onInviteGame,
+  onOpenGames,
+  onStartCall,
+}) {
   const [draft, setDraft] = useState("");
   const [sentMessages, setSentMessages] = useState([]);
   const [mediaError, setMediaError] = useState("");
   const [messageError, setMessageError] = useState("");
   const [isGameInviteOpen, setIsGameInviteOpen] = useState(false);
+  const [activeMessageAction, setActiveMessageAction] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [interactionBusy, setInteractionBusy] = useState(false);
+  const [interactionFeedback, setInteractionFeedback] = useState("");
   const mediaInputRef = useRef(null);
+  const draftInputRef = useRef(null);
   const mediaUrlsRef = useRef([]);
   const messagePolicy = getChannelPolicy(schedule, "messages");
   const audioCallPolicy = getChannelPolicy(schedule, "calls");
@@ -1272,17 +1495,77 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
     mediaUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
   }, []);
 
+  useEffect(() => {
+    if (!activeMessageAction) return;
+    const updatedMessage = conversation.messages.find((message) => message.id === activeMessageAction.id);
+    if (updatedMessage && updatedMessage !== activeMessageAction) setActiveMessageAction(updatedMessage);
+  }, [activeMessageAction, conversation.messages]);
+
+  const reactToMessage = async (message, reactionCode) => {
+    if (!conversation.serverBacked || !onReactMessage || interactionBusy) return;
+    setInteractionBusy(true);
+    setInteractionFeedback("");
+    try {
+      await onReactMessage(conversation.id, message.id, reactionCode);
+    } catch (error) {
+      setInteractionFeedback(error.message || "La réaction n’a pas pu être ajoutée.");
+    } finally {
+      setInteractionBusy(false);
+    }
+  };
+
+  const copyActiveMessage = async () => {
+    try {
+      const copied = await copyTextToClipboard(activeMessageAction?.text);
+      setInteractionFeedback(copied ? "Message copié." : "Ce message ne peut pas être copié.");
+    } catch {
+      setInteractionFeedback("La copie n’est pas disponible sur cet appareil.");
+    }
+  };
+
+  const replyToActiveMessage = () => {
+    setReplyingTo(activeMessageAction);
+    setActiveMessageAction(null);
+    setInteractionFeedback("");
+    window.requestAnimationFrame(() => draftInputRef.current?.focus());
+  };
+
+  const forwardActiveMessage = async (target) => {
+    if (!activeMessageAction || !onForwardMessage || interactionBusy) return;
+    setInteractionBusy(true);
+    setInteractionFeedback("");
+    try {
+      await onForwardMessage(conversation.id, activeMessageAction.id, target.id);
+      setInteractionFeedback(`Message transféré à ${target.name}.`);
+    } catch (error) {
+      setInteractionFeedback(error.message || "Le message n’a pas pu être transféré.");
+    } finally {
+      setInteractionBusy(false);
+    }
+  };
+
   const sendMessage = async () => {
     if (!messagePolicy.allowed) return;
     const message = draft.trim();
     if (!message) return;
     setMessageError("");
     try {
-      const sent = await onSendMessage?.(conversation.id, message);
+      const sent = await onSendMessage?.(conversation.id, message, {
+        replyToMessageId: replyingTo?.id ?? null,
+      });
       if (!conversation.serverBacked) {
-        setSentMessages((current) => [...current, { id: sent?.id ?? `message-${Date.now()}`, type: "text", text: message, status: "sent" }]);
+        setSentMessages((current) => [...current, {
+          id: sent?.id ?? `message-${Date.now()}`,
+          direction: "sent",
+          type: "text",
+          text: message,
+          status: "sent",
+          replyToMessageId: replyingTo?.id ?? null,
+          reactions: [],
+        }]);
       }
       setDraft("");
+      setReplyingTo(null);
       stopTyping();
     } catch (error) {
       setMessageError(error?.status === 403 || error?.status === 409 || error?.status === 423
@@ -1360,16 +1643,24 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
         {!messagePolicy.allowed && (
           <div className="chat-quiet-banner" role="status"><Clock size={18} weight="fill" /><span><strong>{messagePolicy.reason}</strong><small>{messagePolicy.detail}</small></span></div>
         )}
-        {conversation.serverBacked ? conversation.messages.map((message) => message.type === "audio"
-          ? <ConversationVoiceMessage key={message.id} message={message} />
-          : message.type === "image" || message.type === "video"
-            ? <ConversationMediaMessage key={message.id} message={message} />
-            : <p className={`bubble bubble--${message.direction} ${message.messageKind === "automatic" ? "bubble--automatic" : ""}`} key={message.id}><MessageText text={message.text} />{message.messageKind === "automatic" && <small>Automatique</small>}{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</p>) : <>
+        {conversation.serverBacked ? conversation.messages.map((message) => (
+          <InteractiveConversationMessage
+            key={message.id}
+            message={message}
+            messages={conversation.messages}
+            interactionsDisabled={interactionBusy}
+            onOpenActions={(selectedMessage) => {
+              setActiveMessageAction(selectedMessage);
+              setInteractionFeedback("");
+            }}
+            onReact={reactToMessage}
+          />
+        )) : <>
           {conversation.received.map((message) => <p className="bubble bubble--received" key={message}><MessageText text={message} /></p>)}
           {conversation.sent && <p className="bubble bubble--sent"><MessageText text={conversation.sent} /><MessageStatus status="sent" /></p>}
         </>}
         {sentMessages.map((message) => {
-          if (message.type === "text") return <p className="bubble bubble--sent" key={message.id}><MessageText text={message.text} /><MessageStatus status={message.status} /></p>;
+          if (message.type === "text") return <InteractiveConversationMessage key={message.id} message={message} messages={sentMessages} onOpenActions={(selectedMessage) => setActiveMessageAction(selectedMessage)} />;
           if (message.type === "audio") return <VoiceMessage key={message.id} url={message.url} duration={message.duration} status={message.status} />;
           return <ConversationMediaMessage key={message.id} message={message} />;
         })}
@@ -1378,26 +1669,50 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
         <div className="safety-reminder"><LockKey size={16} weight="fill" /> {conversation.isFamily ? "Cette discussion familiale reste entre toi et ton parent." : "Cette discussion reste entre amis approuvés."}</div>
       </div>
 
-      {messageError && <div className="media-error" role="alert">{messageError}</div>}
-      {mediaError && <div className="media-error" role="alert">{mediaError}</div>}
-
-      <form className={`composer ${messagePolicy.allowed ? "" : "is-quiet"}`} onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
-        <input ref={mediaInputRef} className="sr-only" type="file" accept="image/*,video/*" multiple onChange={sendMedia} disabled={!messagePolicy.allowed || !settings.media} />
-        <button type="button" className={`composer__control ${settings.media ? "" : "is-restricted"}`} aria-label={settings.media ? "Ajouter des photos ou vidéos" : "Photos et vidéos désactivées par un parent"} title={settings.media ? "Ajouter des photos ou vidéos" : "Désactivé par un parent"} onClick={() => mediaInputRef.current?.click()} disabled={!messagePolicy.allowed || !settings.media}><Plus size={22} weight="bold" /></button>
-        <label className="composer__field">
-          <span className="sr-only">Écris un message</span>
-          <input value={draft} onChange={(event) => { setDraft(event.target.value); if (event.target.value.trim()) notifyTyping(); else stopTyping(); }} placeholder={messagePolicy.allowed ? "Écris un message…" : `Disponible à ${nextMessageTime}`} disabled={!messagePolicy.allowed} />
-          {messagePolicy.allowed ? <Smiley size={21} aria-hidden="true" /> : <Clock size={20} aria-hidden="true" />}
-        </label>
-        <VoiceRecorder disabled={!messagePolicy.allowed} onSend={sendVoiceMessage} />
-        <button type="submit" className="send-button" aria-label="Envoyer le message" disabled={!messagePolicy.allowed}><PaperPlaneTilt size={21} weight="fill" /></button>
-      </form>
+      <div className="chat-composer-area">
+        {messageError && <div className="media-error" role="alert">{messageError}</div>}
+        {mediaError && <div className="media-error" role="alert">{mediaError}</div>}
+        {replyingTo && (
+          <div className="composer-reply">
+            <ArrowBendUpLeft size={18} weight="bold" aria-hidden="true" />
+            <span><strong>Répondre au message</strong><small>{describeMessageContent(replyingTo)}</small></span>
+            <button type="button" onClick={() => setReplyingTo(null)} aria-label="Annuler la réponse"><X size={18} weight="bold" /></button>
+          </div>
+        )}
+        <form className={`composer ${messagePolicy.allowed ? "" : "is-quiet"}`} onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+          <input ref={mediaInputRef} className="sr-only" type="file" accept="image/*,video/*" multiple onChange={sendMedia} disabled={!messagePolicy.allowed || !settings.media} />
+          <button type="button" className={`composer__control ${settings.media ? "" : "is-restricted"}`} aria-label={settings.media ? "Ajouter des photos ou vidéos" : "Photos et vidéos désactivées par un parent"} title={settings.media ? "Ajouter des photos ou vidéos" : "Désactivé par un parent"} onClick={() => mediaInputRef.current?.click()} disabled={!messagePolicy.allowed || !settings.media}><Plus size={22} weight="bold" /></button>
+          <label className="composer__field">
+            <span className="sr-only">Écris un message</span>
+            <input ref={draftInputRef} value={draft} onChange={(event) => { setDraft(event.target.value); if (event.target.value.trim()) notifyTyping(); else stopTyping(); }} placeholder={messagePolicy.allowed ? "Écris un message…" : `Disponible à ${nextMessageTime}`} disabled={!messagePolicy.allowed} />
+            {messagePolicy.allowed ? <Smiley size={21} aria-hidden="true" /> : <Clock size={20} aria-hidden="true" />}
+          </label>
+          <VoiceRecorder disabled={!messagePolicy.allowed} onSend={sendVoiceMessage} />
+          <button type="submit" className="send-button" aria-label="Envoyer le message" disabled={!messagePolicy.allowed}><PaperPlaneTilt size={21} weight="fill" /></button>
+        </form>
+      </div>
       {isGameInviteOpen && <ConversationGameInviteDialog contactName={conversation.name} relation={conversation.isFamily ? "Membre de ta famille" : "Contact approuvé"} onClose={() => setIsGameInviteOpen(false)} onSend={sendGameInvitation} />}
+      {activeMessageAction && (
+        <MessageActionSheet
+          message={activeMessageAction}
+          forwardTargets={forwardTargets.filter((target) => target.id !== conversation.id)}
+          busy={interactionBusy}
+          feedback={interactionFeedback}
+          onClose={() => {
+            setActiveMessageAction(null);
+            setInteractionFeedback("");
+          }}
+          onReply={replyToActiveMessage}
+          onCopy={copyActiveMessage}
+          onForward={forwardActiveMessage}
+          onReact={(reactionCode) => reactToMessage(activeMessageAction, reactionCode)}
+        />
+      )}
     </section>
   );
 }
 
-export function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onLoadOlderMessages, onRetryMessages, onHome, onManagement, onSend, onSendMedia, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
+export function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onLoadOlderMessages, onRetryMessages, onHome, onManagement, onSend, onSendMedia, onReactMessage, onForwardMessage, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
   const availableRequesterIds = [parentContactId, ...familyChildren.map((child) => child.contactId)].filter(Boolean);
   const requesterProfileMismatch = Boolean(
     initialContactId
@@ -1417,7 +1732,12 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
   const [contactFeedback, setContactFeedback] = useState(null);
   const [isSubmittingContact, setIsSubmittingContact] = useState(false);
   const [messageError, setMessageError] = useState("");
+  const [activeMessageAction, setActiveMessageAction] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [interactionBusy, setInteractionBusy] = useState(false);
+  const [interactionFeedback, setInteractionFeedback] = useState("");
   const parentMediaInputRef = useRef(null);
+  const parentDraftInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const selectedAvailability = normalizePresenceAvailability(selectedThread?.availability);
@@ -1445,7 +1765,17 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
     latestParentConversationItemKey,
   );
 
-  useEffect(() => setIsGameInviteOpen(false), [selectedThreadId]);
+  useEffect(() => {
+    setIsGameInviteOpen(false);
+    setActiveMessageAction(null);
+    setReplyingTo(null);
+    setInteractionFeedback("");
+  }, [selectedThreadId]);
+  useEffect(() => {
+    if (!activeMessageAction || !selectedThread) return;
+    const updatedMessage = selectedThread.messages.find((message) => message.id === activeMessageAction.id);
+    if (updatedMessage && updatedMessage !== activeMessageAction) setActiveMessageAction(updatedMessage);
+  }, [activeMessageAction, selectedThread]);
   useEffect(() => {
     if (!initialContactId) return;
     setContactId(initialContactId);
@@ -1517,8 +1847,11 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
     if (!message || !selectedThread) return;
     setMessageError("");
     try {
-      await onSend(selectedThread.id, message);
+      await onSend(selectedThread.id, message, {
+        replyToMessageId: replyingTo?.id ?? null,
+      });
       setDraft("");
+      setReplyingTo(null);
       stopTyping();
     } catch (error) {
       setMessageError(error.message);
@@ -1560,6 +1893,49 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
     const extension = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
     const file = new File([blob], `message-vocal-${duration}s.${extension}`, { type: blob.type || "audio/webm" });
     await onSendMedia(selectedThread.id, [file]);
+  };
+
+  const reactToParentMessage = async (message, reactionCode) => {
+    if (!selectedThread?.serverBacked || !onReactMessage || interactionBusy) return;
+    setInteractionBusy(true);
+    setInteractionFeedback("");
+    try {
+      await onReactMessage(selectedThread.id, message.id, reactionCode);
+    } catch (error) {
+      setInteractionFeedback(error.message || "La réaction n’a pas pu être ajoutée.");
+    } finally {
+      setInteractionBusy(false);
+    }
+  };
+
+  const copyParentMessage = async () => {
+    try {
+      const copied = await copyTextToClipboard(activeMessageAction?.text);
+      setInteractionFeedback(copied ? "Message copié." : "Ce message ne peut pas être copié.");
+    } catch {
+      setInteractionFeedback("La copie n’est pas disponible sur cet appareil.");
+    }
+  };
+
+  const replyToParentMessage = () => {
+    setReplyingTo(activeMessageAction);
+    setActiveMessageAction(null);
+    setInteractionFeedback("");
+    window.requestAnimationFrame(() => parentDraftInputRef.current?.focus());
+  };
+
+  const forwardParentMessage = async (target) => {
+    if (!selectedThread || !activeMessageAction || !onForwardMessage || interactionBusy) return;
+    setInteractionBusy(true);
+    setInteractionFeedback("");
+    try {
+      await onForwardMessage(selectedThread.id, activeMessageAction.id, target.id);
+      setInteractionFeedback(`Message transféré à ${target.name}.`);
+    } catch (error) {
+      setInteractionFeedback(error.message || "Le message n’a pas pu être transféré.");
+    } finally {
+      setInteractionBusy(false);
+    }
   };
 
   return (
@@ -1606,29 +1982,62 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
                 {selectedThread.messagesError && <span role="alert">{selectedThread.messagesError} <button type="button" onClick={() => onRetryMessages?.(selectedThread.id)}>Réessayer</button></span>}
               </div>
               <span className="parent-thread-day">Aujourd’hui</span>
-              {selectedThread.messages.map((message) => message.type === "audio"
-                ? <ConversationVoiceMessage key={message.id} message={message} parent />
-                : message.type === "image" || message.type === "video"
-                  ? <ConversationMediaMessage key={message.id} message={message} parent />
-                  : <div className={`parent-message-bubble parent-message-bubble--${message.direction} ${message.messageKind === "automatic" ? "is-automatic" : ""}`} key={message.id}>
-                      <p><MessageText text={message.text} /></p><span className="parent-message-meta">{message.messageKind === "automatic" && <em>Automatique</em>}<time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</span>
-                    </div>)}
+              {selectedThread.messages.map((message) => (
+                <InteractiveConversationMessage
+                  key={message.id}
+                  message={message}
+                  messages={selectedThread.messages}
+                  parent
+                  interactionsDisabled={interactionBusy}
+                  onOpenActions={(selectedMessage) => {
+                    setActiveMessageAction(selectedMessage);
+                    setInteractionFeedback("");
+                  }}
+                  onReact={reactToParentMessage}
+                />
+              ))}
               {(mediaByThread[selectedThread.id] ?? []).map((media) => media.type === "audio"
                 ? <VoiceMessage key={media.id} url={media.url} duration={media.duration} status={media.status} parent />
                 : <ConversationMediaMessage key={media.id} message={media} parent />)}
               {conversationGames.map((game) => <ConversationGameInviteCard key={game.id} game={game} contactId={selectedThread.contactId} contactName={selectedThread.name} parent busyAction={gameBusyAction} onRespond={respondToGameInvitation} onOpenGames={onOpenGames} />)}
               <TypingIndicator name={typingName} />
             </div>
-            {messageError && <div className="parent-media-error" role="alert">{messageError}</div>}
-            {mediaError && <div className="parent-media-error" role="alert">{mediaError}</div>}
-            <form className="parent-message-composer" onSubmit={submitMessage}>
-              <input ref={parentMediaInputRef} className="sr-only" type="file" accept="image/*,video/*" multiple onChange={sendParentMedia} />
-              <button type="button" className="parent-media-button" onClick={() => parentMediaInputRef.current?.click()} aria-label="Ajouter des photos ou vidéos"><Plus size={21} weight="bold" /></button>
-              <label><span className="sr-only">Écrire un message à {selectedThread.name}</span><input value={draft} onChange={(event) => { setDraft(event.target.value); if (event.target.value.trim()) notifyTyping(); else stopTyping(); }} placeholder="Votre message…" /></label>
-              <VoiceRecorder onSend={sendParentVoice} parent />
-              <button type="submit" disabled={!draft.trim()} aria-label="Envoyer le message"><PaperPlaneTilt size={21} weight="fill" /></button>
-            </form>
+            <div className="parent-composer-area">
+              {messageError && <div className="parent-media-error" role="alert">{messageError}</div>}
+              {mediaError && <div className="parent-media-error" role="alert">{mediaError}</div>}
+              {replyingTo && (
+                <div className="composer-reply composer-reply--parent">
+                  <ArrowBendUpLeft size={18} weight="bold" aria-hidden="true" />
+                  <span><strong>Répondre au message</strong><small>{describeMessageContent(replyingTo)}</small></span>
+                  <button type="button" onClick={() => setReplyingTo(null)} aria-label="Annuler la réponse"><X size={18} weight="bold" /></button>
+                </div>
+              )}
+              <form className="parent-message-composer" onSubmit={submitMessage}>
+                <input ref={parentMediaInputRef} className="sr-only" type="file" accept="image/*,video/*" multiple onChange={sendParentMedia} />
+                <button type="button" className="parent-media-button" onClick={() => parentMediaInputRef.current?.click()} aria-label="Ajouter des photos ou vidéos"><Plus size={21} weight="bold" /></button>
+                <label><span className="sr-only">Écrire un message à {selectedThread.name}</span><input ref={parentDraftInputRef} value={draft} onChange={(event) => { setDraft(event.target.value); if (event.target.value.trim()) notifyTyping(); else stopTyping(); }} placeholder="Votre message…" /></label>
+                <VoiceRecorder onSend={sendParentVoice} parent />
+                <button type="submit" disabled={!draft.trim()} aria-label="Envoyer le message"><PaperPlaneTilt size={21} weight="fill" /></button>
+              </form>
+            </div>
             {isGameInviteOpen && <ConversationGameInviteDialog contactName={selectedThread.name} relation={selectedThread.isFamily ? "Votre enfant" : selectedThread.isHouseholdParent ? "Parent de votre famille" : "Contact adulte autorisé"} parent onClose={() => setIsGameInviteOpen(false)} onSend={sendGameInvitation} />}
+            {activeMessageAction && (
+              <MessageActionSheet
+                message={activeMessageAction}
+                forwardTargets={threads.filter((thread) => thread.id !== selectedThread.id)}
+                parent
+                busy={interactionBusy}
+                feedback={interactionFeedback}
+                onClose={() => {
+                  setActiveMessageAction(null);
+                  setInteractionFeedback("");
+                }}
+                onReply={replyToParentMessage}
+                onCopy={copyParentMessage}
+                onForward={forwardParentMessage}
+                onReact={(reactionCode) => reactToParentMessage(activeMessageAction, reactionCode)}
+              />
+            )}
           </> : (
             <div className="parent-thread-placeholder">
               <span><ChatCircleDots size={34} weight="fill" /></span>

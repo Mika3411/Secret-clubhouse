@@ -182,7 +182,27 @@ export const api = {
   respondToGame: (gameId, action) => request(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify({ action }) }),
   stopGame: (gameId) => request(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify({ action: "stop" }) }),
   playGameMove: (gameId, move) => request(`/games/${encodeURIComponent(gameId)}/moves`, { method: "POST", body: JSON.stringify({ move }) }),
-  sendMessage: (conversationId, text) => request(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
+  sendMessage: (conversationId, text, { replyToMessageId = null } = {}) => request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({ text, replyToMessageId }),
+    },
+  ),
+  reactToMessage: (conversationId, messageId, reactionCode) => request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/reaction`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ reactionCode }),
+    },
+  ),
+  forwardMessage: (conversationId, messageId, targetConversationId) => request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/forward`,
+    {
+      method: "POST",
+      body: JSON.stringify({ targetConversationId }),
+    },
+  ),
   markConversationRead: (conversationId, messageIds = []) => request(`/conversations/${encodeURIComponent(conversationId)}/read`, {
     method: "POST",
     body: JSON.stringify({ messageIds }),

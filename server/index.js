@@ -64,6 +64,7 @@ import {
   decryptMessageContent,
   encryptMessageContent,
 } from "./encryption/message-content.js";
+import { normalizeMessageReactionCode } from "../shared/message-interactions.js";
 import { migrateLegacyMessageContent } from "./message-encryption-migration.js";
 import { decryptCallSignal, encryptCallSignal } from "./encryption/call-signal-content.js";
 import { migrateLegacyCallSignals } from "./call-signal-encryption-migration.js";
@@ -2592,7 +2593,7 @@ async function ensureHouseholdParentConversations(accountId) {
   }
 }
 
-function serializeConversationMessage(message) {
+function serializeConversationMessage(message, reactions = []) {
   const content = decryptMessageContent(message);
   return {
     id: message.id,
@@ -2602,10 +2603,41 @@ function serializeConversationMessage(message) {
     mediaName: content.mediaName,
     mediaType: content.mediaType,
     messageKind: message.message_kind ?? message.messageKind ?? "user",
+    replyToMessageId: message.reply_to_message_id ?? message.replyToMessageId ?? null,
+    isForwarded: Boolean(message.is_forwarded ?? message.isForwarded),
+    reactions,
     createdAt: message.created_at ?? message.createdAt,
     deliveryStatus: message.delivery_status ?? message.deliveryStatus ?? null,
     syncVersion: String(message.sync_version ?? message.syncVersion ?? "0"),
   };
+}
+
+async function serializeConversationMessages(messages, accountId, executor = pool) {
+  if (!messages.length) return [];
+  const messageIds = messages.map((message) => message.id);
+  const result = await executor.query(
+    `select message_id,reaction_code,count(*)::int as count,
+       bool_or(account_id=$2) as reacted_by_me
+     from message_reactions
+     where message_id=any($1::uuid[])
+     group by message_id,reaction_code
+     order by message_id,reaction_code`,
+    [messageIds, accountId],
+  );
+  const reactionsByMessage = new Map();
+  for (const reaction of result.rows) {
+    const reactions = reactionsByMessage.get(reaction.message_id) ?? [];
+    reactions.push({
+      code: reaction.reaction_code,
+      count: Number(reaction.count),
+      reactedByMe: Boolean(reaction.reacted_by_me),
+    });
+    reactionsByMessage.set(reaction.message_id, reactions);
+  }
+  return messages.map((message) => serializeConversationMessage(
+    message,
+    reactionsByMessage.get(message.id) ?? [],
+  ));
 }
 
 async function currentConversationSyncCursor(executor = pool) {
@@ -2651,6 +2683,8 @@ async function listConversationSummaries(accountId, executor = pool) {
         'contentEncryptionVersion',latest.content_encryption_version,
         'contentEncryptionKeyId',latest.content_encryption_key_id,
         'messageKind',latest.message_kind,
+        'replyToMessageId',latest.reply_to_message_id,
+        'isForwarded',latest.is_forwarded,
         'createdAt',latest.created_at,
         'syncVersion',latest.sync_version,
         'deliveryStatus',case
@@ -2683,11 +2717,20 @@ async function listConversationSummaries(accountId, executor = pool) {
         )
       )
     order by latest_message.created_at desc nulls last,c.id`, [accountId]);
+  const latestMessages = result.rows
+    .map((conversation) => conversation.latest_message)
+    .filter(Boolean);
+  const serializedLatestMessages = await serializeConversationMessages(
+    latestMessages,
+    accountId,
+    executor,
+  );
+  const latestMessageById = new Map(serializedLatestMessages.map((message) => [message.id, message]));
   return result.rows.map((conversation) => ({
     ...conversation,
     communication_schedule: serializeCommunicationSchedule(conversation.communication_schedule),
     latest_message: conversation.latest_message
-      ? serializeConversationMessage(conversation.latest_message)
+      ? latestMessageById.get(conversation.latest_message.id) ?? null
       : null,
   }));
 }
@@ -2721,7 +2764,8 @@ app.get("/api/conversations/sync", requireAuth, requireActiveChild, async (req, 
       message.body,message.media_name,message.media_type,
       message.body_ciphertext,message.media_name_ciphertext,message.media_type_ciphertext,
       message.content_encryption_version,message.content_encryption_key_id,
-      message.message_kind,message.created_at,message.sync_version,
+      message.message_kind,message.reply_to_message_id,message.is_forwarded,
+      message.created_at,message.sync_version,
       case
         when message.sender_id<>$1 then null
         else coalesce((
@@ -2758,9 +2802,10 @@ app.get("/api/conversations/sync", requireAuth, requireActiveChild, async (req, 
     ? String(changedRows.at(-1)?.sync_version ?? cursor)
     : watermark;
   const conversations = await listConversationSummaries(req.auth.sub);
+  const messages = await serializeConversationMessages(changedRows, req.auth.sub);
   res.json({
     conversations,
-    messages: changedRows.map(serializeConversationMessage),
+    messages,
     cursor: nextCursor,
     hasMore,
   });
@@ -2779,7 +2824,8 @@ app.get("/api/conversations/:id/messages", requireAuth, requireActiveChild, asyn
       message.body,message.media_name,message.media_type,
       message.body_ciphertext,message.media_name_ciphertext,message.media_type_ciphertext,
       message.content_encryption_version,message.content_encryption_key_id,
-      message.message_kind,message.created_at,message.sync_version,
+      message.message_kind,message.reply_to_message_id,message.is_forwarded,
+      message.created_at,message.sync_version,
       case
         when message.sender_id<>$1 then null
         else coalesce((
@@ -2810,7 +2856,7 @@ app.get("/api/conversations/:id/messages", requireAuth, requireActiveChild, asyn
   const hasMore = result.rows.length > limit;
   const pageRows = result.rows.slice(0, limit);
   await markMessagesReceived(req.auth.sub, pageRows.map((message) => message.id));
-  const messages = pageRows.reverse().map(serializeConversationMessage);
+  const messages = await serializeConversationMessages(pageRows.reverse(), req.auth.sub);
   const oldest = messages[0];
   res.json({
     messages,
@@ -4599,12 +4645,26 @@ app.post("/api/conversations/:id/typing", requireAuth, requireActiveChild, requi
 app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, requireConversationMessagingAccess, async (req, res) => {
   const body = String(req.body?.text ?? "").trim();
   if (!body || body.length > 4000) return res.status(400).json({ error: "Message vide ou trop long." });
+  const replyToMessageId = req.body?.replyToMessageId
+    ? String(req.body.replyToMessageId).trim()
+    : null;
+  if (replyToMessageId && !uuidPattern.test(replyToMessageId)) {
+    return res.status(400).json({ error: "Message d’origine invalide." });
+  }
   const client = await pool.connect();
   let message;
   try {
     await client.query("begin");
     if (!await isConversationMember(req.auth.sub, req.params.id, client)) throw httpError(403, "Conversation non autorisée.");
     await assertConversationPolicy(req.params.id, { channel: "messages" }, client, true);
+    if (replyToMessageId) {
+      const original = await client.query(
+        `select id from messages
+         where id=$1 and conversation_id=$2 and deleted_at is null`,
+        [replyToMessageId, req.params.id],
+      );
+      if (!original.rowCount) throw httpError(400, "Le message d’origine n’est plus disponible.");
+    }
     const id = crypto.randomUUID();
     const encrypted = encryptMessageContent({
       id,
@@ -4615,9 +4675,9 @@ app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, req
     const result = await client.query(
       `insert into messages(
          id,conversation_id,sender_id,body_ciphertext,
-         content_encryption_version,content_encryption_key_id
-       ) values($1,$2,$3,$4,$5,$6)
-       returning id,created_at`,
+         content_encryption_version,content_encryption_key_id,reply_to_message_id
+       ) values($1,$2,$3,$4,$5,$6,$7)
+       returning id,created_at,sync_version`,
       [
         id,
         req.params.id,
@@ -4625,9 +4685,22 @@ app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, req
         encrypted.bodyCiphertext,
         encrypted.encryptionVersion,
         encrypted.encryptionKeyId,
+        replyToMessageId,
       ],
     );
-    message = { ...result.rows[0], body };
+    message = {
+      id: result.rows[0].id,
+      conversationId: req.params.id,
+      senderId: req.auth.sub,
+      text: body,
+      messageKind: "user",
+      replyToMessageId,
+      isForwarded: false,
+      reactions: [],
+      createdAt: result.rows[0].created_at,
+      deliveryStatus: "sent",
+      syncVersion: String(result.rows[0].sync_version),
+    };
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -4644,6 +4717,197 @@ app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, req
     url: `/?notification=message&conversation=${encodeURIComponent(req.params.id)}`,
   });
   res.status(201).json({ message });
+});
+
+app.put("/api/conversations/:id/messages/:messageId/reaction", requireAuth, requireActiveChild, requireConversationMessagingAccess, async (req, res) => {
+  if (!uuidPattern.test(req.params.messageId)) {
+    return res.status(400).json({ error: "Message invalide." });
+  }
+  const reactionCode = req.body?.reactionCode === null
+    ? null
+    : normalizeMessageReactionCode(req.body?.reactionCode);
+  if (req.body?.reactionCode !== null && !reactionCode) {
+    return res.status(400).json({ error: "Réaction invalide." });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const messageResult = await client.query(
+      `select message.id,message.conversation_id,message.sender_id,
+         message.body,message.media_name,message.media_type,
+         message.body_ciphertext,message.media_name_ciphertext,message.media_type_ciphertext,
+         message.content_encryption_version,message.content_encryption_key_id,
+         message.message_kind,message.reply_to_message_id,message.is_forwarded,
+         message.created_at,message.sync_version,
+         case
+           when message.sender_id<>$3 then null
+           else coalesce((
+             select case
+               when count(*)=0 then 'sent'
+               when bool_and(receipt.seen_at is not null) then 'seen'
+               when bool_and(receipt.received_at is not null) then 'received'
+               else 'sent'
+             end
+             from message_receipts receipt
+             where receipt.message_id=message.id
+           ),'sent')
+         end as delivery_status
+       from messages message
+       where message.id=$1 and message.conversation_id=$2 and message.deleted_at is null
+       for update`,
+      [req.params.messageId, req.params.id, req.auth.sub],
+    );
+    if (!messageResult.rowCount) throw httpError(404, "Message introuvable.");
+    if (reactionCode) {
+      await client.query(
+        `insert into message_reactions(message_id,account_id,reaction_code)
+         values($1,$2,$3)
+         on conflict(message_id,account_id) do update
+           set reaction_code=excluded.reaction_code,updated_at=clock_timestamp()`,
+        [req.params.messageId, req.auth.sub, reactionCode],
+      );
+    } else {
+      await client.query(
+        "delete from message_reactions where message_id=$1 and account_id=$2",
+        [req.params.messageId, req.auth.sub],
+      );
+    }
+    const refreshedMessage = await client.query(
+      `select message.id,message.conversation_id,message.sender_id,
+         message.body,message.media_name,message.media_type,
+         message.body_ciphertext,message.media_name_ciphertext,message.media_type_ciphertext,
+         message.content_encryption_version,message.content_encryption_key_id,
+         message.message_kind,message.reply_to_message_id,message.is_forwarded,
+         message.created_at,message.sync_version,
+         case
+           when message.sender_id<>$2 then null
+           else coalesce((
+             select case
+               when count(*)=0 then 'sent'
+               when bool_and(receipt.seen_at is not null) then 'seen'
+               when bool_and(receipt.received_at is not null) then 'received'
+               else 'sent'
+             end
+             from message_receipts receipt
+             where receipt.message_id=message.id
+           ),'sent')
+         end as delivery_status
+       from messages message
+       where message.id=$1`,
+      [req.params.messageId, req.auth.sub],
+    );
+    const [message] = await serializeConversationMessages(refreshedMessage.rows, req.auth.sub, client);
+    await client.query("commit");
+    return res.json({ message });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/conversations/:id/messages/:messageId/forward", requireAuth, requireActiveChild, requireConversationMessagingAccess, async (req, res) => {
+  const targetConversationId = String(req.body?.targetConversationId ?? "").trim();
+  if (!uuidPattern.test(req.params.messageId) || !uuidPattern.test(targetConversationId)) {
+    return res.status(400).json({ error: "Message ou conversation invalide." });
+  }
+  if (targetConversationId === req.params.id) {
+    return res.status(400).json({ error: "Choisissez une autre conversation." });
+  }
+  const client = await pool.connect();
+  let forwardedMessage;
+  let sourceMediaData;
+  let encryptedMediaData;
+  try {
+    await client.query("begin");
+    if (!await isConversationMember(req.auth.sub, targetConversationId, client)) {
+      throw httpError(403, "Conversation de destination non autorisée.");
+    }
+    const sourceResult = await client.query(
+      `select message.*
+       from messages message
+       where message.id=$1
+         and message.conversation_id=$2
+         and message.deleted_at is null
+         and message.message_kind='user'
+       for share`,
+      [req.params.messageId, req.params.id],
+    );
+    if (!sourceResult.rowCount) throw httpError(404, "Message introuvable.");
+    const sourceContent = decryptMessageContent(sourceResult.rows[0]);
+    sourceMediaData = sourceContent.mediaData;
+    const requiresVisualMedia = String(sourceContent.mediaType ?? "").startsWith("image/")
+      || String(sourceContent.mediaType ?? "").startsWith("video/");
+    await assertConversationPolicy(
+      targetConversationId,
+      { channel: "messages", requiresVisualMedia },
+      client,
+      true,
+    );
+    const id = crypto.randomUUID();
+    const encrypted = encryptMessageContent({
+      id,
+      conversationId: targetConversationId,
+      senderId: req.auth.sub,
+      body: sourceContent.body,
+      mediaName: sourceContent.mediaName,
+      mediaType: sourceContent.mediaType,
+      mediaData: sourceContent.mediaData,
+    });
+    encryptedMediaData = encrypted.mediaCiphertext;
+    const inserted = await client.query(
+      `insert into messages(
+         id,conversation_id,sender_id,body_ciphertext,
+         media_name_ciphertext,media_type_ciphertext,media_ciphertext,
+         content_encryption_version,content_encryption_key_id,is_forwarded
+       ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,true)
+       returning id,created_at,sync_version`,
+      [
+        id,
+        targetConversationId,
+        req.auth.sub,
+        encrypted.bodyCiphertext,
+        encrypted.mediaNameCiphertext,
+        encrypted.mediaTypeCiphertext,
+        encrypted.mediaCiphertext,
+        encrypted.encryptionVersion,
+        encrypted.encryptionKeyId,
+      ],
+    );
+    forwardedMessage = {
+      id: inserted.rows[0].id,
+      conversationId: targetConversationId,
+      senderId: req.auth.sub,
+      text: sourceContent.body,
+      mediaName: sourceContent.mediaName,
+      mediaType: sourceContent.mediaType,
+      messageKind: "user",
+      replyToMessageId: null,
+      isForwarded: true,
+      reactions: [],
+      createdAt: inserted.rows[0].created_at,
+      deliveryStatus: "sent",
+      syncVersion: String(inserted.rows[0].sync_version),
+    };
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    encryptedMediaData?.fill(0);
+    sourceMediaData?.fill(0);
+    client.release();
+  }
+  await notifyConversation(targetConversationId, req.auth.sub, {
+    title: "Secret Clubhouse",
+    body: "Nouveau message.",
+    notificationType: "message",
+    conversationId: targetConversationId,
+    tag: `conversation-${targetConversationId}`,
+    url: `/?notification=message&conversation=${encodeURIComponent(targetConversationId)}`,
+  });
+  return res.status(201).json({ message: forwardedMessage });
 });
 
 const supportedAudioTypes = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/aac", "audio/x-m4a"]);

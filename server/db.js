@@ -702,6 +702,8 @@ export async function initializeDatabase() {
       content_encryption_version smallint not null default 0,
       content_encryption_key_id text,
       message_kind text not null default 'user',
+      reply_to_message_id uuid references messages(id) on delete set null,
+      is_forwarded boolean not null default false,
       deleted_at timestamptz,
       created_at timestamptz not null default now(),
       sync_version bigint not null default nextval('message_sync_version_seq'),
@@ -715,6 +717,8 @@ export async function initializeDatabase() {
     alter table messages add column if not exists content_encryption_key_id text;
     alter table messages add column if not exists deleted_at timestamptz;
     alter table messages add column if not exists sync_version bigint;
+    alter table messages add column if not exists reply_to_message_id uuid references messages(id) on delete set null;
+    alter table messages add column if not exists is_forwarded boolean not null default false;
     alter table messages alter column sync_version set default nextval('message_sync_version_seq');
     update messages set sync_version=nextval('message_sync_version_seq') where sync_version is null;
     alter table messages alter column sync_version set not null;
@@ -835,6 +839,44 @@ export async function initializeDatabase() {
     create trigger messages_set_expiry
       before insert or update of media_data,media_ciphertext,message_kind on messages
       for each row execute function set_message_expiry();
+    create index if not exists messages_reply_to_idx
+      on messages(reply_to_message_id)
+      where reply_to_message_id is not null;
+
+    create table if not exists message_reactions (
+      message_id uuid not null references messages(id) on delete cascade,
+      account_id uuid not null references accounts(id) on delete cascade,
+      reaction_code text not null
+        check (reaction_code in ('heart','thumbs_up','laugh','wow','sad','clap')),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key(message_id,account_id)
+    );
+    create index if not exists message_reactions_message_idx
+      on message_reactions(message_id,reaction_code);
+
+    create or replace function touch_reacted_message_sync_version()
+    returns trigger
+    language plpgsql
+    as $$
+    begin
+      if tg_op='DELETE' then
+        update messages
+          set sync_version=nextval('message_sync_version_seq')
+          where id=old.message_id;
+        return old;
+      end if;
+      new.updated_at=clock_timestamp();
+      update messages
+        set sync_version=nextval('message_sync_version_seq')
+        where id=new.message_id;
+      return new;
+    end;
+    $$;
+    drop trigger if exists message_reactions_touch_message on message_reactions;
+    create trigger message_reactions_touch_message
+      before insert or update or delete on message_reactions
+      for each row execute function touch_reacted_message_sync_version();
 
     create table if not exists message_receipts (
       message_id uuid not null references messages(id) on delete cascade,

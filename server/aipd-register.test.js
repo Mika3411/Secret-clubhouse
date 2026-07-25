@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.17 conserve A07 ouverte pour les essais réels et le binaire public", () => {
-  assert.equal(aipdVersion, "1.17");
+test("la réévaluation 1.18 conserve A07 ouverte pour les essais réels et le binaire public", () => {
+  assert.equal(aipdVersion, "1.18");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(

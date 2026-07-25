@@ -145,6 +145,7 @@ export async function createReadablePrivacyExport(executor, {
     relationshipsResult,
     contactRequestsResult,
     messagesResult,
+    reactionsResult,
     activitiesResult,
     clubhouseDailyResult,
     gamesResult,
@@ -191,7 +192,8 @@ export async function createReadablePrivacyExport(executor, {
         message.body_ciphertext,message.media_name_ciphertext,
         message.media_type_ciphertext,
         message.content_encryption_version,message.content_encryption_key_id,
-        message.message_kind,message.created_at,message.expires_at,
+        message.message_kind,message.reply_to_message_id,message.is_forwarded,
+        message.created_at,message.expires_at,
         exists(
           select 1 from conversation_members requester_member
           where requester_member.conversation_id=message.conversation_id
@@ -201,6 +203,15 @@ export async function createReadablePrivacyExport(executor, {
        where message.sender_id=$1
        order by message.created_at`,
       [subject.id, requesterId],
+    ),
+    executor.query(
+      `select reaction.message_id,message.conversation_id,reaction.reaction_code,
+        reaction.created_at,reaction.updated_at
+       from message_reactions reaction
+       join messages message on message.id=reaction.message_id
+       where reaction.account_id=$1
+       order by reaction.created_at`,
+      [subject.id],
     ),
     subject.role === "child"
       ? executor.query(
@@ -275,6 +286,8 @@ export async function createReadablePrivacyExport(executor, {
       id: message.id,
       conversationId: message.conversation_id,
       kind: message.message_kind,
+      replyToMessageId: message.reply_to_message_id ?? null,
+      forwarded: Boolean(message.is_forwarded),
       createdAt: safeDate(message.created_at),
       expiresAt: safeDate(message.expires_at),
       content: content?.body ?? null,
@@ -324,6 +337,13 @@ export async function createReadablePrivacyExport(executor, {
     approvedContacts: relationshipsResult.rows,
     contactRequests: contactRequestsResult.rows,
     authoredMessages: messages,
+    messageReactions: reactionsResult.rows.map((reaction) => ({
+      messageId: reaction.message_id,
+      conversationId: reaction.conversation_id,
+      reactionCode: reaction.reaction_code,
+      createdAt: safeDate(reaction.created_at),
+      updatedAt: safeDate(reaction.updated_at),
+    })),
     clubhouseProgress: activitiesResult.rows,
     clubhouseDailyActivity: clubhouseDailyResult.rows,
     games: gamesResult.rows,

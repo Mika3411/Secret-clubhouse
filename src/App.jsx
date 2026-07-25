@@ -1120,8 +1120,8 @@ export function App({ initialAccount = null, initialRegistration = false }) {
     }
   };
 
-  const sendParentMessage = async (threadId, text) => {
-    const result = await api.sendMessage(threadId, text);
+  const sendParentMessage = async (threadId, text, options = {}) => {
+    const result = await api.sendMessage(threadId, text, options);
     const nextMessage = mapServerMessage(result.message, session.id, "sent");
     setParentThreads((current) => current.map((thread) => thread.id === threadId ? {
       ...thread,
@@ -1147,8 +1147,8 @@ export function App({ initialAccount = null, initialRegistration = false }) {
     return nextMessages;
   };
 
-  const sendChildMessage = async (conversationId, text) => {
-    const { message } = await api.sendMessage(conversationId, text);
+  const sendChildMessage = async (conversationId, text, options = {}) => {
+    const { message } = await api.sendMessage(conversationId, text, options);
     const nextMessage = mapServerMessage(message, session.id, "sent");
     setServerConversations((current) => current.map((conversation) => conversation.id === conversationId ? {
       ...conversation,
@@ -1162,6 +1162,47 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       time: "À l’instant",
       messages: mergeConversationMessages(current.messages, nextMessage ? [nextMessage] : []),
     } : current);
+    return message;
+  };
+
+  const reactConversationMessage = async (conversationId, messageId, reactionCode) => {
+    const { message } = await api.reactToMessage(conversationId, messageId, reactionCode);
+    const nextMessage = mapServerMessage(message, session.id);
+    if (!nextMessage) return message;
+    const updateConversation = (conversation) => conversation.id === conversationId ? {
+      ...conversation,
+      messages: mergeConversationMessages(conversation.messages, [nextMessage]),
+    } : conversation;
+    setParentThreads((current) => current.map(updateConversation));
+    setServerConversations((current) => current.map(updateConversation));
+    setSelectedConversation((current) => current?.id === conversationId
+      ? updateConversation(current)
+      : current);
+    return message;
+  };
+
+  const forwardConversationMessage = async (conversationId, messageId, targetConversationId) => {
+    const { message } = await api.forwardMessage(conversationId, messageId, targetConversationId);
+    const nextMessage = mapServerMessage(message, session.id, "sent");
+    if (!nextMessage) return message;
+    const preview = nextMessage.type === "text"
+      ? nextMessage.text
+      : nextMessage.type === "video"
+        ? "Vidéo transférée"
+        : nextMessage.type === "audio"
+          ? "Message vocal transféré"
+          : "Photo transférée";
+    const updateConversation = (conversation) => conversation.id === targetConversationId ? {
+      ...conversation,
+      preview,
+      time: "À l’instant",
+      messages: mergeConversationMessages(conversation.messages, [nextMessage]),
+    } : conversation;
+    setParentThreads((current) => current.map(updateConversation));
+    setServerConversations((current) => current.map(updateConversation));
+    setSelectedConversation((current) => current?.id === targetConversationId
+      ? updateConversation(current)
+      : current);
     return message;
   };
 
@@ -1526,7 +1567,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={(game) => { setSelectedParentThreadId(null); setRequestedGame(game ?? null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onReactMessage={reactConversationMessage} onForwardMessage={forwardConversationMessage} onOpenGames={(game) => { setSelectedParentThreadId(null); setRequestedGame(game ?? null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} initialGame={requestedGame} onBack={() => { setRequestedGame(null); setParentView("dashboard"); }} />;
@@ -1575,7 +1616,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
     if (selectedConversationWithAvailability) {
-      return <ChatScreen child={activeChild} conversation={selectedConversationWithAvailability} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={(game) => { setSelectedConversation(null); setRequestedGame(game ?? null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversationWithAvailability} settings={activeSettings} schedule={activeSchedule} forwardTargets={conversationsWithAvailability} onBack={() => setSelectedConversation(null)} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onReactMessage={reactConversationMessage} onForwardMessage={forwardConversationMessage} onOpenGames={(game) => { setSelectedConversation(null); setRequestedGame(game ?? null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
     }
     if (activeTab === "clubhouse") {
       return <ClubhouseScreen child={activeChild} initialGame={requestedGame} />;

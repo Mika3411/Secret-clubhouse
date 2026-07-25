@@ -59,6 +59,17 @@ function exportExecutor(requesterId) {
           }],
         };
       }
+      if (statement.includes("from message_reactions reaction")) {
+        return {
+          rows: [{
+            message_id: "44444444-4444-4444-8444-444444444444",
+            conversation_id: "55555555-5555-4555-8555-555555555555",
+            reaction_code: "heart",
+            created_at: "2026-07-22T10:01:00.000Z",
+            updated_at: "2026-07-22T10:01:00.000Z",
+          }],
+        };
+      }
       if (statement.includes("from clubhouse_activity_progress")) return { rows: [] };
       if (statement.includes("from clubhouse_daily_activity")) return { rows: [] };
       if (statement.includes("from game_sessions")) return { rows: [] };
@@ -82,6 +93,7 @@ test("l’export parent masque les contenus enfant–ami auxquels le parent ne p
   assert.equal(exported.authoredMessages[0].content, null);
   assert.equal(exported.authoredMessages[0].media.name, null);
   assert.equal(exported.authoredMessages[0].contentWithheld, true);
+  assert.equal(exported.messageReactions[0].reactionCode, "heart");
 });
 
 test("l’enfant retrouve le contenu de ses propres messages dans son export", async () => {
@@ -96,6 +108,7 @@ test("l’enfant retrouve le contenu de ses propres messages dans son export", a
   assert.equal(exported.authoredMessages[0].content, "Un contenu privé entre enfants");
   assert.equal(exported.authoredMessages[0].media.name, "photo-privee.jpg");
   assert.equal(exported.authoredMessages[0].contentWithheld, false);
+  assert.equal(exported.messageReactions[0].messageId, "44444444-4444-4444-8444-444444444444");
 });
 
 test("une demande déposée par l’enfant est accusée et tracée", async () => {

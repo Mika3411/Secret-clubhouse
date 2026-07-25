@@ -9,11 +9,11 @@
 
 | Contrôle | Résultat |
 |---|---|
-| `npm test` | 214 tests : 209 réussis, 0 échec, 5 suites PostgreSQL ignorées faute de `TEST_DATABASE_URL` locale |
+| `npm test` | 217 tests : 212 réussis, 0 échec, 5 suites PostgreSQL ignorées faute de `TEST_DATABASE_URL` locale |
 | `npm audit --audit-level=high` | aucune vulnérabilité élevée dans les dépendances npm |
 | `npm run build` | build Vite de production réussi |
 | `android/gradlew testDebugUnitTest lint` | tests unitaires Android réussis ; premier lint : 4 erreurs et 25 avertissements ; après correction : 0 erreur et 15 avertissements |
-| `android/gradlew assembleDebug` | APK 1.11 (`versionCode 12`) construit, synchronisé avec le build web et copié dans `public/downloads/Secret-Clubhouse.apk` |
+| `android/gradlew assembleDebug` | APK 1.12 (`versionCode 13`) construit, synchronisé avec le build web et copié dans `public/downloads/Secret-Clubhouse.apk` |
 | Vérification publique Render antérieure | healthcheck et entrée publique `200`, cache API interdit, en-têtes de sécurité présents, assets identiques au build du SHA CI vert |
 | Vérification GitHub | unique administrateur du dépôt, Secret Scanning et protection au push activés ; MFA non observable |
 
@@ -68,7 +68,7 @@ Correction vérifiée :
 
 ### A07-2026-07-25-05 — APK public signé avec l’identité Android de test — élevé, ouvert
 
-La version 1.11 (`versionCode 12`) est publiée dans `public/downloads/Secret-Clubhouse.apk` et proposée uniquement depuis le groupe parent « Compte et application ». Elle conserve l’identité de signature de test des APK 1.6 à 1.10 afin de rester installable comme mise à jour sur les appareils du prototype. Le flux `mobile:sync` retire l’APK public du build web avant la copie Capacitor afin qu’un paquet Android n’embarque jamais le paquet de téléchargement précédent.
+La version 1.12 (`versionCode 13`) est publiée dans `public/downloads/Secret-Clubhouse.apk` et proposée uniquement depuis le groupe parent « Compte et application ». Elle conserve l’identité de signature de test des APK 1.6 à 1.11 afin de rester installable comme mise à jour sur les appareils du prototype. Le flux `mobile:sync` retire l’APK public du build web avant la copie Capacitor afin qu’un paquet Android n’embarque jamais le paquet de téléchargement précédent.
 
 Cette identité n’est pas une signature de distribution maîtrisée : sa clé n’offre pas le niveau de protection attendu pour une diffusion de production. Avant toute utilisation par des enfants réels, il faut choisir et protéger une identité de signature de distribution, organiser la migration ou la réinstallation des appareils de test, vérifier l’absence de secret embarqué, puis refaire les essais de mise à jour et d’intégrité. Le constat reste ouvert et empêche la clôture d’A07.
 

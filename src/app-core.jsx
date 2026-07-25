@@ -45,6 +45,13 @@ export const mapServerMessage = (message, accountId, directionOverride = null) =
   const status = direction === "sent"
     ? message.deliveryStatus ?? message.delivery_status ?? "sent"
     : null;
+  const reactions = Array.isArray(message.reactions)
+    ? message.reactions.map((reaction) => ({
+        code: String(reaction.code ?? reaction.reactionCode ?? reaction.reaction_code ?? ""),
+        count: Math.max(0, Number(reaction.count ?? 0)),
+        reactedByMe: Boolean(reaction.reactedByMe ?? reaction.reacted_by_me),
+      })).filter((reaction) => reaction.code && reaction.count > 0)
+    : [];
   const baseMessage = {
     id: message.id,
     direction,
@@ -53,6 +60,9 @@ export const mapServerMessage = (message, accountId, directionOverride = null) =
     syncVersion: String(message.syncVersion ?? message.sync_version ?? "0"),
     time: formatServerMessageTime(createdAt),
     status,
+    replyToMessageId: message.replyToMessageId ?? message.reply_to_message_id ?? null,
+    isForwarded: Boolean(message.isForwarded ?? message.is_forwarded),
+    reactions,
   };
   if (mediaType.startsWith("audio/")) {
     const durationMatch = mediaName.match(/-(\d{1,3})s(?:\.|$)/i);
