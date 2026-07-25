@@ -12,6 +12,7 @@ When implementing from a selected generated mock, treat that image as the source
 
 - The selected visual source is `.design-reference/secret-clubhouse-source.png`.
 - Keep the "Secret Clubhouse" indigo, mint, and violet visual language.
+- The premium application mark is `public/brand/secret-clubhouse-logo-premium.png`; use its illuminated SC/secret-door monogram for Android launcher icons and installable web-app icons.
 - The audience is children ages 6–13 on phones and tablets; touch targets must remain large, friendly, and readable without feeling babyish.
 - Keep the child experience deliberately simple: Conversations centers choosing one person and chatting, Clubhouse centers starting one activity, and Mon espace centers changing the avatar or viewing preferences. Child-facing blocks and errors use warm, reassuring language without technical terms or status codes; empty contact states explain the two steps (share the QR/contact ID, then a parent confirms).
 - Reduce technical debt incrementally without changing behavior: organize the server behind routes, services, policies, repositories, encryption, notifications, and retention boundaries; organize the interface by authentication, parent, conversations (list, thread, composer, media, calls), Clubhouse, and profile; keep design tokens and shared, domain, and responsive styles separated so fixes remain locally scoped.

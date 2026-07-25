@@ -556,6 +556,11 @@
   overflow-y: auto;
 }
 
+.chat-body > *,
+.parent-thread-messages > * {
+  flex-shrink: 0;
+}
+
 .message-history-controls {
   display: grid;
   justify-items: center;

@@ -10,4 +10,5 @@ test("la messagerie parent garde le compositeur au-dessus de la navigation mobil
   assert.match(css, /\.parent-thread-detail\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;/su);
   assert.match(css, /\.parent-thread-detail \.parent-thread-messages\s*\{[^}]*min-width:\s*0;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/su);
   assert.match(css, /\.parent-thread-detail \.parent-message-composer\s*\{[^}]*padding-bottom:\s*10px;/su);
+  assert.match(css, /\.chat-body\s*>\s*\*,\s*\.parent-thread-messages\s*>\s*\*\s*\{[^}]*flex-shrink:\s*0;/su);
 });
