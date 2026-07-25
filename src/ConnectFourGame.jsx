@@ -300,15 +300,17 @@ function NavalBattleBoards({ board, myTurn, busy, onPlayMove }) {
   );
 }
 
-export default function ConnectFourGame({ child, onComplete }) {
-  const [games, setGames] = useState([]);
+export default function ConnectFourGame({ child, initialGame = null, onComplete }) {
+  const launchGame = initialGame?.id ? normalizeGame(initialGame) : null;
+  const [games, setGames] = useState(() => launchGame ? [launchGame] : []);
   const [contacts, setContacts] = useState([]);
-  const [selectedGameType, setSelectedGameType] = useState(DEFAULT_GAME_TYPE);
+  const [selectedGameType, setSelectedGameType] = useState(() => launchGame?.gameType ?? DEFAULT_GAME_TYPE);
   const [selectedContactId, setSelectedContactId] = useState("");
-  const [activeGameId, setActiveGameId] = useState(null);
+  const [activeGameId, setActiveGameId] = useState(() => launchGame?.status === "active" ? launchGame.id : null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const awardedRef = useRef(new Set());
+  const openedGameIdRef = useRef(launchGame?.id ?? "");
 
   const gamesForSelectedType = useMemo(
     () => games.filter((game) => game.gameType === selectedGameType),
@@ -352,6 +354,16 @@ export default function ConnectFourGame({ child, onComplete }) {
     const timer = window.setInterval(() => void refreshGames(), 3000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!initialGame?.id || openedGameIdRef.current === initialGame.id) return;
+    const game = normalizeGame(initialGame);
+    openedGameIdRef.current = game.id;
+    setGames((current) => [game, ...current.filter((item) => item.id !== game.id)]);
+    setSelectedGameType(game.gameType);
+    setActiveGameId(game.status === "active" ? game.id : null);
+    setError("");
+  }, [initialGame]);
 
   useEffect(() => {
     if (

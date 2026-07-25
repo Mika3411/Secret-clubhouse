@@ -331,6 +331,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   const [isFamilyInvitationLoading, setIsFamilyInvitationLoading] = useState(() => Boolean(readFamilyInviteToken()));
   const [activeTab, setActiveTab] = useState("conversations");
   const [selectedConversation, setSelectedConversation] = useState(null);
+  const [requestedGame, setRequestedGame] = useState(null);
   const [isQrOpen, setIsQrOpen] = useState(false);
   const [parentView, setParentView] = useState(null);
   const [children, setChildren] = useState([]);
@@ -1490,6 +1491,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       setParentView("management");
       handled = true;
     } else if (notificationType === "game") {
+      setRequestedGame(null);
       if (session.role === "parent") setParentView("games");
       else {
         setSelectedConversation(null);
@@ -1524,10 +1526,10 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={(game) => { setSelectedParentThreadId(null); setRequestedGame(game ?? null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
     }
     if (parentView === "games") {
-      return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
+      return <ParentGamesScreen parent={familyOwner} initialGame={requestedGame} onBack={() => { setRequestedGame(null); setParentView("dashboard"); }} />;
     }
     if (parentView === "dashboard" || parentView === "management") {
       return (
@@ -1556,7 +1558,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
           })}
           unreadMessages={parentUnreadMessages}
           onOpenMessages={() => { setSelectedParentThreadId(null); setParentView("messages"); }}
-          onOpenGames={() => setParentView("games")}
+          onOpenGames={() => { setRequestedGame(null); setParentView("games"); }}
           onOpenFamilyParents={() => setIsFamilyParentsOpen(true)}
           onOpenContactIds={() => setIsContactIdsOpen(true)}
           onOpenPassword={() => setIsParentPasswordOpen(true)}
@@ -1573,22 +1575,23 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
     if (selectedConversationWithAvailability) {
-      return <ChatScreen child={activeChild} conversation={selectedConversationWithAvailability} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
+      return <ChatScreen child={activeChild} conversation={selectedConversationWithAvailability} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={(game) => { setSelectedConversation(null); setRequestedGame(game ?? null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
     }
     if (activeTab === "clubhouse") {
-      return <ClubhouseScreen child={activeChild} />;
+      return <ClubhouseScreen child={activeChild} initialGame={requestedGame} />;
     }
     if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
     if (activeTab === "profile") return <ProfileScreen child={activeChild} features={session.features} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onOpenDataRights={() => setIsDataRightsOpen(true)} onLogout={logoutParent} />;
     const availableConversations = conversationsWithAvailability;
     const approvedFriends = availableConversations.filter((conversation) => !conversation.isFamily && conversation.contactRole !== "parent");
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
-  }, [activeChild, activeSchedule, activeSettings, activeTab, children, contactRelationships, contactRequestBusyId, contactRequestError, contactRequests, family, familyConversationSyncError, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, pendingContactId, pendingRequesterContactId, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);
+  }, [activeChild, activeSchedule, activeSettings, activeTab, children, contactRelationships, contactRequestBusyId, contactRequestError, contactRequests, family, familyConversationSyncError, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, pendingContactId, pendingRequesterContactId, presenceByContactId, requestedGame, selectedConversation, selectedParentThreadId, serverConversations, session]);
 
   const changeTab = (tab) => {
     const scrollContainer = dragScrollRef.current?.querySelector(".screen-scroll");
     if (scrollContainer) scrollContainer.scrollTop = 0;
     setSelectedConversation(null);
+    setRequestedGame(null);
     setIsAvatarPreferencesOpen(false);
     setActiveTab(tab);
   };

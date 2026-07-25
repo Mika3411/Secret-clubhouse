@@ -246,7 +246,7 @@ export const clubhouseCatalogStatusCopy = {
   complete: "Catalogue terminé !",
 };
 
-export function ClubhouseScreen({ child }) {
+export function ClubhouseScreen({ child, initialGame = null }) {
   const [filter, setFilter] = useState("all");
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [phase, setPhase] = useState("intro");
@@ -264,6 +264,7 @@ export function ClubhouseScreen({ child }) {
   const [sessionQuestions, setSessionQuestions] = useState([]);
   const questionDecksRef = useRef({});
   const completionPendingRef = useRef(false);
+  const openedGameIdRef = useRef("");
   const currentQuestion = sessionQuestions[questionIndex] ?? null;
   const serverActivityById = useMemo(
     () => new Map((clubhouse?.catalog ?? []).map((activity) => [activity.activityId, activity])),
@@ -344,6 +345,22 @@ export function ClubhouseScreen({ child }) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [phase, selectedActivity]);
+
+  useEffect(() => {
+    const gameId = initialGame?.id ?? "";
+    const multiplayerActivity = availableActivities.find((activity) => activity.id === "multiplayer-games");
+    if (!gameId || !multiplayerActivity || openedGameIdRef.current === gameId) return;
+    openedGameIdRef.current = gameId;
+    setSelectedActivity(multiplayerActivity);
+    setPhase("active");
+    setQuestionIndex(0);
+    setSelectedAnswer(null);
+    setRewardEarned(false);
+    setAwardedReward(0);
+    setUnlockEarned(null);
+    setClubhouseError("");
+    setSecondsLeft(multiplayerActivity.duration * 60);
+  }, [availableActivities, initialGame]);
 
   const openActivity = (activity) => {
     if (activity.type === "game" && activity.questions) {
@@ -613,7 +630,16 @@ export function ClubhouseScreen({ child }) {
                 {serverActivity?.unlock && (
                   <span className={`clubhouse-card__unlock${isComplete ? " is-unlocked" : ""}`}>
                     <RewardIcon kind={serverActivity.unlock.kind} size={15} />
-                    <span><small>{isComplete ? "Dans ta collection" : "À débloquer"}</small><strong>{serverActivity.unlock.label}</strong></span>
+                    <span>
+                      <small>
+                        {isComplete
+                          ? "Dans ta collection"
+                          : activity.type === "game"
+                            ? "Jouable tout de suite"
+                            : "Bonus à gagner"}
+                      </small>
+                      <strong>{serverActivity.unlock.label}</strong>
+                    </span>
                   </span>
                 )}
                 {serverActivity?.replayCount > 0 && <span className="clubhouse-card__replays">Rejouée {serverActivity.replayCount} fois</span>}
@@ -672,7 +698,13 @@ export function ClubhouseScreen({ child }) {
                       >
                         <span><RewardIcon kind={activityProgress(selectedActivity.id).unlock.kind} size={21} /></span>
                         <span>
-                          <small>{activityProgress(selectedActivity.id)?.completed ? "Déjà dans ta collection" : "Surprise à débloquer"}</small>
+                          <small>
+                            {activityProgress(selectedActivity.id)?.completed
+                              ? "Déjà dans ta collection"
+                              : selectedActivity.type === "game"
+                                ? "Jeu disponible · bonus à gagner"
+                                : "Bonus à gagner"}
+                          </small>
                           <strong>{activityProgress(selectedActivity.id).unlock.label}</strong>
                         </span>
                       </div>
@@ -708,7 +740,7 @@ export function ClubhouseScreen({ child }) {
                 )}
 
                 {phase === "active" && selectedActivity.variant === "multiplayer" && (
-                  <ConnectFourGame child={child} onComplete={completeActivity} />
+                  <ConnectFourGame child={child} initialGame={initialGame} onComplete={completeActivity} />
                 )}
               </>
             )}
@@ -719,7 +751,7 @@ export function ClubhouseScreen({ child }) {
   );
 }
 
-export function ParentGamesScreen({ parent, onBack }) {
+export function ParentGamesScreen({ parent, initialGame = null, onBack }) {
   return (
     <section className="parent-games-screen" aria-labelledby="parent-games-title">
       <header className="parent-messages-header">
@@ -729,7 +761,7 @@ export function ParentGamesScreen({ parent, onBack }) {
       </header>
       <div className="parent-games-screen__content">
         <div className="parent-games-intro"><ShieldCheck size={20} weight="fill" /><span><strong>Un espace de jeu privé</strong><small>Puissance 4, Morpion et Bataille navale avec vos enfants, vos co-parents et vos contacts approuvés.</small></span></div>
-        <ConnectFourGame child={parent} />
+        <ConnectFourGame child={parent} initialGame={initialGame} />
       </div>
     </section>
   );
