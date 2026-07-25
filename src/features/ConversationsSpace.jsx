@@ -215,7 +215,9 @@ export function useConversationGameInvites({ contactId, enabled, inviteGame }) {
     try {
       const result = await api.respondToGame(game.id, action);
       const updated = normalizeConversationGame(result.game ?? result);
-      setGames((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setGames((current) => action === "stop"
+        ? current.filter((item) => item.id !== updated.id)
+        : current.map((item) => item.id === updated.id ? updated : item));
       return updated;
     } catch (error) {
       setActionError(error.message);
@@ -227,6 +229,7 @@ export function useConversationGameInvites({ contactId, enabled, inviteGame }) {
   };
 
   const visibleGames = useMemo(() => [...games]
+    .filter((game) => game.status !== "cancelled")
     .sort((first, second) => new Date(first.updatedAt).getTime() - new Date(second.updatedAt).getTime())
     .slice(-3), [games]);
 
