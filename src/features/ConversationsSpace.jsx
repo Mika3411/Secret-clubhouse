@@ -29,6 +29,7 @@ import { X } from "@phosphor-icons/react/X";
 import { api } from "../api";
 import { createWebRtcSession, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "../webrtc";
 import { clearContactRequestFromUrl, formatServerMessageTime } from "../app-core";
+import { splitMessageLinks } from "../message-links";
 import {
   callAvailabilityPolicy,
   normalizePresenceAvailability,
@@ -44,6 +45,27 @@ import {
   VoiceMessage,
   VoiceRecorder,
 } from "./conversations/media/ConversationMedia";
+
+function MessageText({ text }) {
+  return (
+    <span className="message-text">
+      {splitMessageLinks(text).map((part, index) => part.type === "link"
+        ? (
+          <a
+            className="message-link"
+            href={part.href}
+            key={`link-${index}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            referrerPolicy="no-referrer"
+          >
+            {part.value}
+          </a>
+          )
+        : <span key={`text-${index}`}>{part.value}</span>)}
+    </span>
+  );
+}
 
 export function scrollConversationToLatest(scrollContainer) {
   if (!scrollContainer) return;
@@ -1342,12 +1364,12 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
           ? <ConversationVoiceMessage key={message.id} message={message} />
           : message.type === "image" || message.type === "video"
             ? <ConversationMediaMessage key={message.id} message={message} />
-            : <p className={`bubble bubble--${message.direction} ${message.messageKind === "automatic" ? "bubble--automatic" : ""}`} key={message.id}><span>{message.text}</span>{message.messageKind === "automatic" && <small>Automatique</small>}{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</p>) : <>
-          {conversation.received.map((message) => <p className="bubble bubble--received" key={message}>{message}</p>)}
-          {conversation.sent && <p className="bubble bubble--sent">{conversation.sent}<MessageStatus status="sent" /></p>}
+            : <p className={`bubble bubble--${message.direction} ${message.messageKind === "automatic" ? "bubble--automatic" : ""}`} key={message.id}><MessageText text={message.text} />{message.messageKind === "automatic" && <small>Automatique</small>}{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</p>) : <>
+          {conversation.received.map((message) => <p className="bubble bubble--received" key={message}><MessageText text={message} /></p>)}
+          {conversation.sent && <p className="bubble bubble--sent"><MessageText text={conversation.sent} /><MessageStatus status="sent" /></p>}
         </>}
         {sentMessages.map((message) => {
-          if (message.type === "text") return <p className="bubble bubble--sent" key={message.id}>{message.text}<MessageStatus status={message.status} /></p>;
+          if (message.type === "text") return <p className="bubble bubble--sent" key={message.id}><MessageText text={message.text} /><MessageStatus status={message.status} /></p>;
           if (message.type === "audio") return <VoiceMessage key={message.id} url={message.url} duration={message.duration} status={message.status} />;
           return <ConversationMediaMessage key={message.id} message={message} />;
         })}
@@ -1589,7 +1611,7 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
                 : message.type === "image" || message.type === "video"
                   ? <ConversationMediaMessage key={message.id} message={message} parent />
                   : <div className={`parent-message-bubble parent-message-bubble--${message.direction} ${message.messageKind === "automatic" ? "is-automatic" : ""}`} key={message.id}>
-                      <p>{message.text}</p><span className="parent-message-meta">{message.messageKind === "automatic" && <em>Automatique</em>}<time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</span>
+                      <p><MessageText text={message.text} /></p><span className="parent-message-meta">{message.messageKind === "automatic" && <em>Automatique</em>}<time>{message.time}</time>{message.direction === "sent" && <MessageStatus status={message.status ?? "sent"} />}</span>
                     </div>)}
               {(mediaByThread[selectedThread.id] ?? []).map((media) => media.type === "audio"
                 ? <VoiceMessage key={media.id} url={media.url} duration={media.duration} status={media.status} parent />

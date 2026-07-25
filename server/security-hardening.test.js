@@ -128,7 +128,7 @@ test("l’APK Android public reste proposé uniquement dans le groupe parent pr�
   assert.doesNotMatch(indexSource, /Secret-Clubhouse-debug\.apk/u);
   assert.doesNotMatch(appSource, /Secret-Clubhouse-debug\.apk/u);
   assert.match(parentSource, /parent-account-app-panel[\s\S]*href="\/downloads\/Secret-Clubhouse\.apk"/u);
-  assert.match(parentSource, /Version 1\.10 · application Android/u);
+  assert.match(parentSource, /Version 1\.11 · application Android/u);
   assert.match(parentSource, /!Capacitor\.isNativePlatform\(\)/u);
   assert.match(packageSource, /npm run mobile:prepare && cap sync/u);
   assert.match(mobilePrepareSource, /dist\/downloads\/Secret-Clubhouse\.apk/u);

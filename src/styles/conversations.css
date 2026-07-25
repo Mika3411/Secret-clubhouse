@@ -740,6 +740,34 @@
   color: var(--mint);
 }
 
+.message-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.message-link {
+  color: #4c35a8;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
+
+.bubble--sent .message-link {
+  color: #fff;
+}
+
+.parent-message-bubble--sent .message-link {
+  color: #125f50;
+}
+
+.message-link:focus-visible {
+  border-radius: 3px;
+  outline: 3px solid rgba(117, 240, 208, 0.72);
+  outline-offset: 2px;
+}
+
 .typing-indicator {
   display: flex;
   width: fit-content;
