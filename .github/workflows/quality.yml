@@ -46,6 +46,9 @@ jobs:
           java-version: "21"
           cache: gradle
 
+      - name: Synchroniser le projet Capacitor Android
+        run: npx cap sync android
+
       - name: Vérifier le client Android
         working-directory: android
         run: |
