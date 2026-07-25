@@ -3608,7 +3608,7 @@ app.get("/api/games", requireAuth, requireActiveChild, async (req, res) => {
       [req.auth.sub],
     ),
     pool.query(
-      `${gameSelect} where ${participantFilter} and g.status in ('declined','completed')
+      `${gameSelect} where ${participantFilter} and g.status in ('declined','completed','cancelled')
        and ${currentGameRelationship} order by g.updated_at desc limit 20`,
       [req.auth.sub],
     ),
@@ -3657,41 +3657,70 @@ app.post("/api/games", requireAuth, requireActiveChild, async (req, res) => {
 
 app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
   const action = req.body?.action;
-  if (!["accept", "decline"].includes(action)) return res.status(400).json({ error: "Action de partie invalide." });
+  if (!["accept", "decline", "stop"].includes(action)) return res.status(400).json({ error: "Action de partie invalide." });
   const client = await pool.connect();
+  let updatedGame = null;
+  let stoppedOpponentId = null;
   try {
     await client.query("begin");
     const gameResult = await client.query(
-      "select * from game_sessions where id=$1 and player_two_id=$2 for update",
-      [req.params.gameId, req.auth.sub],
+      "select * from game_sessions where id=$1 for update",
+      [req.params.gameId],
     );
     const game = gameResult.rows[0];
-    if (!game || game.status !== "pending") {
-      await client.query("rollback");
-      return res.status(409).json({ error: "Cette invitation n’est plus disponible." });
+    if (!game || ![game.player_one_id, game.player_two_id].includes(req.auth.sub)) {
+      throw httpError(404, "Partie introuvable.");
     }
-    if (action === "accept") {
-      await assertAccountsActive([game.player_one_id, game.player_two_id], client, true);
+
+    if (action === "stop") {
+      if (!["pending", "active"].includes(game.status)) {
+        throw httpError(409, "Cette partie est déjà terminée.");
+      }
+      stoppedOpponentId = req.auth.sub === game.player_one_id
+        ? game.player_two_id
+        : game.player_one_id;
+      await client.query(
+        `update game_sessions
+         set status='cancelled',current_player_id=null,winner_id=null,updated_at=now()
+         where id=$1`,
+        [game.id],
+      );
+    } else {
+      if (game.player_two_id !== req.auth.sub || game.status !== "pending") {
+        throw httpError(409, "Cette invitation n’est plus disponible.");
+      }
+      if (action === "accept") {
+        await assertAccountsActive([game.player_one_id, game.player_two_id], client, true);
+      }
+      if (!await canPlayTogether(game.player_one_id, game.player_two_id, client)) {
+        throw httpError(403, "Cette invitation n’est plus autorisée.");
+      }
+      const status = action === "accept" ? "active" : "declined";
+      const currentPlayerId = action === "accept" ? game.player_one_id : null;
+      await client.query(
+        "update game_sessions set status=$1,current_player_id=$2,updated_at=now() where id=$3",
+        [status, currentPlayerId, game.id],
+      );
     }
-    if (!await canPlayTogether(game.player_one_id, game.player_two_id, client)) {
-      await client.query("rollback");
-      return res.status(403).json({ error: "Cette invitation n’est plus autorisée." });
-    }
-    const status = action === "accept" ? "active" : "declined";
-    const currentPlayerId = action === "accept" ? game.player_one_id : null;
-    await client.query(
-      "update game_sessions set status=$1,current_player_id=$2,updated_at=now() where id=$3",
-      [status, currentPlayerId, game.id],
-    );
     const updated = await client.query(`${gameSelect} where g.id=$1`, [game.id]);
     await client.query("commit");
-    return res.json({ game: serializeGameForViewer(updated.rows[0], req.auth.sub) });
+    updatedGame = updated.rows[0];
   } catch (error) {
     await client.query("rollback");
     throw error;
   } finally {
     client.release();
   }
+  if (stoppedOpponentId) {
+    await notifyAccounts([stoppedOpponentId], {
+      title: "Partie arrêtée",
+      body: "Votre partie à deux a été arrêtée.",
+      notificationType: "game",
+      tag: `game-${updatedGame.id}`,
+      url: "/?notification=game",
+    });
+  }
+  return res.json({ game: serializeGameForViewer(updatedGame, req.auth.sub) });
 });
 
 app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {

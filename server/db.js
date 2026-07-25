@@ -406,6 +406,9 @@ export async function initializeDatabase() {
       expires_at timestamptz not null default now() + interval '30 days',
       check (player_one_id <> player_two_id)
     );
+    alter table game_sessions drop constraint if exists game_sessions_status_check;
+    alter table game_sessions add constraint game_sessions_status_check
+      check (status in ('pending','active','declined','completed','cancelled'));
     alter table game_sessions add column if not exists expires_at timestamptz;
     update game_sessions
       set expires_at=case

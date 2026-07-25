@@ -188,6 +188,7 @@ function gameStatusLabel(game, accountId, opponentName) {
       : `Invitation envoyée à ${opponentName}`;
   }
   if (game.status === "declined") return `${opponentName} a refusé l’invitation`;
+  if (game.status === "cancelled") return "Partie arrêtée";
   if (game.status === "completed") {
     if (!game.winnerId) return "Match nul";
     return game.winnerId === accountId ? "Bravo, tu as gagné !" : `${opponentName} a gagné`;
@@ -308,6 +309,8 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
   const [selectedContactId, setSelectedContactId] = useState("");
   const [activeGameId, setActiveGameId] = useState(() => launchGame?.status === "active" ? launchGame.id : null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [isConfirmingStop, setIsConfirmingStop] = useState(false);
   const [busy, setBusy] = useState(false);
   const awardedRef = useRef(new Set());
   const openedGameIdRef = useRef(launchGame?.id ?? "");
@@ -363,6 +366,8 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
     setSelectedGameType(game.gameType);
     setActiveGameId(game.status === "active" ? game.id : null);
     setError("");
+    setNotice("");
+    setIsConfirmingStop(false);
   }, [initialGame]);
 
   useEffect(() => {
@@ -376,6 +381,14 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
     }
   }, [activeGame, child.id, onComplete]);
 
+  useEffect(() => {
+    if (activeGame?.status !== "cancelled") return;
+    setSelectedGameType(activeGame.gameType);
+    setActiveGameId(null);
+    setIsConfirmingStop(false);
+    setNotice("La partie est arrêtée pour vous deux.");
+  }, [activeGame]);
+
   const opponentName = useMemo(() => {
     if (!activeGame) return "ton adversaire";
     return activeGame.playerOneId === child.id
@@ -387,6 +400,8 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
     setSelectedGameType(gameType);
     setActiveGameId(null);
     setError("");
+    setNotice("");
+    setIsConfirmingStop(false);
   };
 
   const invite = async () => {
@@ -394,6 +409,7 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
     if (!contact) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const result = await api.inviteGame(contact.contactId, selectedGameType);
       const game = normalizeGame(result.game);
@@ -409,11 +425,32 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
   const respond = async (game, action) => {
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const result = await api.respondToGame(game.id, action);
       const updated = normalizeGame(result.game);
       setGames((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       if (action === "accept") setActiveGameId(updated.id);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const stopGame = async () => {
+    if (!activeGame || !["pending", "active"].includes(activeGame.status) || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.stopGame(activeGame.id);
+      const updated = normalizeGame(result.game);
+      setGames((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setSelectedGameType(updated.gameType);
+      setActiveGameId(null);
+      setIsConfirmingStop(false);
+      setNotice("La partie est arrêtée pour vous deux.");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -578,6 +615,7 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
           )}
         </section>
 
+        {notice && <p className="game-notice" role="status">{notice}</p>}
         {error && <p className="game-error" role="alert">{error}</p>}
       </div>
     );
@@ -585,6 +623,7 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
 
   const gameType = GAME_TYPES[activeGame.gameType];
   const myTurn = activeGame.status === "active" && activeGame.currentPlayerId === child.id;
+  const canStopGame = ["pending", "active"].includes(activeGame.status);
   const playerOneLabel = activeGame.playerOneId === child.id
     ? `${activeGame.playerOneName || child.name} (toi)`
     : activeGame.playerOneName;
@@ -653,17 +692,50 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
       )}
 
       {error && <p className="game-error" role="alert">{error}</p>}
-      <button
-        type="button"
-        className="game-back-lobby multiplayer-game__back"
-        onClick={() => {
-          setSelectedGameType(activeGame.gameType);
-          setActiveGameId(null);
-          setError("");
-        }}
-      >
-        Voir les invitations et parties
-      </button>
+      {isConfirmingStop && canStopGame ? (
+        <section className="multiplayer-stop-confirmation" aria-labelledby="multiplayer-stop-title">
+          <div>
+            <strong id="multiplayer-stop-title">Arrêter cette partie ?</strong>
+            <small>
+              {activeGame.status === "pending"
+                ? "L’invitation sera annulée pour vous deux."
+                : "Elle ne pourra plus être reprise, et aucun gagnant ne sera choisi."}
+            </small>
+          </div>
+          <div>
+            <button type="button" onClick={() => setIsConfirmingStop(false)} disabled={busy}>Garder la partie</button>
+            <button type="button" onClick={() => void stopGame()} disabled={busy}>{busy ? "Arrêt…" : "Oui, arrêter"}</button>
+          </div>
+        </section>
+      ) : (
+        <div className="multiplayer-game__footer-actions">
+          <button
+            type="button"
+            className="game-back-lobby multiplayer-game__back"
+            onClick={() => {
+              setSelectedGameType(activeGame.gameType);
+              setActiveGameId(null);
+              setError("");
+              setNotice("");
+            }}
+          >
+            Voir les invitations et parties
+          </button>
+          {canStopGame && (
+            <button
+              type="button"
+              className="multiplayer-game__stop"
+              onClick={() => {
+                setIsConfirmingStop(true);
+                setError("");
+              }}
+            >
+              <X size={16} weight="bold" aria-hidden="true" />
+              Arrêter la partie
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1360,6 +1360,88 @@
   margin-top: 6px;
 }
 
+.conversation-game-card__controls {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, .8fr);
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.conversation-game-card__controls.is-single {
+  grid-template-columns: 1fr;
+}
+
+.conversation-game-card__controls .conversation-game-card__open {
+  grid-column: auto;
+  margin-top: 0;
+}
+
+.conversation-game-card__stop {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 10px;
+  color: #9b3155;
+  border: 1px solid #efbdd0;
+  border-radius: 12px;
+  background: #fff0f5;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.conversation-game-card__stop:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
+.conversation-game-card__stop-confirmation {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 7px;
+  margin-top: 6px;
+  padding: 9px;
+  color: #5b4651;
+  border: 1px solid #efbdd0;
+  border-radius: 12px;
+  background: #fff7fa;
+}
+
+.conversation-game-card__stop-confirmation > strong {
+  font-size: 9.5px;
+  text-align: center;
+}
+
+.conversation-game-card__stop-confirmation > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.conversation-game-card__stop-confirmation button {
+  min-height: 38px;
+  padding: 0 8px;
+  color: #625a70;
+  border: 1px solid #ddd7e9;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.conversation-game-card__stop-confirmation button:last-child {
+  color: #fff;
+  border-color: #a83f69;
+  background: #a83f69;
+}
+
+.conversation-game-card__stop-confirmation button:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
 .conversation-game-card__meta {
   display: flex;
   grid-column: 1 / -1;

@@ -180,6 +180,7 @@ export const api = {
   gameContacts: () => request("/game-contacts"),
   inviteGame: (contactId, gameType = "connect_four") => request("/games", { method: "POST", body: JSON.stringify({ contactId, gameType }) }),
   respondToGame: (gameId, action) => request(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify({ action }) }),
+  stopGame: (gameId) => request(`/games/${encodeURIComponent(gameId)}`, { method: "PATCH", body: JSON.stringify({ action: "stop" }) }),
   playGameMove: (gameId, move) => request(`/games/${encodeURIComponent(gameId)}/moves`, { method: "POST", body: JSON.stringify({ move }) }),
   sendMessage: (conversationId, text) => request(`/conversations/${conversationId}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   markConversationRead: (conversationId, messageIds = []) => request(`/conversations/${encodeURIComponent(conversationId)}/read`, {

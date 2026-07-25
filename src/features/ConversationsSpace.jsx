@@ -314,11 +314,13 @@ export function ConversationGameInviteDialog({ contactName, relation, parent = f
 
 export function ConversationGameInviteCard({ game, contactId, contactName, parent = false, busyAction, onRespond, onOpenGames }) {
   const [error, setError] = useState("");
+  const [isConfirmingStop, setIsConfirmingStop] = useState(false);
   const gameDetails = conversationGameById[game.gameType] ?? conversationGameById.connect_four;
   const GameIcon = gameDetails.Icon;
   const direction = game.playerTwoContactId === contactId ? "sent" : "received";
   const isReceivedInvitation = game.status === "pending" && direction === "received";
   const isBusy = busyAction.endsWith(`:${game.id}`);
+  const canStop = game.status === "active" || (game.status === "pending" && direction === "sent");
   const statusCopy = game.status === "pending"
     ? direction === "sent"
       ? "Invitation envoyée · en attente de réponse"
@@ -327,14 +329,21 @@ export function ConversationGameInviteCard({ game, contactId, contactName, paren
       ? "Partie acceptée · prête à continuer"
       : game.status === "declined"
         ? "Invitation refusée"
-        : game.winnerId ? "Partie terminée" : "Match nul";
+        : game.status === "cancelled"
+          ? "Partie arrêtée"
+          : game.winnerId ? "Partie terminée" : "Match nul";
+
+  useEffect(() => {
+    if (!canStop) setIsConfirmingStop(false);
+  }, [canStop]);
 
   const respond = async (action) => {
     setError("");
     try {
       await onRespond(game, action);
+      if (action === "stop") setIsConfirmingStop(false);
     } catch (requestError) {
-      setError(requestError.message || "Cette invitation n’est plus disponible.");
+      setError(requestError.message || "Cette partie n’est plus disponible.");
     }
   };
 
@@ -352,7 +361,24 @@ export function ConversationGameInviteCard({ game, contactId, contactName, paren
           <button type="button" onClick={() => void respond("accept")} disabled={isBusy}>{isBusy ? "Réponse…" : "Accepter"}</button>
         </div>
       )}
-      {game.status === "active" && <button type="button" className="conversation-game-card__open" onClick={() => onOpenGames?.(game)}><GameController size={17} weight="fill" /> Jouer</button>}
+      {canStop && !isConfirmingStop && (
+        <div className={`conversation-game-card__controls ${game.status === "pending" ? "is-single" : ""}`}>
+          {game.status === "active" && <button type="button" className="conversation-game-card__open" onClick={() => onOpenGames?.(game)} disabled={isBusy}><GameController size={17} weight="fill" /> Jouer</button>}
+          <button type="button" className="conversation-game-card__stop" onClick={() => { setIsConfirmingStop(true); setError(""); }} disabled={isBusy}>
+            <X size={16} weight="bold" />
+            {game.status === "pending" ? "Annuler l’invitation" : "Arrêter"}
+          </button>
+        </div>
+      )}
+      {canStop && isConfirmingStop && (
+        <div className="conversation-game-card__stop-confirmation">
+          <strong>{game.status === "pending" ? "Annuler cette invitation ?" : "Arrêter la partie pour vous deux ?"}</strong>
+          <div>
+            <button type="button" onClick={() => setIsConfirmingStop(false)} disabled={isBusy}>Garder</button>
+            <button type="button" onClick={() => void respond("stop")} disabled={isBusy}>{isBusy ? "Arrêt…" : "Oui, arrêter"}</button>
+          </div>
+        </div>
+      )}
       <span className="conversation-game-card__meta"><Clock size={12} weight="fill" /> {formatServerMessageTime(game.createdAt)}</span>
       {error && <p className="conversation-game-card__error" role="alert">{error}</p>}
     </article>

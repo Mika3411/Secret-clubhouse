@@ -706,6 +706,104 @@ test("les routes applicatives protègent la connexion et la présence", async (t
     assert.match(presenceQuery, /join authorized_accounts/);
   });
 
+  await t.test("un participant peut arrêter une partie pour les deux joueurs", async (subtest) => {
+    const playerOneId = "12345678-1234-4234-8234-123456789012";
+    const playerTwoId = "87654321-4321-4321-8321-210987654321";
+    const outsiderId = "99999999-9999-4999-8999-999999999999";
+    const gameId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const originalPoolConnect = pool.connect;
+    let authenticatedId = outsiderId;
+    let gameStopped = false;
+    let updateCount = 0;
+    subtest.after(() => {
+      pool.connect = originalPoolConnect;
+    });
+
+    pool.query = async (sql) => {
+      const statement = String(sql).replace(/\s+/g, " ").trim();
+      if (statement.includes("from auth_sessions session")) {
+        return queryResult([{
+          id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+          account_id: authenticatedId,
+          client_type: "native",
+          device_id: "device.test.game",
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          revoked_at: null,
+          role: "parent",
+        }]);
+      }
+      if (statement.includes("select processing_restricted_at,processing_restriction_reason from accounts")) {
+        return queryResult([{ processing_restricted_at: null, processing_restriction_reason: null }]);
+      }
+      throw new Error(`Requête SQL globale inattendue pendant l’arrêt de partie : ${statement}`);
+    };
+
+    const gameRow = () => ({
+      id: gameId,
+      game_type: "connect_four",
+      player_one_id: playerOneId,
+      player_two_id: playerTwoId,
+      invited_by: playerOneId,
+      status: gameStopped ? "cancelled" : "active",
+      board: Array(42).fill(0),
+      current_player_id: gameStopped ? null : playerOneId,
+      winner_id: null,
+      player_one_name: "Parent joueur",
+      player_two_name: "Enfant joueur",
+      player_one_contact_id: "SC-111-222-333",
+      player_two_contact_id: "SC-444-555-666",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const client = {
+      async query(sql, params = []) {
+        const statement = String(sql).replace(/\s+/g, " ").trim();
+        if (statement === "begin" || statement === "commit" || statement === "rollback") return queryResult();
+        if (statement === "select * from game_sessions where id=$1 for update") {
+          assert.deepEqual(params, [gameId]);
+          return queryResult([gameRow()]);
+        }
+        if (statement.startsWith("update game_sessions set status='cancelled'")) {
+          assert.deepEqual(params, [gameId]);
+          assert.match(statement, /current_player_id=null,winner_id=null/u);
+          gameStopped = true;
+          updateCount += 1;
+          return queryResult();
+        }
+        if (statement.includes("from game_sessions g join accounts p1")) {
+          assert.deepEqual(params, [gameId]);
+          return queryResult([gameRow()]);
+        }
+        throw new Error(`Requête SQL transactionnelle inattendue pendant l’arrêt de partie : ${statement}`);
+      },
+      release() {},
+    };
+    pool.connect = async () => client;
+
+    const stopRequest = () => fetch(`${baseUrl}/api/games/${gameId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${Buffer.alloc(32, 12).toString("base64url")}`,
+        "Content-Type": "application/json",
+        "X-Secret-Clubhouse-Client": "native",
+      },
+      body: JSON.stringify({ action: "stop" }),
+    });
+
+    const outsiderResponse = await stopRequest();
+    assert.equal(outsiderResponse.status, 404);
+    assert.equal(updateCount, 0);
+
+    authenticatedId = playerOneId;
+    const participantResponse = await stopRequest();
+    const payload = await participantResponse.json();
+    assert.equal(participantResponse.status, 200);
+    assert.equal(payload.game.status, "cancelled");
+    assert.equal(payload.game.current_player_id, null);
+    assert.equal(updateCount, 1);
+  });
+
   await t.test("refuse de créer un appel quand le destinataire est réellement déconnecté", async (subtest) => {
     const callerId = "12345678-1234-4234-8234-123456789012";
     const calleeId = "87654321-4321-4321-8321-210987654321";

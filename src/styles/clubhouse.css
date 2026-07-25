@@ -1052,6 +1052,7 @@
 .connect-four-legend i { width: 13px; height: 13px; border-radius: 50%; }
 .game-back-lobby { min-height: 38px; padding: 0 13px; color: #6549ce; border-radius: 15px; background: #ebe6ff; font-size: 9px; font-weight: 900; }
 .game-error { margin: 0; color: #b42352; font-size: 10px; font-weight: 900; text-align: center; }
+.game-notice { margin: 0; padding: 9px 12px; color: #075f4c; border-radius: 12px; background: #d8fff4; font-size: 10px; font-weight: 900; text-align: center; }
 .game-empty-contacts { display: flex; align-items: center; gap: 6px; padding: 10px; border-radius: 12px; background: #eefbf7; }
 
 .multiplayer-hub,
@@ -1307,7 +1308,87 @@
 }
 
 .multiplayer-game__back {
+  width: 100%;
   min-height: 42px;
+}
+
+.multiplayer-game__footer-actions {
+  display: grid;
+  width: min(100%, 360px);
+  gap: 8px;
+}
+
+.multiplayer-game__stop {
+  display: flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #a42e52;
+  border: 1px solid #efc0d0;
+  border-radius: 15px;
+  background: #fff0f5;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.multiplayer-stop-confirmation {
+  display: grid;
+  width: min(100%, 360px);
+  gap: 10px;
+  padding: 12px;
+  color: #4d3c5d;
+  border: 1px solid #efc0d0;
+  border-radius: 16px;
+  background: #fff7fa;
+  box-shadow: 0 8px 18px rgba(116, 38, 72, .09);
+}
+
+.multiplayer-stop-confirmation > div:first-child {
+  display: grid;
+  gap: 2px;
+  text-align: center;
+}
+
+.multiplayer-stop-confirmation strong {
+  color: #8f2f50;
+  font-size: 11px;
+}
+
+.multiplayer-stop-confirmation small {
+  color: #76636d;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.multiplayer-stop-confirmation > div:last-child {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.multiplayer-stop-confirmation button {
+  min-height: 42px;
+  padding: 0 10px;
+  color: #625a70;
+  border: 1px solid #ddd7e9;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.multiplayer-stop-confirmation button:last-child {
+  color: #fff;
+  border-color: #a83f69;
+  background: #a83f69;
+}
+
+.multiplayer-stop-confirmation button:disabled,
+.multiplayer-game__stop:disabled {
+  cursor: wait;
+  opacity: .6;
 }
 
 .multiplayer-game--naval_battle {
