@@ -553,6 +553,7 @@ export async function initializeDatabase() {
     );
     alter table push_subscriptions add column if not exists updated_at timestamptz;
     alter table push_subscriptions add column if not exists expires_at timestamptz;
+    alter table push_subscriptions add column if not exists vapid_key_id text;
     update push_subscriptions
       set updated_at=coalesce(updated_at,created_at),
           expires_at=coalesce(expires_at,created_at+interval '180 days')
@@ -563,6 +564,7 @@ export async function initializeDatabase() {
     alter table push_subscriptions alter column expires_at set not null;
     create index if not exists push_subscriptions_account_idx on push_subscriptions(account_id);
     create index if not exists push_subscriptions_expiry_idx on push_subscriptions(expires_at);
+    create index if not exists push_subscriptions_vapid_key_idx on push_subscriptions(vapid_key_id);
 
     create table if not exists application_settings (
       setting_key text primary key,

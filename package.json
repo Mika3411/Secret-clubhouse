@@ -14,6 +14,7 @@
     "retention:purge": "node server/run-retention.js",
     "retention:test-purge": "node server/run-test-retention.js",
     "privacy:reapply-erasure": "node server/reapply-erasure-tombstones.js",
+    "production:verify": "node server/verify-production-deployment.js",
     "preview": "vite preview",
     "start": "node server/index.js",
     "mobile:sync": "npm run build && cap sync",

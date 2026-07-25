@@ -12,7 +12,7 @@ Le responsable du compte a confirmé le 24 juillet 2026 :
 - l’activation de `WEB_PUSH_ENABLED=true` dans le service Render ;
 - l’absence de partage de la clé privée VAPID dans Git ou dans la conversation de travail.
 
-Le Blueprint déclare les deux noms de clés avec `sync: false`. En production, le serveur refuse de démarrer avec Web Push actif si la paire VAPID manque. Le client n’affiche le contrôle que lorsque l’API annonce la fonction active et que le navigateur expose réellement Service Worker, Notifications et Push Manager dans un contexte sécurisé.
+Le Blueprint déclare les deux noms de clés actives et le secret transitoire `VAPID_PREVIOUS_KEYS` avec `sync: false`. En production, le serveur refuse de démarrer avec Web Push actif si la paire active manque ou si une ancienne paire déclarée est invalide. Le client n’affiche le contrôle que lorsque l’API annonce la fonction active et que le navigateur expose réellement Service Worker, Notifications et Push Manager dans un contexte sécurisé.
 
 ## 2. Données et finalité
 
@@ -27,6 +27,7 @@ Web Push sert uniquement à prévenir d’un message, d’une demande de contact
 - Le consentement peut être retiré et l’abonnement supprimé.
 - Les souscriptions expirent après 180 jours sans renouvellement.
 - Les comptes en pause ou sous restriction de traitement ne peuvent pas inscrire de nouveau jeton.
+- Chaque souscription porte l’identifiant non secret de sa paire VAPID. Pendant une rotation, le serveur conserve les anciennes paires dans les secrets Render, signe avec la paire attendue et le client recrée la souscription lorsqu’il détecte la nouvelle clé.
 
 ## 4. Limites et pièces restantes
 
@@ -34,7 +35,7 @@ Le fournisseur de remise dépend du navigateur et du système. La matrice D3 doi
 
 Avant toute utilisation par des enfants réels :
 
-- archiver la paire VAPID et sa procédure de rotation sans exposer la clé privée ;
+- exécuter réellement la rotation VAPID préparée dans `docs/a04-procedure-gestion-acces-et-cles.md`, avec réception prouvée sur une ancienne et une nouvelle souscription sans exposer les clés ;
 - observer et documenter Chrome et Edge sous Windows sur les versions réellement supportées ;
 - compléter la matrice des fournisseurs et transferts ;
 - évaluer le périmètre Web Push réellement déployé dans A07 ;

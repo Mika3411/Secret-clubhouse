@@ -91,6 +91,10 @@ import {
   configuredPlatformAdminEmails,
 } from "./policies/platform-admin.js";
 import { defaultParentalTimeZone } from "../src/policy-time.js";
+import {
+  loadVapidKeyRing,
+  sendNotificationWithVapidKeyRing,
+} from "./web-push-keyring.js";
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
@@ -112,6 +116,7 @@ const platformAdminEmails = configuredPlatformAdminEmails(process.env);
 const invalidLoginPasswordHash = "$2b$12$YoNVhfH0Ezc9Sc/m1jloOu2rXeLxQwenmlqLzPmOOqpV4ztVtWWju";
 let pushEnabled = false;
 let vapidPublicKey = "";
+let vapidKeyRing = null;
 let nativePushService = null;
 
 function parseRtcIceServers() {
@@ -188,6 +193,7 @@ async function initializeWebPush() {
   if (!productionFeatures.webPush) {
     pushEnabled = false;
     vapidPublicKey = "";
+    vapidKeyRing = null;
     console.log("Web Push désactivé par WEB_PUSH_ENABLED.");
     return;
   }
@@ -211,14 +217,20 @@ async function initializeWebPush() {
   }
 
   try {
+    vapidKeyRing = loadVapidKeyRing(process.env, keys);
+    for (const pair of vapidKeyRing.all) {
+      webpush.setVapidDetails(pair.subject, pair.publicKey, pair.privateKey);
+    }
     webpush.setVapidDetails(
-      process.env.VAPID_SUBJECT || "mailto:contact@secret-clubhouse.fr",
-      keys.publicKey,
-      keys.privateKey,
+      vapidKeyRing.current.subject,
+      vapidKeyRing.current.publicKey,
+      vapidKeyRing.current.privateKey,
     );
-    vapidPublicKey = keys.publicKey;
+    vapidPublicKey = vapidKeyRing.current.publicKey;
     pushEnabled = true;
   } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
+    vapidKeyRing = null;
     console.warn(`Notifications push désactivées : configuration VAPID invalide (${error.message}).`);
   }
 }
@@ -923,7 +935,11 @@ async function recordCompletedErasure(executor, {
   return requestResult.rows[0].id;
 }
 
-registerSystemRoutes(app, { pool, privacyContactEmail });
+registerSystemRoutes(app, {
+  pool,
+  privacyContactEmail,
+  deploymentCommit: process.env.RENDER_GIT_COMMIT,
+});
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body ?? {};
@@ -2187,7 +2203,7 @@ app.put("/api/children/:id/privacy/notification-consent", requireAuth, async (re
 
 app.get("/api/push/public-key", requireAuth, (_req, res) => {
   if (!pushEnabled) return res.status(503).json({ error: "Les notifications push ne sont pas encore configurées." });
-  res.json({ publicKey: vapidPublicKey });
+  res.json({ publicKey: vapidPublicKey, keyId: vapidKeyRing.current.id });
 });
 
 app.post("/api/push/subscribe", requireAuth, requireActiveChild, async (req, res) => {
@@ -2196,16 +2212,21 @@ app.post("/api/push/subscribe", requireAuth, requireActiveChild, async (req, res
   }
   const subscription = req.body?.subscription;
   if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) return res.status(400).json({ error: "Abonnement push invalide." });
+  const requestedKeyId = String(req.body?.vapidKeyId ?? "").trim();
+  if (requestedKeyId && requestedKeyId !== vapidKeyRing.current.id) {
+    return res.status(409).json({ error: "La clé de notification a changé. Réactivez les notifications." });
+  }
   await assertActiveNotificationConsent(pool, req.auth.sub);
   await pool.query(
-    `insert into push_subscriptions(account_id,endpoint,subscription,updated_at,expires_at)
-     values($1,$2,$3::jsonb,now(),now()+interval '180 days')
+    `insert into push_subscriptions(account_id,endpoint,subscription,vapid_key_id,updated_at,expires_at)
+     values($1,$2,$3::jsonb,$4,now(),now()+interval '180 days')
      on conflict(endpoint) do update
        set account_id=excluded.account_id,
            subscription=excluded.subscription,
+           vapid_key_id=excluded.vapid_key_id,
            updated_at=excluded.updated_at,
            expires_at=excluded.expires_at`,
-    [req.auth.sub, subscription.endpoint, JSON.stringify(subscription)],
+    [req.auth.sub, subscription.endpoint, JSON.stringify(subscription), vapidKeyRing.current.id],
   );
   res.status(204).end();
 });
@@ -2312,7 +2333,7 @@ app.delete("/api/push/native-token", requireAuth, async (req, res) => {
 });
 
 async function deliverWebPush(rows, payload) {
-  if (!pushEnabled) return 0;
+  if (!pushEnabled || !vapidKeyRing) return 0;
   const {
     callActionToken: _callActionToken,
     callActionUrl: _callActionUrl,
@@ -2326,11 +2347,22 @@ async function deliverWebPush(rows, payload) {
   const results = await Promise.all(rows.map(async (row) => {
     try {
       const ttl = payload.notificationType === "incoming-call" ? callTimeoutSeconds : 3600;
-      await webpush.sendNotification(row.subscription, JSON.stringify(webPayload), {
-        TTL: ttl,
-        urgency: "high",
-        timeout: webPushTimeoutMs,
+      const usedKeyId = await sendNotificationWithVapidKeyRing(webpush, vapidKeyRing, {
+        subscription: row.subscription,
+        preferredKeyId: row.vapid_key_id,
+        payload: JSON.stringify(webPayload),
+        options: {
+          TTL: ttl,
+          urgency: "high",
+          timeout: webPushTimeoutMs,
+        },
       });
+      if (row.vapid_key_id !== usedKeyId) {
+        await pool.query(
+          "update push_subscriptions set vapid_key_id=$2,updated_at=now() where id=$1",
+          [row.id, usedKeyId],
+        );
+      }
       return true;
     }
     catch (error) {
@@ -2366,7 +2398,7 @@ async function notifyAccounts(accountIds, payload) {
   const safePayload = privacySafeNotificationPayload(payload);
   const webDelivery = pushEnabled
     ? pool.query(
-        `select subscription.id,subscription.subscription
+        `select subscription.id,subscription.subscription,subscription.vapid_key_id
          from push_subscriptions subscription
          join accounts account on account.id=subscription.account_id
          join account_consent_preferences consent
@@ -2387,7 +2419,7 @@ async function notifyConversation(conversationId, senderId, payload) {
   const safePayload = privacySafeNotificationPayload(payload);
   const webDelivery = pushEnabled
     ? pool.query(
-        `select subscription.id,subscription.subscription
+        `select subscription.id,subscription.subscription,subscription.vapid_key_id
          from push_subscriptions subscription
          join conversation_members member on member.account_id=subscription.account_id
          join accounts account on account.id=subscription.account_id

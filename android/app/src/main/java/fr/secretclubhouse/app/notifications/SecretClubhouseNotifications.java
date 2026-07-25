@@ -208,7 +208,7 @@ public final class SecretClubhouseNotifications {
             builder.setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, declineIntent, acceptIntent));
         } else {
             builder
-                .addAction(R.drawable.ic_call_decline, "Refuser", declineIntent)
+                .addAction(R.drawable.ic_secret_clubhouse_call_decline, "Refuser", declineIntent)
                 .addAction(R.drawable.ic_call_accept, "Accepter", acceptIntent);
         }
 

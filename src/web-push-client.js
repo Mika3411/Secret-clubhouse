@@ -38,7 +38,7 @@ export async function synchronizeWebPushSubscription(
   if (!hasUsablePushManager(registration)) return { enabled: false, reason: "push-manager" };
   await registration.update().catch(() => undefined);
 
-  const { publicKey } = await api.pushPublicKey();
+  const { publicKey, keyId } = await api.pushPublicKey();
   const applicationServerKey = decodeApplicationServerKey(publicKey);
   let subscription = await registration.pushManager.getSubscription();
 
@@ -54,6 +54,6 @@ export async function synchronizeWebPushSubscription(
       applicationServerKey,
     });
   }
-  await api.subscribePush(subscription.toJSON());
+  await api.subscribePush(subscription.toJSON(), keyId);
   return { enabled: true, subscription };
 }

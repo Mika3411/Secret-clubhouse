@@ -1,6 +1,6 @@
 # Registre simplifié des sous-traitants et transferts
 
-Version regroupée mise à jour le 24 juillet 2026 — responsable du suivi : Mickael Thorez.
+Version regroupée mise à jour le 25 juillet 2026 — responsable du suivi : Mickael Thorez.
 
 Ce registre couvre les cinq familles de fournisseurs utilisées ou prévues par Secret Clubhouse. Il complète l’AIPD, le registre des bases légales et la politique de conservation.
 
@@ -42,7 +42,7 @@ Les contrats, captures, justificatifs d’identité, tickets et décisions sign�
 |---|---|---|---|---|
 | D1 — Render Services, Inc. | Sous-traitant pour l’hébergement de l’application, PostgreSQL, sauvegardes et journaux. Données familiales, contenus applicativement chiffrés et métadonnées | [DPA Render](https://render.com/dpa), CCT intégrées et DPF lorsqu’applicable. Le Blueprint cible Francfort, mais les opérations et sous-traitants peuvent impliquer les États-Unis | DPA réellement applicable au compte, titulaire, région réelle du service/de la base/du Cron, plan de sauvegarde, accès support et fiche DPF datée | **Ouvert. Hébergement non validé** |
 | D2 — Cloudflare | TURN agit comme sous-traitant réseau. STUN/TURN voit notamment IP, ports, horaires et volumes ; le média WebRTC reste chiffré | [DPA Cloudflare](https://www.cloudflare.com/cloudflare-customer-dpa/), CCT intégrées, accord Self-Serve incorporant le DPA et revue publique datée dans `docs/d2-cloudflare-turn-review-2026-07-24.md` | Preuve privée du compte et de la date contractuelle, liste des sous-traitants archivée, durées Realtime, accès support, décision de transfert et validation humaine | **Activation prototype contrôlée ; dossier ouvert** |
-| D3 — Web Push | Service Push imposé par le navigateur ; endpoint, IP, horaires, taille et charge générique minimisée | Standards Web Push, paire VAPID Render et revue technique `docs/d3-web-push-review-2026-07-24.md` | Matrice des navigateurs réellement supportés, fournisseurs observés, contrats, pays, transferts et rétention | **Activation prototype contrôlée ; dossier ouvert** |
+| D3 — Web Push | Service Push imposé par le navigateur ; endpoint, IP, horaires, taille et charge générique minimisée | Standards Web Push, keyring VAPID versionné dans Render et revue technique `docs/d3-web-push-review-2026-07-24.md` | Rotation/réception réelle et matrice des navigateurs supportés, fournisseurs observés, contrats, pays, transferts et rétention | **Activation prototype contrôlée ; dossier ouvert** |
 | D4 — Firebase/FCM | Google traite le jeton FCM, l’installation ID, le package et des métadonnées pour remettre les notifications Android | [Conditions de traitement Firebase](https://firebase.google.com/terms/data-processing-terms), CCT et DPF lorsqu’applicables ; revue technique datée dans `docs/d4-d5-native-push-review-2026-07-24.md` | Compte, conditions applicables, sous-traitants, suppression réelle d’un jeton et d’une installation, pays, transfert et essai sur appareil verrouillé | **Activation prototype contrôlée ; dossier ouvert** |
 | D5 — Apple Push Notification service (APNs)/PushKit | Apple reçoit jetons, topics, identifiants opaques et métadonnées techniques pour alertes et appels iOS | [Apple Developer Program License Agreement](https://developer.apple.com/support/terms/apple-developer-program-license-agreement/) et annexe APNs ; revue technique datée dans `docs/d4-d5-native-push-review-2026-07-24.md` | Accord applicable, rôle, pays, rétention, sous-traitants, transfert et essais APNs/PushKit sur appareil verrouillé | **Activation prototype contrôlée ; dossier ouvert** |
 
@@ -77,7 +77,7 @@ L’activation actuelle reste limitée aux essais contrôlés sans enfant réel.
 
 ## 6. Dossier D3 — Web Push
 
-La revue technique du 24 juillet 2026 est consignée dans `docs/d3-web-push-review-2026-07-24.md`. Le responsable a confirmé la paire VAPID dans Render et l’activation du drapeau, sans communiquer la clé privée. Cette preuve prépare les essais mais ne ferme pas D3.
+La revue technique du 24 juillet 2026 est consignée dans `docs/d3-web-push-review-2026-07-24.md`. Le responsable a confirmé la paire VAPID dans Render et l’activation du drapeau, sans communiquer la clé privée. Le 25 juillet, le dépôt ajoute l’identification des paires par souscription, la conservation transitoire des anciennes paires et le réabonnement automatique. Ces preuves préparent les essais mais ne ferment pas D3.
 
 Une seule matrice remplace les anciennes fiches par route :
 

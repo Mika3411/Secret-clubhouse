@@ -7,6 +7,7 @@ services:
     region: frankfurt
     buildCommand: npm ci && npm run build
     startCommand: npm start
+    healthCheckPath: /api/health
     autoDeployTrigger: commit
     renderSubdomainPolicy: enabled
     envVars:
@@ -53,6 +54,8 @@ services:
       - key: VAPID_PUBLIC_KEY
         sync: false
       - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_PREVIOUS_KEYS
         sync: false
       - key: WEB_PUSH_ENABLED
         value: "true"

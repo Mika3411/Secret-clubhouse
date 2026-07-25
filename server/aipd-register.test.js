@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.14 conserve A07 ouverte pour RTC et les notifications", () => {
-  assert.equal(aipdVersion, "1.14");
+test("la réévaluation 1.15 conserve A07 ouverte pour les essais réels manquants", () => {
+  assert.equal(aipdVersion, "1.15");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -175,6 +175,7 @@ test("A07 est rouverte par l’activation RTC, Web Push, FCM et APNs", () => {
   assert.equal(action?.status, "open");
   assert.equal(action?.reopenedAt, "2026-07-24");
   assert.ok(action?.evidence?.includes("docs/a07-evaluation-securite-2026-07-23.md"));
+  assert.ok(action?.evidence?.includes("docs/a07-evaluation-securite-2026-07-25.md"));
   assert.ok(action?.evidence?.includes("docs/d2-cloudflare-turn-review-2026-07-24.md"));
   assert.ok(action?.evidence?.includes("docs/d3-web-push-review-2026-07-24.md"));
   assert.ok(action?.evidence?.includes("docs/d4-d5-native-push-review-2026-07-24.md"));
@@ -195,8 +196,9 @@ test("A04 reste ouverte sans contrôle réel des services et secrets actifs", ()
   assert.match(procedure, /test unitaire[\s\S]{0,160}ne ferment pas/i);
   assert.match(procedure, /Render.*GitHub.*Cloudflare.*Firebase.*Apple/is);
   assert.match(procedure, /ni cadence trimestrielle[\s\S]+ni prestataire externe/i);
-  assert.match(procedure, /VAPID[\s\S]{0,160}Blocage actuel/i);
-  assert.match(checklist, /GABARIT VIERGE/i);
+  assert.match(procedure, /VAPID[\s\S]{0,180}Préparation technique terminée/i);
+  assert.match(procedure, /VAPID_PREVIOUS_KEYS/);
+  assert.match(checklist, /GABARIT D.EXERCICE NON VALIDÉ/i);
   assert.match(checklist, /maintenir A04 ouverte/i);
   assert.match(checklist, /révocation d’un accès ou jeton représentatif testée/i);
 });
@@ -223,6 +225,8 @@ test("A08 reste ouverte lorsque le déploiement réel diverge du Blueprint", () 
   const checklist = fs.readFileSync(a08ChecklistPath, "utf8");
 
   assert.equal(action?.status, "open");
+  assert.ok(action?.evidence?.includes("docs/a08-verification-publique-2026-07-25.md"));
+  assert.ok(action?.evidence?.includes("server/verify-production-deployment.js"));
   assert.match(action?.acceptance ?? "", /état Render réel/i);
   assert.match(action?.acceptance ?? "", /SHA ou une preuve de déploiement équivalente/i);
   assert.match(action?.acceptance ?? "", /render\.yaml seul ne prouve jamais/i);

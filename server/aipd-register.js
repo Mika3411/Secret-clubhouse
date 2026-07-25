@@ -1,5 +1,5 @@
-export const aipdVersion = "1.14";
-export const aipdAssessmentDate = "2026-07-24";
+export const aipdVersion = "1.15";
+export const aipdAssessmentDate = "2026-07-25";
 
 export const aipdRiskScale = Object.freeze({
   severity: Object.freeze({
@@ -90,6 +90,13 @@ export const aipdActions = Object.freeze([
     owner: "Responsable sécurité / exploitation",
     deadline: "Avant mise en production",
     status: "open",
+    evidence: Object.freeze([
+      "docs/a04-procedure-gestion-acces-et-cles.md",
+      "docs/a04-checklist-preuves.md",
+      "docs/a04-github-public-verification-2026-07-25.md",
+      "server/web-push-keyring.js",
+      "server/web-push-keyring.test.js",
+    ]),
     acceptance: "Pour les fournisseurs et secrets réellement actifs : accès privilégiés nominatifs, authentification adaptée au risque, moindre privilège, séparation des secrets et procédure de rotation, récupération et révocation testée sur un environnement représentatif sans donnée d’enfant. Les services désactivés sont notés non applicables avec preuve technique. Aucun rythme trimestriel, vérificateur distinct ou test d’un fournisseur inactif n’est imposé pour fermer A04.",
   }),
   Object.freeze({
@@ -137,6 +144,7 @@ export const aipdActions = Object.freeze([
     status: "open",
     evidence: Object.freeze([
       "docs/a07-evaluation-securite-2026-07-23.md",
+      "docs/a07-evaluation-securite-2026-07-25.md",
       "docs/d2-cloudflare-turn-review-2026-07-24.md",
       "docs/d3-web-push-review-2026-07-24.md",
       "docs/d4-d5-native-push-review-2026-07-24.md",
@@ -155,6 +163,12 @@ export const aipdActions = Object.freeze([
     owner: "Exploitation",
     deadline: "À chaque déploiement",
     status: "open",
+    evidence: Object.freeze([
+      "docs/a08-checklist-configuration-production-2026-07-23.md",
+      "docs/a08-verification-publique-2026-07-25.md",
+      "server/verify-production-deployment.js",
+      "server/production-deployment-verification.test.js",
+    ]),
     acceptance: "Preuves datées et expurgées de l’état Render réel : régions, variables, transport privé, sessions, chiffrement et anciennes clés, sauvegarde/restauration, Cron et journaux conformes ; la version servie est reliée sans ambiguïté aux tests et au build réussis par un SHA ou une preuve de déploiement équivalente. render.yaml seul ne prouve jamais la production.",
   }),
 ]);

@@ -61,6 +61,7 @@ test("le Blueprint active les fournisseurs qualifiés avec leurs secrets Render 
     "RTC_TURN_API_TOKEN",
     "VAPID_PUBLIC_KEY",
     "VAPID_PRIVATE_KEY",
+    "VAPID_PREVIOUS_KEYS",
     "FCM_SERVICE_ACCOUNT_JSON_BASE64",
     "APNS_TEAM_ID",
     "APNS_KEY_ID",
@@ -82,6 +83,7 @@ test("le Blueprint active les fournisseurs qualifiés avec leurs secrets Render 
   ]) {
     assert.doesNotMatch(blueprint, new RegExp(`key:\\s*${secretKey}\\b`, "u"));
   }
+  assert.match(blueprint, /healthCheckPath:\s*\/api\/health/u);
 });
 
 test("RTC échoue fermé en production sans relais TURN complet", () => {

@@ -4,7 +4,7 @@ import { Capacitor, PushNotifications, NativeCallNotifications, getNativeInstall
 import { api } from "../api";
 import { notificationConsentCopy } from "../legal-framework";
 import { hasUsablePushManager, inspectWebPushBrowser } from "../web-push-support";
-import { announceWebPushAvailability, decodeApplicationServerKey } from "../web-push-client";
+import { announceWebPushAvailability, synchronizeWebPushSubscription } from "../web-push-client";
 import "../styles/notifications.css";
 
 export function PushNotificationButton({ features }) {
@@ -60,16 +60,8 @@ export function PushNotificationButton({ features }) {
           return;
         }
 
-        const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
-        if (!hasUsablePushManager(registration)) {
-          if (active) setStatus("unsupported");
-          return;
-        }
-        await registration.update().catch(() => undefined);
-        const subscription = await registration.pushManager.getSubscription();
-        if (subscription) await api.subscribePush(subscription.toJSON());
-        announceWebPushAvailability(Boolean(subscription));
-        if (active) setStatus(subscription ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
+        const synchronized = await synchronizeWebPushSubscription(api);
+        if (active) setStatus(synchronized.enabled ? "enabled" : Notification.permission === "denied" ? "denied" : "disabled");
       } catch (refreshError) {
         if (active) {
           setError(refreshError.message || "Le choix de notifications ne peut pas être vérifié.");
@@ -146,18 +138,14 @@ export function PushNotificationButton({ features }) {
         setStatus("enabled");
         return;
       }
-      const registration = await navigator.serviceWorker.ready;
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
         await api.setNotificationConsent(false).catch(() => undefined);
         setStatus("denied");
         return;
       }
-      const { publicKey } = await api.pushPublicKey();
-      const applicationServerKey = decodeApplicationServerKey(publicKey);
-      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
-      await api.subscribePush(subscription.toJSON());
-      announceWebPushAvailability(true);
+      const synchronized = await synchronizeWebPushSubscription(api);
+      if (!synchronized.enabled) throw new Error("L’abonnement aux notifications n’a pas pu être créé.");
       setStatus("enabled");
     } catch (pushError) {
       setError(pushError.message || "Impossible d’activer les notifications.");

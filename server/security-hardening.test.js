@@ -73,13 +73,22 @@ test("la pause enfant coupe les appels et la signalisation revérifie la politiq
 });
 
 test("les conteneurs natifs refusent sauvegarde Android et transport en clair", async () => {
-  const [androidManifest, iosInfo] = await Promise.all([
+  const [androidManifest, androidBackupRules, androidExtractionRules, iosInfo] = await Promise.all([
     readSource("android/app/src/main/AndroidManifest.xml"),
+    readSource("android/app/src/main/res/xml/backup_rules.xml"),
+    readSource("android/app/src/main/res/xml/data_extraction_rules.xml"),
     readSource("ios/App/App/Info.plist"),
   ]);
 
   assert.match(androidManifest, /android:allowBackup="false"/u);
+  assert.match(androidManifest, /android:dataExtractionRules="@xml\/data_extraction_rules"/u);
+  assert.match(androidManifest, /android:fullBackupContent="@xml\/backup_rules"/u);
   assert.match(androidManifest, /android:usesCleartextTraffic="false"/u);
+  for (const domain of ["root", "file", "database", "sharedpref", "external"]) {
+    const exclusion = new RegExp(`<exclude domain="${domain}" path="\\."\\s*\\/>`, "u");
+    assert.match(androidBackupRules, exclusion);
+    assert.match(androidExtractionRules, exclusion);
+  }
   assert.doesNotMatch(iosInfo, /NSAllowsArbitraryLoads/u);
   assert.doesNotMatch(iosInfo, /NSExceptionAllowsInsecureHTTPLoads/u);
 });

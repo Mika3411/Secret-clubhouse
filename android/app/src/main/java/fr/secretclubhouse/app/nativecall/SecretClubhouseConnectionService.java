@@ -1,6 +1,7 @@
 package fr.secretclubhouse.app.nativecall;
 
 import android.os.Bundle;
+import android.os.Build;
 import android.telecom.Connection;
 import android.telecom.ConnectionRequest;
 import android.telecom.ConnectionService;
@@ -13,6 +14,9 @@ public class SecretClubhouseConnectionService extends ConnectionService {
 
     @Override
     public Connection onCreateIncomingConnection(PhoneAccountHandle connectionManagerPhoneAccount, ConnectionRequest request) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return Connection.createFailedConnection(new DisconnectCause(DisconnectCause.ERROR));
+        }
         Bundle extras = request == null || request.getExtras() == null
             ? new Bundle()
             : new Bundle(request.getExtras());

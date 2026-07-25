@@ -63,13 +63,23 @@ En production, tous les drapeaux fournisseur valent `false` par défaut. Le Blue
 Un flux destiné à une production réelle ne peut être activé qu’après fermeture de son dossier dans `docs/registre-sous-traitants-et-transferts.md` :
 
 - WebRTC : conserver `RTC_TURN_KEY_ID` et `RTC_TURN_API_TOKEN` uniquement dans Render ; toute production réelle reste bloquée tant que D2, A03, A04, A07 et A08 ne sont pas validés ;
-- Web Push : conserver `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY` uniquement dans Render ; toute production réelle reste bloquée tant que D3, A03, A04, A07 et A08 ne sont pas validés ;
+- Web Push : conserver `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` et, pendant une rotation, `VAPID_PREVIOUS_KEYS` uniquement dans Render ; toute production réelle reste bloquée tant que D3, A03, A04, A07 et A08 ne sont pas validés ;
 - Android/iOS : les configurations FCM et APNs sont déclarées comme secrets Render et le drapeau natif est actif pour les essais contrôlés ; toute utilisation par des enfants réels reste bloquée tant que D4, D5, A03, A04, A07 et A08 ne sont pas validés ;
 - administration des demandes RGPD : le canal historique à jeton partagé reste désactivé tant qu’il n’est pas remplacé par un accès nominatif et traçable.
 
 Ne jamais ajouter ces valeurs dans Git ou dans une capture d’audit.
 
 Pour faire tourner la clé de contenu, conserver d’abord l’ancienne valeur dans le tableau JSON `CONTENT_ENCRYPTION_PREVIOUS_KEYS`, puis définir la nouvelle valeur dans `CONTENT_ENCRYPTION_KEY`. Avant d’accepter du trafic, le serveur relit et rechiffre les anciennes lignes avec la clé active, puis répète ce contrôle après un déploiement roulant. Une incohérence ou une clé manquante fait échouer le démarrage. Une ancienne clé ne doit être retirée qu’après vérification de la migration et expiration des sauvegardes qui peuvent encore contenir des enveloppes créées avec elle.
+
+Pour faire tourner VAPID sans perdre les abonnements existants, placer d’abord la paire active dans le tableau JSON `VAPID_PREVIOUS_KEYS`, puis remplacer `VAPID_PUBLIC_KEY` et `VAPID_PRIVATE_KEY`. PostgreSQL associe chaque souscription à l’empreinte non secrète de sa paire ; le serveur essaie la paire correspondante et le client se réabonne automatiquement à la nouvelle clé. Retirer une ancienne paire seulement lorsque les souscriptions correspondantes ont disparu ou expiré. Le repli qui génère une clé privée dans PostgreSQL reste limité au développement.
+
+Après un déploiement, relier la version publique au SHA Git attendu avec :
+
+```bash
+npm run production:verify -- https://secret-clubhouse.onrender.com <sha-git-complet>
+```
+
+Le contrôle exige HTTPS, un healthcheck non caché avec `X-Request-ID`, le SHA complet fourni par Render et des ressources JS/CSS versionnées accessibles. Il complète la preuve A08 mais ne remplace pas la vérification privée des régions, secrets, sauvegardes, Cron et journaux.
 
 ## Conservation des données
 

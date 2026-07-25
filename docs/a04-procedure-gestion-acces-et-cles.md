@@ -1,7 +1,7 @@
 # A04 — Procédure de gestion des accès privilégiés et du cycle de vie des clés
 
-**Version :** 1.1<br>
-**Date :** 24 juillet 2026<br>
+**Version :** 1.2<br>
+**Date :** 25 juillet 2026<br>
 **Propriétaire :** Responsable sécurité / exploitation<br>
 **Périmètre :** Render, GitHub, Cloudflare, Firebase/Google Cloud, Apple Developer/App Store Connect, PostgreSQL et secrets applicatifs de Secret Clubhouse<br>
 **Statut A04 :** **OUVERT — aucun exercice réel complet n’est encore consigné**
@@ -26,6 +26,8 @@ Un fournisseur ou canal techniquement désactivé est noté « non applicable »
 Le Blueprint active désormais RTC, Web Push, FCM et APNs pour des essais contrôlés sans enfant réel. Les accès Cloudflare, Firebase/Google, Apple et les secrets TURN, VAPID, FCM et APNs entrent donc dans le périmètre actif d’A04 : ils ne peuvent plus être inscrits `N/A`. L’administration RGPD partagée reste désactivée et `PRIVACY_ADMIN_TOKEN` demeure non applicable tant que cette désactivation est prouvée.
 
 La décision de clôture est humaine. Elle est inscrite dans `server/aipd-register.js` et `docs/aipd-secret-clubhouse.md` seulement après vérification des pièces avec la checklist `docs/a04-checklist-preuves.md`.
+
+La vérification expurgée `docs/a04-github-public-verification-2026-07-25.md` établit déjà l’unicité de l’administrateur du dépôt, Secret Scanning et la protection des secrets au push. Elle ne prouve pas le MFA et ne couvre aucun autre fournisseur.
 
 ## 2. Responsabilités et comptes
 
@@ -109,7 +111,7 @@ Références : [MFA des comptes Apple Developer](https://developer.apple.com/hel
 | `CONTENT_ENCRYPTION_KEY` | Secret d’exécution Render du service web ; copie de secours chiffrée à accès restreint | PostgreSQL, GitHub, client, logs, ticket | 12 mois et événement déclencheur |
 | `CONTENT_ENCRYPTION_PREVIOUS_KEYS` | Secret Render temporaire et coffre de récupération | Valeur dans une preuve ou un dépôt | Retrait après migration et expiration des sauvegardes éligibles |
 | `JWT_SECRET` | Secret Render distinct | Réutilisation comme clé de contenu ou jeton de service | 180 jours et événement déclencheur |
-| Paire VAPID | Secrets Render versionnés | Clé privée dans PostgreSQL ou le dépôt | 12 mois après prise en charge du rollover |
+| Paire VAPID active et anciennes paires transitoires | Secrets Render `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` et `VAPID_PREVIOUS_KEYS` | Clé privée dans PostgreSQL de production ou le dépôt | 12 mois et événement déclencheur ; retrait d’une ancienne paire après extinction des souscriptions liées |
 | Compte de service FCM | Un seul format Render choisi, brut **ou** base64 | Configurer simultanément deux copies, dépôt, APK | 90 jours et événement déclencheur |
 | Clé privée APNs | Un seul format Render choisi, brut **ou** base64 | Dépôt, IPA, poste non géré | 180 jours et événement déclencheur |
 | Jeton Cloudflare TURN | Secret Render dédié et limité | Clé API globale, client WebRTC, logs | 90 jours et événement déclencheur |
@@ -201,26 +203,30 @@ La variable devrait être renommée ou séparée en une future clé `LOGIN_RATE_
 
 ### VAPID / Web Push
 
-**Blocage actuel : ne pas déclarer une rotation VAPID réussie.**
+**Préparation technique terminée ; l’exercice réel reste obligatoire.**
 
 Une souscription Web Push est liée à la clé publique d’application. Le code actuel :
 
-- charge une seule paire VAPID ;
-- peut générer et stocker la clé privée dans `application_settings` PostgreSQL si Render n’en fournit pas ;
-- ne stocke aucun identifiant de clé avec `push_subscriptions` ;
-- réutilise côté client une souscription existante sans vérifier la clé serveur.
+- refuse en production l’activation sans paire explicitement fournie par Render ; la génération et `application_settings` restent limitées au développement ;
+- charge la paire active et les anciennes paires transitoires depuis `VAPID_PREVIOUS_KEYS`, sans écrire leur valeur dans PostgreSQL ;
+- dérive de chaque clé publique un identifiant stable non secret et le stocke avec `push_subscriptions` ;
+- signe chaque envoi avec la paire correspondant à la souscription ; pour une ligne historique sans identifiant, il essaie les paires retenues uniquement après un refus d’authentification VAPID ;
+- renvoie l’identifiant de la paire active au client ; celui-ci compare la clé de sa souscription, se désabonne puis se réabonne lorsqu’elle change ;
+- supprime toujours les souscriptions expirées ou déclarées invalides par le service Push.
 
-Une rotation silencieuse casserait donc les souscriptions existantes. Avant l’exercice A04, il faut :
+Avant de retirer une ancienne paire, relever les souscriptions encore liées sans exposer leur endpoint :
 
-1. interdire en production le repli qui stocke la clé privée VAPID dans PostgreSQL ;
-2. versionner plusieurs paires VAPID pendant la transition ;
-3. associer chaque souscription à son identifiant de paire ;
-4. signer chaque envoi avec la paire correspondant à la souscription ;
-5. faire détecter au client le changement de clé, se désabonner puis se réabonner après le consentement déjà valide ;
-6. mesurer les souscriptions anciennes, nouvelles, renouvelées et en échec ;
-7. supprimer les anciennes souscriptions et la paire précédente seulement après la période de transition.
+```sql
+select coalesce(vapid_key_id,'legacy') as vapid_key_id,count(*)
+from push_subscriptions
+where expires_at>now()
+group by vapid_key_id
+order by vapid_key_id;
+```
 
-En cas de compromission avant cette correction, désactiver Web Push et ouvrir la procédure d’incident ; ne pas générer automatiquement une nouvelle paire en prétendant que la continuité est assurée.
+L’exercice A04 doit encore créer une nouvelle paire réelle dans le coffre, conserver l’ancienne dans `VAPID_PREVIOUS_KEYS`, déployer, prouver la réception sur une ancienne et une nouvelle souscription, observer la migration puis retirer l’ancienne paire seulement lorsque son compteur est nul ou que toutes ses souscriptions ont expiré. Les tests unitaires valident la mécanique et le repli, pas la réception fournisseur.
+
+En cas de compromission avant l’exercice ou si la continuité ne peut pas être vérifiée, désactiver Web Push et ouvrir la procédure d’incident.
 
 Référence normative : [RFC 8292, restriction d’une souscription à la clé VAPID](https://datatracker.ietf.org/doc/html/rfc8292#section-4).
 

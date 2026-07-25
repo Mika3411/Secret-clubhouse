@@ -1,7 +1,7 @@
 # A04 — Checklist de preuves
 
-**GABARIT VIERGE — ce document n’est ni une preuve ni un exercice réalisé.**<br>
-**Statut initial : A04 ouverte. Ne cocher qu’après observation réelle et pièce archivée.**
+**GABARIT D’EXERCICE NON VALIDÉ — seuls les contrôles techniques explicitement identifiés ci-dessous sont préremplis.**<br>
+**Statut : A04 ouverte. Les contrôles fournisseur ne sont cochés qu’après observation réelle et pièce archivée.**
 
 Cette checklist accompagne `docs/a04-procedure-gestion-acces-et-cles.md`. Les pièces originales sont conservées dans un coffre restreint hors de ce dépôt public. Aucune valeur secrète, code MFA, code de récupération, adresse privée, jeton, endpoint push ou donnée d’enfant n’est inscrit ici.
 
@@ -126,9 +126,18 @@ Contrôles :
 
 À remplir seulement si Web Push est activé ; sinon joindre la preuve de désactivation et inscrire `N/A`.
 
-- [ ] repli PostgreSQL de production supprimé ;
-- [ ] identifiant de paire enregistré par souscription ;
-- [ ] ancienne et nouvelle paires servies pendant la transition ;
+Préconditions techniques vérifiées dans le dépôt le 25 juillet 2026 :
+
+- [x] repli PostgreSQL interdit en production ;
+- [x] identifiant non secret de paire enregistré par souscription ;
+- [x] chargement d’une paire active et de paires précédentes depuis les secrets Render ;
+- [x] sélection de la paire par souscription et repli borné après erreur d’authentification VAPID ;
+- [x] client capable de détecter la nouvelle clé et de recréer sa souscription ;
+- [x] tests automatisés du keyring, du repli et de l’association client réussis.
+
+Exercice fournisseur encore à réaliser :
+
+- [ ] ancienne et nouvelle paires réellement configurées pendant la transition ;
 - [ ] ancienne souscription reçoit une notification réelle avec l’ancienne paire ;
 - [ ] nouvelle souscription reçoit une notification réelle avec la nouvelle paire ;
 - [ ] client réabonné après changement de clé ;

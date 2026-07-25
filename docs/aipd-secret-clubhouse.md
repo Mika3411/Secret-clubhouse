@@ -1,8 +1,8 @@
 # Analyse d’impact relative à la protection des données (AIPD)
 
 **Traitement :** Secret Clubhouse — service familial privé de communication et d’activités pour enfants de 6 à 13 ans
-**Version :** 1.14<br>
-**Date d’évaluation :** 24 juillet 2026
+**Version :** 1.15<br>
+**Date d’évaluation :** 25 juillet 2026
 **Responsable du traitement :** Mickael Thorez, éditeur individuel non professionnel
 **Contact RGPD :** `contact@secret-clubhouse.fr`
 **État :** réévaluation fondée sur les preuves disponibles, non validée par le responsable du traitement
@@ -79,8 +79,9 @@ Cette version repose notamment sur :
 - `docs/registre-sous-traitants-et-transferts.md` pour l’état ouvert d’A03 et les preuves privées attendues ;
 - `docs/registre-bases-legales.md`, `src/privacy-policy.js` et `src/legal-framework.js` pour les finalités, bases légales et informations fournies.
 - `docs/a02-protocole-consultation.md` pour le protocole vierge préparatoire de l’action `A02`.
-- `docs/a04-procedure-gestion-acces-et-cles.md`, `docs/a04-checklist-preuves.md` et `.audit/2026-07-23-a04-access-key-audit/audit.md` pour l’audit et la préparation de l’action `A04`.
-- `docs/a07-evaluation-securite-2026-07-23.md` comme preuve historique du périmètre restreint, `docs/d2-cloudflare-turn-review-2026-07-24.md`, `docs/d3-web-push-review-2026-07-24.md` et `docs/d4-d5-native-push-review-2026-07-24.md` pour les activations TURN, Web Push, FCM et APNs ; `A07` est rouverte.
+- `docs/a04-procedure-gestion-acces-et-cles.md`, `docs/a04-checklist-preuves.md`, `docs/a04-github-public-verification-2026-07-25.md` et `.audit/2026-07-23-a04-access-key-audit/audit.md` pour l’audit et la préparation de l’action `A04`.
+- `docs/a07-evaluation-securite-2026-07-23.md` comme preuve historique du périmètre restreint, `docs/a07-evaluation-securite-2026-07-25.md` pour la nouvelle évaluation locale, et les revues D2 à D5 pour les activations TURN, Web Push, FCM et APNs ; `A07` est rouverte.
+- `docs/a08-checklist-configuration-production-2026-07-23.md` comme constat privé historique et `docs/a08-verification-publique-2026-07-25.md` pour la provenance et la disponibilité publiques ; `A08` reste ouverte.
 - `docs/a08-checklist-configuration-production-2026-07-23.md` et `.audit/2026-07-23-a08-production-config-audit/evidence-index.md` pour la comparaison expurgée entre le Blueprint et Render réellement déployé.
 - `docs/production-deblocage-minimal.md` pour les seules interventions privées ou humaines encore nécessaires au périmètre web restreint.
 
@@ -278,15 +279,15 @@ Les scénarios détaillés — menaces, impacts, contrôles et liens d’action 
 
 ### 10.1 Vérification de la clôture de A02 à A08
 
-| Action | État vérifié au 24/07/2026 | Preuves contrôlées | Conclusion |
+| Action | État vérifié au 25/07/2026 | Preuves contrôlées | Conclusion |
 |---|---|---|---|
 | A02 | **Ouverte** | `docs/a02-protocole-consultation.md` se déclare vierge ; aucune consultation réelle et aucune décision signée établissant qu’elle ne serait pas appropriée ne sont référencées | Le protocole est un gabarit ; aucune des deux voies de clôture prévues par l’article 35(9) n’est prouvée |
 | A03 | **Ouverte** | `docs/registre-sous-traitants-et-transferts.md` regroupe les preuves en cinq dossiers ; D2 à D5 documentent les activations contrôlées TURN, Web Push, FCM et APNs | D2 à D5 attendent leurs pièces privées, essais réels et décisions de transfert ; D1 Render reste dépourvu de dossier privé vérifié |
-| A04 | **Ouverte** | Procédure et audit A04 ; checklist encore vierge | Pour les services réellement actifs, les accès nominatifs, l’authentification adaptée, le moindre privilège et les essais représentatifs de récupération/révocation ne sont pas prouvés |
+| A04 | **Ouverte** | Procédure et audit A04 ; contrôle GitHub expurgé ; support technique de rotation VAPID ; checklist fournisseur non validée | GitHub ne compte qu’un administrateur nominatif et la continuité VAPID est implémentée, mais MFA, accès Render/Cloudflare/Google/Apple et essais réels de récupération, rotation et révocation ne sont pas prouvés |
 | A05 | **Fermée avec réserve** | Procédure, registre, exercice `SIM-A05-2026-07-23`, manifeste et cinq contrôles automatisés réussis lors du rejeu | L’exercice synthétique couvre le contrôle préparatoire ; le 23/07/2027 est un objectif interne de revue, pas une échéance légale fixe |
 | A06 | **Fermée avec réserve** | Rapport A06 et nouveau rejeu sur PostgreSQL 18.4 local neuf : purge 1/1, droits 1/1, cycle complet 5/5 et commande de purge réussis | La date du 23/10/2026 est un objectif interne fondé sur le risque, non une périodicité légale. A06 ne prouve pas Render |
-| A07 | **Rouverte** | Rapport historique A07 sans RTC ni notifications actives ; activations TURN, VAPID, FCM et APNs du 24 juillet 2026 ; garde-fous de démarrage | Le périmètre RTC/Web Push/FCM/APNs réellement déployé doit être évalué ; aucun enfant réel n’est autorisé avant clôture |
-| A08 | **Ouverte** | Checklist Render datée : 9 cases cochées et 29 non cochées ; index de preuves expurgé | Ressources observées en Oregon, Cron absent, déploiement refusé, SHA servi ancien, sessions de 168 h et restauration/alertes non prouvées |
+| A07 | **Rouverte** | Rapport historique ; nouvelle évaluation locale du 25 juillet ; suite Node, audit npm, build web et lint Android | Les quatre erreurs Android trouvées ont été corrigées, mais les essais réels RTC, Web Push, FCM, APNs/PushKit et appareils verrouillés restent nécessaires |
+| A08 | **Ouverte** | Checklist privée historique du 23 juillet ; vérification publique du 25 juillet ; healthcheck avec provenance SHA et vérificateur automatisé | Le service public et la CI concordent, mais une nouvelle revue privée Render doit encore prouver régions, variables, transport, sessions, sauvegardes, restauration, Cron, alertes et journaux |
 
 **Conclusion de vérification :** la prémisse « A02 à A08 clôturées » est fausse. Aucun score ci-dessous ne peut être présenté comme un score définitif après clôture complète.
 
@@ -295,15 +296,15 @@ Les scénarios détaillés — menaces, impacts, contrôles et liens d’action 
 | Risque | Preuves vérifiées | Vraisemblance précédente → actuelle | Explication | Résiduel actuel |
 |---|---|---:|---|---|
 | R01 | Contrôles d’autorisation, session et chiffrement évalués ; A07 rouverte ; A04 et A08 ouvertes | 3 → 3 | Les défauts locaux élevés du périmètre historique ont été corrigés, mais le périmètre RTC et notifications actif, les accès privilégiés, la récupération des clés et le déploiement conforme ne sont pas prouvés. Aucune baisse n’est justifiée | 4×3=12 — **Élevé** |
-| R02 | Limitation, cookie/Bearer, révocation et erreurs évalués ; A07 et A08 ouvertes | 2 → 3 | Le code évalué impose 12 h, mais la version observée sur Render sert encore des sessions de 168 h. Tant que cette version n’est pas remplacée et prouvée, la hausse demeure | 4×3=12 — **Élevé** |
+| R02 | Limitation, cookie/Bearer, révocation et erreurs évalués ; A07 et A08 ouvertes | 2 → 3 | Le code et le Blueprint imposent 12 h et les assets publics correspondent à la version évaluée, mais aucune mesure d’une session authentifiée réelle ni capture expurgée de la variable Render ne prouve encore cette durée | 4×3=12 — **Élevé** |
 | R03 | Approbation parentale, règles serveur et gardes des routes évaluées ; A05 fermée, A02/A07 ouvertes | 2 → 2 | Les barrières réduisent le scénario à « possible », mais A02 n’a suivi aucune de ses deux voies de décision et le nouveau périmètre RTC/notifications reste à évaluer ; une baisse à 1 n’est pas justifiée | 4×2=8 — **Modéré** |
 | R04 | Restrictions de présence et exports vérifiés ; tableau administrateur limité à des agrégats ; A06 fermée ; A02 ouverte | 2 → 2 | La nouvelle vue n’ajoute pas d’événement comportemental et ne révèle aucun détail individuel, mais ni consultation appropriée ni décision circonstanciée de ne pas consulter n’est documentée | 3×2=6 — **Modéré** |
 | R05 | Web Push, FCM et APNs activés pour essais ; A03, A07 et A08 ouvertes | 3 → 3 | Les charges sont génériques et le consentement conjoint est imposé, mais les contrats, pays, durées, fournisseurs navigateur et livraisons natives réelles ne sont pas encore documentés | 2×3=6 — **Modéré** |
 | R06 | RTC préparé avec TURN ; A03, A07 et A08 ouvertes | 3 → 3 | Les secrets TURN sont déclarés hors Git et un garde-fou échoue fermé, mais le contrat privé, la décision de transfert, la rotation et l’évaluation du déploiement actif ne sont pas clos | 3×3=9 — **Élevé** |
-| R07 | A06 rejouée sur une base neuve avec restauration et tombstones ; A08 ouverte | 2 → 2 | A06 confirme la logique locale et empêche une hausse ; l’absence de Cron et de restauration Render réels empêche une baisse à 1 | 4×2=8 — **Modéré** |
-| R08 | Registre A03 regroupé en cinq dossiers, tous ouverts ; A08 constate l’Oregon | 3 → 3 | Le transfert et les accès hors EEE sont plausibles et observés pour Render ; aucun dossier contractuel complet ni décision de transfert datée ne permet une baisse | 4×3=12 — **Élevé** |
+| R07 | A06 rejouée sur une base neuve avec restauration et tombstones ; A08 ouverte | 2 → 2 | A06 confirme la logique locale et empêche une hausse ; le Cron et une restauration depuis une sauvegarde Render ne sont toujours pas prouvés sur l’état actuel | 4×2=8 — **Modéré** |
+| R08 | Registre A03 regroupé en cinq dossiers, tous ouverts ; dernière observation privée Render historique en Oregon | 3 → 3 | Le Blueprint cible Francfort, mais aucune nouvelle capture du service, de PostgreSQL et du Cron ne prouve une migration des ressources existantes ; aucun dossier contractuel complet ni décision de transfert datée ne permet une baisse | 4×3=12 — **Élevé** |
 | R09 | A05 et A06 fermées ; transaction, purge et restauration locale vérifiées ; A08 ouverte | 2 → 2 | Les contrôles locaux réduisent le risque, mais sauvegarde, alerte, Cron et restauration gérés par Render restent non testés | 3×2=6 — **Modéré** |
-| R10 | Erreurs, routes et journaux évalués ; A05 fermée, A04/A07/A08 ouvertes | 3 → 3 | Les accès réels et les secrets TURN, VAPID, FCM et APNs ne sont pas encore couverts par une revue, rotation et révocation prouvées ; aucune baisse n’est justifiée | 4×3=12 — **Élevé** |
+| R10 | Erreurs, routes et journaux évalués ; GitHub partiellement contrôlé ; VAPID versionné ; A04/A07/A08 ouvertes | 3 → 3 | L’unique administrateur GitHub et les mécanismes de rotation VAPID sont documentés, mais MFA, accès des autres fournisseurs et exercices réels de rotation, récupération et révocation ne sont pas prouvés | 4×3=12 — **Élevé** |
 
 Les risques encore élevés sont `R01`, `R02`, `R06`, `R08` et `R10`. Les hausses de vraisemblance concernent `R02`, `R05` et `R06`. Aucun score ne diminue, car aucune nouvelle preuve ne ferme les actions dont dépendrait une telle réduction.
 
@@ -325,6 +326,8 @@ La version 1.10 conserve la fermeture de `A07` pour un périmètre web restreint
 La version 1.13 conserve `A07` ouverte à la date du 24 juillet 2026 : le responsable a activé Cloudflare Realtime TURN et Web Push, avec les secrets TURN et VAPID exclusivement dans Render. Le serveur échoue fermé si la configuration fournisseur nécessaire manque. Les revues D2 et D3 établissent la préparation et la minimisation techniques, mais ne remplacent ni les pièces privées, ni les décisions de transfert, ni l’évaluation de sécurité et la preuve du déploiement réel. Aucun enfant réel n’est autorisé sur ce périmètre.
 
 La version 1.14 ajoute l’activation contrôlée de FCM et APNs. Le responsable a montré les noms de variables masqués dans Render et confirmé le drapeau natif, tandis que le dépôt déclare seulement les noms des secrets. Le garde-fou de démarrage refuse désormais l’activation sans fournisseur complet. La revue D4/D5 ne prouve cependant ni la livraison sur appareils verrouillés, ni les contrats, transferts, rotations ou révocations ; les actions et scores restent donc inchangés et aucun enfant réel n’est autorisé.
+
+La version 1.15 ajoute la continuité de rotation VAPID, la provenance publique du SHA Render, une vérification automatisée du déploiement, le contrôle GitHub expurgé et une nouvelle évaluation locale incluant Android. Quatre erreurs de compatibilité Android détectées par lint ont été corrigées ; la CI couvre désormais ce lint. Ces mesures réduisent les lacunes techniques, mais ne remplacent ni les pièces contractuelles et privées, ni les essais fournisseur sur appareils réels, ni les décisions et signatures humaines. Les actions et scores restent donc inchangés.
 
 ### 10.4 Consultation préalable de la CNIL
 
@@ -353,9 +356,9 @@ L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-do
 
 Une action n’est « fermée » qu’avec une pièce datée, un auteur et un résultat vérifiable. La seule présence d’une option dans `render.yaml` ne prouve pas sa valeur effective.
 
-L’audit A04 du 23 juillet 2026 conclut à un état **ouvert**. Les mécanismes de clé active/précédente pour le contenu sont présents et testés avec des données synthétiques, mais les accès privilégiés et l’authentification des services actifs, la révocation d’un accès représentatif et la récupération réelle des secrets ne sont pas prouvés. Web Push est maintenant actif avec la paire VAPID conservée dans Render, mais son rollover reste bloquant : une seule paire est chargée et les souscriptions ne portent pas d’identifiant de paire. Les identifiants FCM et APNs nouvellement actifs n’ont pas davantage fait l’objet d’un exercice de rotation, récupération ou révocation. La procédure et la checklist sont des préparatifs, jamais une preuve d’exercice.
+L’audit A04 reste **ouvert**. Les mécanismes de clé active/précédente pour le contenu et VAPID sont présents et testés avec des données synthétiques. Chaque souscription Web Push porte désormais un identifiant de paire, les anciennes paires sont retenues dans un secret Render transitoire et le client sait se réabonner. La vérification GitHub du 25 juillet constate un unique administrateur et la protection des secrets au push. Elle ne prouve toutefois pas son MFA ; les accès Render, Cloudflare, Google et Apple, la révocation d’un accès représentatif et la récupération réelle des secrets ne sont pas prouvés. Les identifiants FCM et APNs n’ont pas fait l’objet d’un exercice réel de rotation ou révocation.
 
-L’audit A08 du 23 juillet 2026 conclut également à un état **ouvert**. Render affiche le service web et PostgreSQL en Oregon, aucun Cron Secret Clubhouse, six noms de variables seulement et un dernier déploiement refusé faute de `DATABASE_TRANSPORT`. Le commit réellement servi utilise encore des JWT de sept jours, ne contient pas le chiffrement applicatif versionné ni le workflow CI, et aucune restauration réelle n’est prouvée. La checklist datée conserve les constats expurgés ; le `render.yaml` actuel reste uniquement l’état cible.
+L’audit A08 reste également **ouvert**. Le constat privé du 23 juillet est désormais historique. Le 25 juillet, le service et son healthcheck répondent, les empreintes JS/CSS publiques correspondent au build local du SHA dont la CI est verte, et la version suivante expose directement le SHA Render validé avec un vérificateur automatisé. Aucune nouvelle observation privée ne prouve cependant les régions, variables, sessions, clés précédentes, sauvegardes, restauration, exécution du Cron, alertes et durée des journaux. Le `render.yaml` reste une cible, pas la preuve de ces valeurs.
 
 ### Réouverture de A07
 
@@ -382,7 +385,7 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 | Élément | Décision préparée |
 |---|---|
 | Responsable appelé à décider | Mickael Thorez, responsable du traitement |
-| Date de préparation | 23 juillet 2026 |
+| Date de préparation | 25 juillet 2026 |
 | Date d’effet | Aucune tant que Mickael Thorez n’a pas daté et signé la décision |
 | Périmètre | Ensemble des traitements listés au § 3 : comptes familiaux et enfants, contacts, communications et médias, présence, WebRTC, notifications, règles parentales, Clubhouse et jeux, sécurité, conservation, droits, Render/PostgreSQL et fournisseurs réseau/push |
 | Décision proposée | **Ne pas valider l’AIPD et ne pas autoriser la production** |
@@ -393,7 +396,7 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 
 ### Déclaration réservée à Mickael Thorez
 
-> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.14, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
+> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.15, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
 
 | Champ à compléter personnellement | Valeur |
 |---|---|

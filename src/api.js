@@ -138,7 +138,10 @@ export const api = {
     body: JSON.stringify({ agreed }),
   }),
   pushPublicKey: () => request("/push/public-key"),
-  subscribePush: (subscription) => request("/push/subscribe", { method: "POST", body: JSON.stringify({ subscription }) }),
+  subscribePush: (subscription, vapidKeyId = "") => request("/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify({ subscription, vapidKeyId }),
+  }),
   unsubscribePush: (endpoint) => request("/push/subscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) }),
   saveNativePushToken: (token, details = {}) => request("/push/native-token", {
     method: "POST",
