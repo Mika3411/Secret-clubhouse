@@ -125,7 +125,11 @@ export const api = {
   createChild: (data) => request("/children", { method: "POST", body: JSON.stringify(data) }),
   updateChild: (childId, data) => request(`/children/${encodeURIComponent(childId)}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteChild: (childId) => request(`/children/${encodeURIComponent(childId)}`, { method: "DELETE" }),
-  heartbeat: () => request("/presence/heartbeat", { method: "POST" }),
+  heartbeat: (state = "foreground", { keepalive = false } = {}) => request("/presence/heartbeat", {
+    method: "POST",
+    body: JSON.stringify({ state }),
+    keepalive,
+  }),
   presence: (contactIds) => request(`/presence?contactIds=${encodeURIComponent(contactIds.join(","))}`),
   notificationConsent: () => request("/privacy/notification-consent"),
   setNotificationConsent: (agreed) => request("/privacy/notification-consent", {

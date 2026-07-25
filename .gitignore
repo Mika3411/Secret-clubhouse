@@ -9,6 +9,7 @@ dist/
 media-qa*.html
 src/media-qa.jsx
 *.apk
+!public/downloads/Secret-Clubhouse.apk
 *.aab
 *.ipa
 android/app/google-services.json

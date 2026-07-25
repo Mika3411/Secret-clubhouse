@@ -17,7 +17,8 @@
     "production:verify": "node server/verify-production-deployment.js",
     "preview": "vite preview",
     "start": "node server/index.js",
-    "mobile:sync": "npm run build && cap sync",
+    "mobile:prepare": "node scripts/prepare-mobile-assets.js",
+    "mobile:sync": "npm run build && npm run mobile:prepare && cap sync",
     "mobile:android": "npm run mobile:sync && cap open android",
     "mobile:ios": "npm run mobile:sync && cap open ios"
   },

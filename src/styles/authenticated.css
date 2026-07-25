@@ -108,8 +108,20 @@
   background: #30d7a5;
 }
 
+.online-dot.is-background {
+  background: #8f7ae5;
+}
+
+.online-dot.is-unavailable {
+  background: #e1a33b;
+}
+
 .online-dot.is-offline {
   background: #a6a5b3;
+}
+
+.online-dot.is-unknown {
+  background: #cbc8d7;
 }
 
 .bottom-nav {

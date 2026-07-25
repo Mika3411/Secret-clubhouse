@@ -26,6 +26,7 @@ import {
 } from "./native-notifications";
 import { armIncomingCallAudio } from "./incoming-call-alerts";
 import { announceWebPushAvailability, synchronizeWebPushSubscription } from "./web-push-client";
+import { normalizePresenceAvailability } from "./presence";
 import "./styles/authenticated.css";
 
 const lazyNamed = (loader, exportName) => lazy(() => loader().then((module) => ({ default: module[exportName] })));
@@ -494,18 +495,40 @@ export function App({ initialAccount = null, initialRegistration = false }) {
     if (!session) return undefined;
     if (session.role === "child" && activeChild?.status !== "active") return undefined;
     const contactIds = [...parentThreads, ...serverConversations].map((contact) => contact.contactId).filter(Boolean);
-    const refreshPresence = async () => {
+    let active = true;
+    const refreshPresence = async ({ refreshContacts = true, keepalive = false } = {}) => {
       try {
-        await api.heartbeat();
+        const lifecycleState = document.visibilityState === "hidden" ? "background" : "foreground";
+        await api.heartbeat(lifecycleState, { keepalive });
+        if (!active || !refreshContacts || lifecycleState !== "foreground") return;
         const result = await api.presence(contactIds);
-        setPresenceByContactId(result.presence);
+        if (active) setPresenceByContactId(result.presence);
       } catch {
         // Une coupure réseau ne déconnecte pas immédiatement l’utilisateur.
       }
     };
-    refreshPresence();
-    const timer = window.setInterval(refreshPresence, 30000);
-    return () => window.clearInterval(timer);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        void refreshPresence({ refreshContacts: false, keepalive: true });
+      } else {
+        void refreshPresence();
+      }
+    };
+    const handleFocus = () => void refreshPresence();
+    void refreshPresence();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshPresence();
+    }, 30000);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleFocus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleFocus);
+    };
   }, [activeChild?.status, session, parentThreads, serverConversations]);
 
   const applyFamilyChildren = (familyChildren) => {
@@ -1484,6 +1507,16 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   }, [parentThreads, serverConversations, session]);
 
   const screen = useMemo(() => {
+    const withAvailability = (contact) => ({
+      ...contact,
+      availability: normalizePresenceAvailability(presenceByContactId[contact.contactId]),
+    });
+    const conversationsWithAvailability = serverConversations.map(withAvailability);
+    const parentThreadsWithAvailability = parentThreads.map(withAvailability);
+    const selectedConversationWithAvailability = selectedConversation
+      ? withAvailability(selectedConversation)
+      : null;
+
     if (isRestoringSession) {
       return <section className="session-restoring" role="status" aria-live="polite"><span className="session-restoring__spinner" aria-hidden="true" /><strong>Ouverture de votre Clubhouse…</strong><small>Votre connexion est restaurée.</small></section>;
     }
@@ -1491,7 +1524,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreads} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onOpenGames={() => { setSelectedParentThreadId(null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} onBack={() => setParentView("dashboard")} />;
@@ -1539,15 +1572,15 @@ export function App({ initialAccount = null, initialRegistration = false }) {
     if (activeChild.status === "paused") {
       return <PausedChildScreen child={activeChild} onParentLogin={logoutParent} />;
     }
-    if (selectedConversation) {
-      return <ChatScreen child={activeChild} conversation={selectedConversation} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
+    if (selectedConversationWithAvailability) {
+      return <ChatScreen child={activeChild} conversation={selectedConversationWithAvailability} settings={activeSettings} schedule={activeSchedule} onBack={() => setSelectedConversation(null)} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onSendMessage={sendChildMessage} onSendMedia={sendChildMedia} onOpenGames={() => { setSelectedConversation(null); setActiveTab("clubhouse"); }} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} />;
     }
     if (activeTab === "clubhouse") {
       return <ClubhouseScreen child={activeChild} />;
     }
     if (isAvatarPreferencesOpen) return <AvatarPreferencesScreen child={activeChild} onBack={() => setIsAvatarPreferencesOpen(false)} onSave={saveAvatar} />;
     if (activeTab === "profile") return <ProfileScreen child={activeChild} features={session.features} onOpenPreferences={() => setIsAvatarPreferencesOpen(true)} onOpenDataRights={() => setIsDataRightsOpen(true)} onLogout={logoutParent} />;
-    const availableConversations = serverConversations.map((conversation) => ({ ...conversation, online: presenceByContactId[conversation.contactId] ?? false }));
+    const availableConversations = conversationsWithAvailability;
     const approvedFriends = availableConversations.filter((conversation) => !conversation.isFamily && conversation.contactRole !== "parent");
     return <HomeScreen child={activeChild} approvedFriends={approvedFriends} availableConversations={availableConversations} onQr={() => setIsQrOpen(true)} onOpenConversation={setSelectedConversation} />;
   }, [activeChild, activeSchedule, activeSettings, activeTab, children, contactRelationships, contactRequestBusyId, contactRequestError, contactRequests, family, familyConversationSyncError, familyInvitation, familyInvitationError, familyInviteToken, familyOwner, isAvatarPreferencesOpen, isFamilyInvitationLoading, isRestoringSession, parentThreads, parentUnreadMessages, parentView, pendingContactId, pendingRequesterContactId, presenceByContactId, selectedConversation, selectedParentThreadId, serverConversations, session]);

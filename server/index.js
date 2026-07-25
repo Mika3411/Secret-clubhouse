@@ -39,6 +39,10 @@ import {
 } from "./services/privacy-service.js";
 import { getAdminAnalytics } from "./services/admin-analytics-service.js";
 import {
+  getAccountAvailability,
+  listAuthorizedContactAvailability,
+} from "./services/presence-service.js";
+import {
   assertNativePushConfiguration,
   createNativePushService,
   createOpaqueCallActionToken,
@@ -2072,6 +2076,10 @@ app.delete("/api/children/:id", requireAuth, async (req, res) => {
 });
 
 app.post("/api/presence/heartbeat", requireAuth, requireActiveChild, async (req, res) => {
+  const lifecycleState = String(req.body?.state ?? "foreground");
+  if (!["foreground", "background"].includes(lifecycleState)) {
+    return res.status(400).json({ error: "État de présence invalide." });
+  }
   const result = await pool.query(
     `with active_account as (
        update accounts
@@ -2079,11 +2087,28 @@ app.post("/api/presence/heartbeat", requireAuth, requireActiveChild, async (req,
        where id=$1 and (role<>'child' or status='active')
        returning id
      )
-     insert into presence(account_id,last_seen,expires_at)
-     select id,now(),now()+interval '24 hours' from active_account
+     insert into presence(
+       account_id,last_seen,last_foreground_at,last_background_at,expires_at
+     )
+     select
+       id,
+       now(),
+       case when $2='foreground' then now() else null end,
+       case when $2='background' then now() else null end,
+       now()+interval '24 hours'
+     from active_account
      on conflict(account_id) do update
-       set last_seen=excluded.last_seen,expires_at=excluded.expires_at`,
-    [req.auth.sub],
+       set last_seen=excluded.last_seen,
+           last_foreground_at=case
+             when $2='foreground' then excluded.last_foreground_at
+             else presence.last_foreground_at
+           end,
+           last_background_at=case
+             when $2='background' then excluded.last_background_at
+             else presence.last_background_at
+           end,
+           expires_at=excluded.expires_at`,
+    [req.auth.sub, lifecycleState],
   );
   if (!result.rowCount) return res.status(403).json({ error: "Ce profil enfant est en pause." });
   res.status(204).end();
@@ -2092,38 +2117,13 @@ app.post("/api/presence/heartbeat", requireAuth, requireActiveChild, async (req,
 app.get("/api/presence", requireAuth, requireActiveChild, async (req, res) => {
   const contactIds = String(req.query.contactIds ?? "").split(",").map((value) => value.trim()).filter((value) => /^SC-\d{3}-\d{3}-\d{3}$/.test(value)).slice(0, 100);
   if (!contactIds.length) return res.json({ presence: {} });
-  const result = await pool.query(
-    `with requester_families as (
-       select family_id from family_memberships where parent_id=$2
-       union
-       select family_id from family_children where child_id=$2
-     ),
-     authorized_accounts as (
-       select $2::uuid as account_id
-       union
-       select case
-         when relationship.account_one_id=$2 then relationship.account_two_id
-         else relationship.account_one_id
-       end
-       from contact_relationships relationship
-       where relationship.account_one_id=$2 or relationship.account_two_id=$2
-       union
-       select membership.parent_id
-       from family_memberships membership
-       join requester_families using(family_id)
-       union
-       select child.child_id
-       from family_children child
-       join requester_families using(family_id)
-     )
-     select account.contact_id,presence.last_seen > now() - interval '75 seconds' as online
-     from accounts account
-     join authorized_accounts authorized on authorized.account_id=account.id
-     left join presence on presence.account_id=account.id
-     where account.contact_id=any($1::text[])`,
-    [contactIds, req.auth.sub],
-  );
-  res.json({ presence: Object.fromEntries(result.rows.map((row) => [row.contact_id, Boolean(row.online)])) });
+  const presence = await listAuthorizedContactAvailability(pool, {
+    requesterAccountId: req.auth.sub,
+    contactIds,
+    webPushEnabled: productionFeatures.webPush && pushEnabled,
+    nativePushEnabled: productionFeatures.nativePush && Boolean(nativePushService),
+  });
+  res.json({ presence });
 });
 
 app.get("/api/privacy/notification-consent", requireAuth, async (req, res) => {
@@ -4050,6 +4050,19 @@ app.post("/api/conversations/:id/calls", requireAuth, requireActiveChild, async 
         });
       }
       return res.status(409).json({ error: calleePolicy.reason, autoReplySent: shouldReply });
+    }
+
+    const calleeAvailability = await getAccountAvailability(client, callee.id, {
+      webPushEnabled: productionFeatures.webPush && pushEnabled,
+      nativePushEnabled: productionFeatures.nativePush && Boolean(nativePushService),
+    });
+    if (!calleeAvailability.canCall) {
+      throw httpError(
+        409,
+        calleeAvailability.state === "offline"
+          ? "Cette personne est déconnectée. L’appel n’a pas été lancé."
+          : "Cette personne est connectée, mais les appels sont indisponibles pour le moment.",
+      );
     }
 
     const participantIds = [caller.id, callee.id].sort();

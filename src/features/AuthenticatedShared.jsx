@@ -1,6 +1,7 @@
 import { ChatCircleDots } from "@phosphor-icons/react/ChatCircleDots";
 import { GearSix } from "@phosphor-icons/react/GearSix";
 import { House } from "@phosphor-icons/react/House";
+import { normalizePresenceAvailability } from "../presence";
 
 export async function copyContactId(contactId) {
   try {
@@ -56,11 +57,15 @@ export function AvatarIllustration({ avatar = defaultAvatar, name = "Mon avatar"
   );
 }
 
-export function Avatar({ person, size = "medium", online = null }) {
+export function Avatar({ person, size = "medium", online = null, availability = null }) {
+  const showPresence = availability !== null || online !== null;
+  const presence = normalizePresenceAvailability(
+    availability ?? (online === null ? undefined : online),
+  );
   return (
     <span className={`avatar avatar--${size} avatar--tone-${person.color ?? "default"}`}>
       {person.avatar ? <AvatarIllustration avatar={person.avatar} name={person.name} /> : person.image ? <img src={person.image} alt={`Avatar de ${person.name}`} /> : <span className="avatar__fallback" role="img" aria-label={`Avatar de ${person.name}`}>{person.name.slice(0, 1)}</span>}
-      {online !== null && <span className={`online-dot ${online ? "is-online" : "is-offline"}`} aria-label={online ? "En ligne" : "Hors ligne"} title={online ? "En ligne" : "Hors ligne"} />}
+      {showPresence && <span className={`online-dot is-${presence.state}`} aria-label={presence.label} title={presence.label} />}
     </span>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Anchor } from "@phosphor-icons/react/Anchor";
 import { ArrowLeft } from "@phosphor-icons/react/ArrowLeft";
@@ -29,6 +29,10 @@ import { X } from "@phosphor-icons/react/X";
 import { api } from "../api";
 import { createWebRtcSession, getChannelPolicy, openCameraStream, openMicrophoneStream, stopMediaStream } from "../webrtc";
 import { clearContactRequestFromUrl, formatServerMessageTime } from "../app-core";
+import {
+  callAvailabilityPolicy,
+  normalizePresenceAvailability,
+} from "../presence";
 import "../styles/conversations.css";
 import { Capacitor, endNativeSystemCall } from "../native-notifications";
 import { beginIncomingCallAlert } from "../incoming-call-alerts";
@@ -41,24 +45,59 @@ import {
   VoiceRecorder,
 } from "./conversations/media/ConversationMedia";
 
+export function scrollConversationToLatest(scrollContainer) {
+  if (!scrollContainer) return;
+  scrollContainer.scrollTop = scrollContainer.scrollHeight;
+}
+
 function useConversationBottom(conversationId, latestItemKey) {
   const scrollContainerRef = useRef(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer || !conversationId) return undefined;
 
+    let keepPinnedToLatest = true;
     const scrollToLatest = () => {
-      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      if (keepPinnedToLatest) scrollConversationToLatest(scrollContainer);
     };
+    const releasePinnedPosition = () => {
+      keepPinnedToLatest = false;
+    };
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(scrollToLatest);
+    const observeMessageBlocks = () => {
+      if (!resizeObserver) return;
+      Array.from(scrollContainer.children).forEach((child) => resizeObserver.observe(child));
+    };
+    const mutationObserver = typeof MutationObserver === "undefined"
+      ? null
+      : new MutationObserver(() => {
+          observeMessageBlocks();
+          scrollToLatest();
+        });
 
     scrollToLatest();
+    observeMessageBlocks();
+    mutationObserver?.observe(scrollContainer, { childList: true });
+    scrollContainer.addEventListener("load", scrollToLatest, true);
+    scrollContainer.addEventListener("wheel", releasePinnedPosition, { passive: true });
+    scrollContainer.addEventListener("touchstart", releasePinnedPosition, { passive: true });
+    scrollContainer.addEventListener("pointerdown", releasePinnedPosition, { passive: true });
+
     const animationFrame = window.requestAnimationFrame(scrollToLatest);
-    const settledLayoutTimer = window.setTimeout(scrollToLatest, 180);
+    const settledLayoutTimer = window.setTimeout(scrollToLatest, 250);
 
     return () => {
       window.cancelAnimationFrame(animationFrame);
       window.clearTimeout(settledLayoutTimer);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      scrollContainer.removeEventListener("load", scrollToLatest, true);
+      scrollContainer.removeEventListener("wheel", releasePinnedPosition);
+      scrollContainer.removeEventListener("touchstart", releasePinnedPosition);
+      scrollContainer.removeEventListener("pointerdown", releasePinnedPosition);
     };
   }, [conversationId, latestItemKey]);
 
@@ -470,7 +509,7 @@ export function AudioCallScreen({ child, conversation, policy, autoReply, onClos
           <span><ShieldCheck size={17} weight="fill" /> Appel protégé</span>
         </header>
         <div className="audio-lobby-card">
-          <div className="audio-lobby-avatar"><Avatar person={conversation} size="hero" online /><span><Phone size={25} weight="fill" /></span></div>
+          <div className="audio-lobby-avatar"><Avatar person={conversation} size="hero" availability={conversation.availability} /><span><Phone size={25} weight="fill" /></span></div>
           <small>Contact approuvé</small>
           <h1>Appeler {conversation.name} ?</h1>
           <p>Le micro reste actif uniquement pendant l’appel.</p>
@@ -503,7 +542,7 @@ export function AudioCallScreen({ child, conversation, policy, autoReply, onClos
         <div className="audio-call-avatar">
           <span className="audio-pulse audio-pulse--one" />
           <span className="audio-pulse audio-pulse--two" />
-          <Avatar person={conversation} size="hero" online />
+          <Avatar person={conversation} size="hero" availability={conversation.availability} />
         </div>
         <h1>{conversation.name}</h1>
         <p>En appel avec {child.name}</p>
@@ -623,7 +662,7 @@ export function VideoCallScreen({ child, conversation, policy, autoReply, onClos
           <span><ShieldCheck size={17} weight="fill" /> Visio protégée</span>
         </header>
         <div className="video-lobby-card">
-          <div className="video-lobby-avatar"><Avatar person={conversation} size="hero" online /><span><VideoCamera size={26} weight="fill" /></span></div>
+          <div className="video-lobby-avatar"><Avatar person={conversation} size="hero" availability={conversation.availability} /><span><VideoCamera size={26} weight="fill" /></span></div>
           <small>Contact approuvé</small>
           <h1>Appeler {conversation.name} en visio ?</h1>
           <p>La caméra et le micro restent actifs uniquement pendant l’appel.</p>
@@ -716,7 +755,11 @@ export function RealtimeCallScreen({
   const [isSpeakerOff, setIsSpeakerOff] = useState(false);
   const [isRemoteVideoReady, setIsRemoteVideoReady] = useState(false);
   const [duration, setDuration] = useState(0);
-  const effectivePolicy = policy ?? { allowed: true, detail: "Tout est prêt." };
+  const configuredPolicy = policy ?? { allowed: true, detail: "Tout est prêt." };
+  const availabilityPolicy = callAvailabilityPolicy(conversation.availability);
+  const effectivePolicy = direction === "outgoing" && configuredPolicy.allowed && !availabilityPolicy.allowed
+    ? availabilityPolicy
+    : configuredPolicy;
   acceptedNativelyRef.current = acceptedNatively;
 
   const releaseMedia = () => {
@@ -1056,7 +1099,7 @@ export function RealtimeCallScreen({
           <span><ShieldCheck size={17} weight="fill" /> {isIncoming ? "Appel entrant privé" : "Appel protégé"}</span>
         </header>
         <div className={isVideo ? "video-lobby-card" : "audio-lobby-card"}>
-          <div className={isVideo ? "video-lobby-avatar" : "audio-lobby-avatar"}><Avatar person={conversation} size="hero" online /><span>{isVideo ? <VideoCamera size={26} weight="fill" /> : <Phone size={25} weight="fill" />}</span></div>
+          <div className={isVideo ? "video-lobby-avatar" : "audio-lobby-avatar"}><Avatar person={conversation} size="hero" availability={conversation.availability} /><span>{isVideo ? <VideoCamera size={26} weight="fill" /> : <Phone size={25} weight="fill" />}</span></div>
           <small>{isIncoming ? "Contact autorisé" : "Conversation privée"}</small>
           <h1>{isTerminal ? terminalTitle : isIncoming ? `${conversation.name} vous appelle` : `Appeler ${conversation.name} ?`}</h1>
           <p>{isTerminal ? terminalDetail : isIncoming ? `${isVideo ? "Appel vidéo" : "Appel audio"} — choisis accepter ou refuser.` : "Secret Clubhouse vérifie que tout est prêt avant la sonnerie."}</p>
@@ -1085,7 +1128,7 @@ export function RealtimeCallScreen({
         <audio ref={remoteAudioRef} autoPlay aria-label={`Audio de ${conversation.name}`} />
         <header className="audio-call-topbar"><span className={`connection-dot ${connectionState === "connected" ? "is-connected" : ""}`} /><span>{connectionLabel}</span><strong>{formatCallDuration(duration)}</strong></header>
         <div className="audio-call-center">
-          <div className="audio-call-avatar"><span className="audio-pulse audio-pulse--one" /><span className="audio-pulse audio-pulse--two" /><Avatar person={conversation} size="hero" online /></div>
+          <div className="audio-call-avatar"><span className="audio-pulse audio-pulse--one" /><span className="audio-pulse audio-pulse--two" /><Avatar person={conversation} size="hero" availability={conversation.availability} /></div>
           <h1>{conversation.name}</h1>
           <p>{phase === "outgoing-ringing" ? "En attente de sa réponse" : `En appel avec ${account.name}`}</p>
           <div className="audio-waveform" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <span key={index} style={{ "--wave-index": index }} />)}</div>
@@ -1142,6 +1185,10 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
   const messagePolicy = getChannelPolicy(schedule, "messages");
   const audioCallPolicy = getChannelPolicy(schedule, "calls");
   const videoCallPolicy = getChannelPolicy(schedule, "video");
+  const availability = normalizePresenceAvailability(conversation.availability);
+  const availabilityPolicy = callAvailabilityPolicy(availability);
+  const effectiveAudioCallPolicy = audioCallPolicy.allowed ? availabilityPolicy : audioCallPolicy;
+  const effectiveVideoCallPolicy = videoCallPolicy.allowed ? availabilityPolicy : videoCallPolicy;
   const nextMessageTime = schedule.messages.start.endsWith(":00")
     ? `${schedule.messages.start.slice(0, 2).replace(/^0/, "")} h`
     : schedule.messages.start.replace(/^0/, "").replace(":", " h ");
@@ -1239,14 +1286,15 @@ export function ChatScreen({ child, conversation, settings, schedule, onBack, on
         <button className="icon-button" type="button" onClick={onBack} aria-label="Retour aux conversations">
           <ArrowLeft size={23} weight="bold" />
         </button>
-        <Avatar person={conversation} size="chat" online />
+        <Avatar person={conversation} size="chat" availability={availability} />
         <div className="chat-header__copy">
           <strong>{conversation.name}</strong>
           <span><ShieldCheck size={13} weight="fill" /> {conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
+          <small className={`presence-label is-${availability.state}`}>{availability.label}</small>
         </div>
         <div className="conversation-actions">
-          {canCall && <button className={`icon-button audio-call-button ${audioCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "audio", audioCallPolicy)} disabled={!audioCallPolicy.allowed} aria-label={`Appeler ${conversation.name} en audio`}><Phone size={21} weight="fill" /></button>}
-          {canCall && <button className={`icon-button video-call-button ${videoCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "video", videoCallPolicy)} disabled={!videoCallPolicy.allowed} aria-label={`Appeler ${conversation.name} en vidéo`}><VideoCamera size={21} weight="fill" /></button>}
+          {canCall && <button className={`icon-button audio-call-button ${effectiveAudioCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "audio", effectiveAudioCallPolicy)} disabled={!effectiveAudioCallPolicy.allowed} title={effectiveAudioCallPolicy.allowed ? `Appeler ${conversation.name}` : effectiveAudioCallPolicy.detail} aria-label={effectiveAudioCallPolicy.allowed ? `Appeler ${conversation.name} en audio` : `Appel audio indisponible : ${effectiveAudioCallPolicy.detail}`}><Phone size={21} weight="fill" /></button>}
+          {canCall && <button className={`icon-button video-call-button ${effectiveVideoCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "video", effectiveVideoCallPolicy)} disabled={!effectiveVideoCallPolicy.allowed} title={effectiveVideoCallPolicy.allowed ? `Appeler ${conversation.name} en visio` : effectiveVideoCallPolicy.detail} aria-label={effectiveVideoCallPolicy.allowed ? `Appeler ${conversation.name} en vidéo` : `Appel vidéo indisponible : ${effectiveVideoCallPolicy.detail}`}><VideoCamera size={21} weight="fill" /></button>}
           {canInviteToGame && <button className="chat-game-button" type="button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${conversation.name} à jouer`}><GameController size={20} weight="fill" /><span>Jouer</span></button>}
         </div>
       </header>
@@ -1321,6 +1369,8 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
   const parentMediaInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+  const selectedAvailability = normalizePresenceAvailability(selectedThread?.availability);
+  const selectedCallPolicy = callAvailabilityPolicy(selectedAvailability);
   const { typingName, notifyTyping, stopTyping } = useTypingIndicator(selectedThread?.id, Boolean(selectedThread?.serverBacked));
   const canInviteToGame = Boolean(selectedThread?.contactId && (selectedThread.serverBacked || onInviteGame));
   const {
@@ -1476,8 +1526,8 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
           <div className="parent-thread-list">
             {threads.map((thread) => (
               <button type="button" className={`parent-thread-row${selectedThread?.id === thread.id ? " is-selected" : ""}`} key={thread.id} onClick={() => onSelectThread(thread.id)} aria-label={`Ouvrir la conversation avec ${thread.name}`} aria-current={selectedThread?.id === thread.id ? "true" : undefined}>
-                <span className="parent-contact-avatar" aria-hidden="true">{thread.initials}</span>
-                <span className="parent-thread-row__copy"><span><strong>{thread.name}</strong><small>{thread.time}</small></span><em>{thread.relation}</em><p>{thread.preview}</p></span>
+                <span className="parent-contact-avatar parent-contact-avatar--with-presence" aria-hidden="true">{thread.initials}<i className={`online-dot is-${normalizePresenceAvailability(thread.availability).state}`} /></span>
+                <span className="parent-thread-row__copy"><span><strong>{thread.name}</strong><small>{thread.time}</small></span><em>{thread.relation} · <span className={`presence-label is-${normalizePresenceAvailability(thread.availability).state}`}>{normalizePresenceAvailability(thread.availability).shortLabel}</span></em><p>{thread.preview}</p></span>
                 {thread.unread > 0 ? <span className="parent-thread-unread">{thread.unread}</span> : <CaretRight size={18} weight="bold" aria-hidden="true" />}
               </button>
             ))}
@@ -1489,11 +1539,11 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
           {selectedThread ? <>
             <header className="parent-thread-header">
               <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
-              <span className="parent-contact-avatar" aria-hidden="true">{selectedThread.initials}</span>
-              <div><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small></div>
+              <span className="parent-contact-avatar parent-contact-avatar--with-presence" aria-hidden="true">{selectedThread.initials}<i className={`online-dot is-${selectedAvailability.state}`} /></span>
+              <div className="parent-thread-header__copy"><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small><small className={`presence-label is-${selectedAvailability.state}`}>{selectedAvailability.label}</small></div>
               <div className="conversation-actions conversation-actions--parent">
-                {onStartCall && <button type="button" className="icon-button audio-call-button" onClick={() => onStartCall(selectedThread, "audio")} aria-label={`Appeler ${selectedThread.name} en audio`}><Phone size={20} weight="fill" /></button>}
-                {onStartCall && <button type="button" className="icon-button video-call-button" onClick={() => onStartCall(selectedThread, "video")} aria-label={`Appeler ${selectedThread.name} en vidéo`}><VideoCamera size={20} weight="fill" /></button>}
+                {onStartCall && <button type="button" className={`icon-button audio-call-button ${selectedCallPolicy.allowed ? "" : "is-restricted"}`} onClick={() => onStartCall(selectedThread, "audio", selectedCallPolicy)} disabled={!selectedCallPolicy.allowed} title={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name}` : selectedCallPolicy.detail} aria-label={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en audio` : `Appel audio indisponible : ${selectedCallPolicy.detail}`}><Phone size={20} weight="fill" /></button>}
+                {onStartCall && <button type="button" className={`icon-button video-call-button ${selectedCallPolicy.allowed ? "" : "is-restricted"}`} onClick={() => onStartCall(selectedThread, "video", selectedCallPolicy)} disabled={!selectedCallPolicy.allowed} title={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en visio` : selectedCallPolicy.detail} aria-label={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en vidéo` : `Appel vidéo indisponible : ${selectedCallPolicy.detail}`}><VideoCamera size={20} weight="fill" /></button>}
                 {canInviteToGame && <button type="button" className="parent-thread-game-button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${selectedThread.name} à jouer`}><GameController size={19} weight="fill" /><span>Jouer</span></button>}
               </div>
             </header>

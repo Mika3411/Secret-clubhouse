@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
 const readSource = (relativePath) => readFile(new URL(relativePath, root), "utf8");
@@ -115,13 +115,23 @@ test("iOS n’envoie un jeton d’action d’appel qu’à l’origine API et au
   assert.match(androidClient, /target\.getPath\(\)\.startsWith\("\/api\/native\/calls\/"\)/u);
 });
 
-test("la production ne distribue jamais l’APK de débogage du dépôt", async () => {
-  const [indexSource, appSource] = await Promise.all([
+test("l’APK Android public reste proposé uniquement dans le groupe parent prévu", async () => {
+  const [indexSource, appSource, parentSource, packageSource, mobilePrepareSource, publicApk] = await Promise.all([
     readSource("server/index.js"),
     readSource("src/App.jsx"),
+    readSource("src/features/ParentSpace.jsx"),
+    readSource("package.json"),
+    readSource("scripts/prepare-mobile-assets.js"),
+    stat(new URL("../public/downloads/Secret-Clubhouse.apk", import.meta.url)),
   ]);
 
   assert.doesNotMatch(indexSource, /Secret-Clubhouse-debug\.apk/u);
-  assert.doesNotMatch(indexSource, /\/downloads\/Secret-Clubhouse\.apk/u);
+  assert.doesNotMatch(appSource, /Secret-Clubhouse-debug\.apk/u);
+  assert.match(parentSource, /parent-account-app-panel[\s\S]*href="\/downloads\/Secret-Clubhouse\.apk"/u);
+  assert.match(parentSource, /Version 1\.7 · application Android/u);
+  assert.match(parentSource, /!Capacitor\.isNativePlatform\(\)/u);
+  assert.match(packageSource, /npm run mobile:prepare && cap sync/u);
+  assert.match(mobilePrepareSource, /dist\/downloads\/Secret-Clubhouse\.apk/u);
+  assert.ok(publicApk.size > 10_000_000, "Le paquet public doit contenir l’application Android complète.");
   assert.doesNotMatch(appSource, /\/downloads\/Secret-Clubhouse\.apk/u);
 });

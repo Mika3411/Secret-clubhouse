@@ -8,6 +8,7 @@ import { CheckCircle } from "@phosphor-icons/react/CheckCircle";
 import { Clock } from "@phosphor-icons/react/Clock";
 import { Copy } from "@phosphor-icons/react/Copy";
 import { DeviceMobile } from "@phosphor-icons/react/DeviceMobile";
+import { DownloadSimple } from "@phosphor-icons/react/DownloadSimple";
 import { GameController } from "@phosphor-icons/react/GameController";
 import { GearSix } from "@phosphor-icons/react/GearSix";
 import { IdentificationCard } from "@phosphor-icons/react/IdentificationCard";
@@ -551,6 +552,15 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
               </button>
 
               <PushNotificationButton features={features} />
+
+              {!Capacitor.isNativePlatform() && (
+                <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
+                  <span><DownloadSimple size={23} weight="bold" /></span>
+                  <span><strong>Installer sur Android</strong><small>Version 1.7 · application Android</small></span>
+                  <span className="parent-apk-badge">APK</span>
+                  <CaretRight size={18} weight="bold" aria-hidden="true" />
+                </a>
+              )}
             </section>
           </div>
         </div>

@@ -110,7 +110,7 @@ Priorité immédiate :
 - [ ] établir un plan de migration des contenus existants avant d’activer `CONTENT_ENCRYPTION_KEY`, conserver les anciennes clés requises et valider le démarrage fermé ;
 - [ ] déployer une version contenant le chiffrement, les sessions opaques et les contrôles actuels, puis la relier sans ambiguïté aux tests et au build réussis ;
 - [ ] vérifier sur le service réel `RTC_ENABLED=true`, `WEB_PUSH_ENABLED=true`, `NATIVE_PUSH_ENABLED=true` et `PRIVACY_ADMIN_ENABLED=false`, puis relier les secrets TURN, VAPID, FCM et APNs masqués au SHA réellement servi sans exposer leurs valeurs ;
-- [ ] vérifier que `/downloads/Secret-Clubhouse.apk` n’est plus servi et qu’aucun APK/AAB/IPA de débogage n’est distribué ;
+- [ ] vérifier l’empreinte de `/downloads/Secret-Clubhouse.apk`, prouver la version réellement servie et remplacer l’identité Android de test par une signature de distribution protégée avant tout usage par des enfants réels ;
 - [ ] exécuter une restauration isolée réelle, rejouer les tombstones et la purge, puis documenter le résultat ;
 - [ ] documenter la capacité de détection et d’alerte ; si un essai de réception est réalisé hors production, conserver seulement sa conclusion expurgée ;
 - [ ] consigner la durée effective de conservation des journaux Render et tout export externe.

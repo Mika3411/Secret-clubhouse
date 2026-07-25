@@ -418,7 +418,7 @@ test("les routes applicatives protègent la connexion et la présence", async (t
           revoked_at: null,
         }]);
       }
-      if (statement.includes("from auth_sessions session")) {
+      if (statement.includes("where session.token_hash=$1")) {
         assert.equal(params[0], sessionHash);
         return revoked
           ? queryResult()
@@ -647,7 +647,7 @@ test("les routes applicatives protègent la connexion et la présence", async (t
 
     pool.query = async (sql, params = []) => {
       const statement = String(sql);
-      if (statement.includes("from auth_sessions session")) {
+      if (statement.includes("where session.token_hash=$1")) {
         return queryResult([{
           id: "55555555-5555-4555-8555-555555555555",
           account_id: accountId,
@@ -664,8 +664,16 @@ test("les routes applicatives protègent la connexion et la présence", async (t
         return queryResult([{ processing_restricted_at: null, processing_restriction_reason: null }]);
       }
       presenceQuery = statement;
-      assert.deepEqual(params, [[authorizedContactId, unrelatedContactId], accountId]);
-      return queryResult([{ contact_id: authorizedContactId, online: true }]);
+      assert.deepEqual(params, [[authorizedContactId, unrelatedContactId], accountId, false, false]);
+      return queryResult([{
+        contact_id: authorizedContactId,
+        role: "parent",
+        status: "active",
+        processing_restricted_at: null,
+        connected: true,
+        recently_online: true,
+        background_reachable: false,
+      }]);
     };
 
     const unauthenticated = await fetch(`${baseUrl}/api/presence?contactIds=${authorizedContactId}`);
@@ -682,10 +690,125 @@ test("les routes applicatives protègent la connexion et la présence", async (t
       },
     );
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { presence: { [authorizedContactId]: true } });
+    assert.deepEqual(await response.json(), {
+      presence: {
+        [authorizedContactId]: {
+          state: "online",
+          connected: true,
+          online: true,
+          canCall: true,
+        },
+      },
+    });
     assert.match(presenceQuery, /contact_relationships/);
     assert.match(presenceQuery, /family_memberships/);
     assert.match(presenceQuery, /family_children/);
     assert.match(presenceQuery, /join authorized_accounts/);
+  });
+
+  await t.test("refuse de créer un appel quand le destinataire est réellement déconnecté", async (subtest) => {
+    const callerId = "12345678-1234-4234-8234-123456789012";
+    const calleeId = "87654321-4321-4321-8321-210987654321";
+    const conversationId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const originalPoolConnect = pool.connect;
+    let rolledBack = false;
+    let insertedCall = false;
+    subtest.after(() => {
+      pool.connect = originalPoolConnect;
+    });
+
+    pool.query = async (sql, params = []) => {
+      const statement = String(sql).replace(/\s+/g, " ").trim();
+      if (statement.includes("from auth_sessions session")) {
+        return queryResult([{
+          id: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+          account_id: callerId,
+          client_type: "native",
+          device_id: "device.test.caller",
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 300_000).toISOString(),
+          revoked_at: null,
+          role: "parent",
+        }]);
+      }
+      if (statement.includes("select processing_restricted_at,processing_restriction_reason from accounts")) {
+        return queryResult([{ processing_restricted_at: null, processing_restriction_reason: null }]);
+      }
+      if (statement.startsWith("select 1 from conversation_members member")) {
+        assert.deepEqual(params, [callerId, conversationId]);
+        return queryResult([{ "?column?": 1 }]);
+      }
+      throw new Error(`Requête SQL globale inattendue pendant le test d’appel : ${statement}`);
+    };
+
+    const client = {
+      async query(sql, params = []) {
+        const statement = String(sql).replace(/\s+/g, " ").trim();
+        if (statement === "begin") return queryResult();
+        if (statement === "rollback") {
+          rolledBack = true;
+          return queryResult();
+        }
+        if (statement.startsWith("update call_sessions set status='missed'")) return queryResult();
+        if (statement.includes("from conversation_members member join accounts account")) {
+          assert.deepEqual(params, [conversationId]);
+          return queryResult([
+            {
+              id: callerId,
+              role: "parent",
+              display_name: "Parent appelant",
+              contact_id: "SC-111-222-333",
+              status: "active",
+              safety_settings: {},
+              communication_schedule: {},
+            },
+            {
+              id: calleeId,
+              role: "parent",
+              display_name: "Parent déconnecté",
+              contact_id: "SC-444-555-666",
+              status: "active",
+              safety_settings: {},
+              communication_schedule: {},
+            },
+          ]);
+        }
+        if (statement.includes("from accounts account") && statement.includes("where account.id=$1")) {
+          assert.deepEqual(params, [calleeId, false, false]);
+          return queryResult([{
+            role: "parent",
+            status: "active",
+            processing_restricted_at: null,
+            connected: false,
+            recently_online: false,
+            background_reachable: false,
+          }]);
+        }
+        if (statement.startsWith("insert into call_sessions")) {
+          insertedCall = true;
+          return queryResult();
+        }
+        throw new Error(`Requête SQL transactionnelle inattendue pendant le test d’appel : ${statement}`);
+      },
+      release() {},
+    };
+    pool.connect = async () => client;
+
+    const token = Buffer.alloc(32, 11).toString("base64url");
+    const response = await fetch(`${baseUrl}/api/conversations/${conversationId}/calls`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "X-Secret-Clubhouse-Client": "native",
+      },
+      body: JSON.stringify({ callType: "video" }),
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 409);
+    assert.match(payload.error, /déconnectée/u);
+    assert.equal(rolledBack, true);
+    assert.equal(insertedCall, false);
   });
 });

@@ -36,7 +36,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       title: "Données techniques et de sécurité",
-      text: "Session web placée dans un cookie sécurisé, HttpOnly et inaccessible à JavaScript ; session native temporaire limitée à la session de l’application ; seul un hash de session révocable est conservé dans PostgreSQL. S’ajoutent l’adresse e-mail parent mémorisée localement, la présence récente, l’indicateur de saisie, les abonnements de notification, le type d’appareil et le hash irréversible de l’adresse IP utilisé pour limiter les tentatives de connexion.",
+      text: "Session web placée dans un cookie sécurisé, HttpOnly et inaccessible à JavaScript ; session native temporaire limitée à la session de l’application ; seul un hash de session révocable est conservé dans PostgreSQL. S’ajoutent l’adresse e-mail parent mémorisée localement, les signaux récents de présence au premier plan ou de passage en arrière-plan, l’indicateur de saisie, les abonnements de notification, le type d’appareil et le hash irréversible de l’adresse IP utilisé pour limiter les tentatives de connexion.",
     },
     {
       title: "Statistiques agrégées du service",
@@ -122,7 +122,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       data: "Appels, présence et saisie",
-      duration: "Les offres, réponses et candidats techniques WebRTC sont supprimés après 24 heures. Les métadonnées d’un appel terminé sont supprimées après 90 jours. Une présence est supprimée après 24 heures, bien que l’affichage passe hors ligne après 75 secondes ; la saisie expire après 6 secondes.",
+      duration: "Les offres, réponses et candidats techniques WebRTC sont supprimés après 24 heures. Les métadonnées d’un appel terminé sont supprimées après 90 jours. Une présence est supprimée après 24 heures. L’état « En ligne » cesse après 75 secondes sans signal au premier plan ; l’application peut ensuite être indiquée comme joignable en veille seulement tant qu’une session active et une route de notification valide permettent encore de recevoir un appel. Une session révoquée est indiquée comme déconnectée. La saisie expire après 6 secondes.",
     },
     {
       data: "Invitations et demandes de contact",
@@ -181,7 +181,7 @@ export const childPrivacyCards = Object.freeze([
   {
     icon: "backpack",
     title: "Ce que l’application garde",
-    text: "Ton prénom ou pseudo, ton âge, ton avatar, ton pseudo secret pour te connecter et un ID de contact différent pour ton QR, tes contacts approuvés, tes messages, tes médias, tes jeux, ta progression, tes récompenses et les réglages choisis par ton parent.",
+    text: "Ton prénom ou pseudo, ton âge, ton avatar, ton pseudo secret et l’ID de ton QR. Elle garde aussi tes contacts approuvés, tes messages et médias, tes jeux et récompenses, les réglages de ton parent, et un petit signal pour dire si l’application est ouverte ou en veille.",
   },
   {
     icon: "sparkle",
@@ -216,7 +216,7 @@ export const childPrivacyCards = Object.freeze([
   {
     icon: "clock",
     title: "Pendant combien de temps ?",
-    text: "Ton parent peut supprimer ton profil tout de suite. Sinon, les messages texte restent au plus un an, les photos et vidéos 90 jours, et les petits signaux « en ligne » ou d’appel seulement quelques secondes ou heures. Un compte familial sans activité pendant 2 ans est supprimé.",
+    text: "Ton parent peut supprimer ton profil tout de suite. Sinon, les messages texte restent au plus un an, les photos et vidéos 90 jours, et les petits signaux « en ligne », « en veille » ou d’appel au plus 24 heures. Un compte familial sans activité pendant 2 ans est supprimé.",
   },
   {
     icon: "hand",

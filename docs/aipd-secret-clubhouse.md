@@ -1,7 +1,7 @@
 # Analyse d’impact relative à la protection des données (AIPD)
 
 **Traitement :** Secret Clubhouse — service familial privé de communication et d’activités pour enfants de 6 à 13 ans
-**Version :** 1.15<br>
+**Version :** 1.17<br>
 **Date d’évaluation :** 25 juillet 2026
 **Responsable du traitement :** Mickael Thorez, éditeur individuel non professionnel
 **Contact RGPD :** `contact@secret-clubhouse.fr`
@@ -13,7 +13,7 @@ Ce dossier applique la méthode CNIL : contexte, respect des principes fondament
 
 > **PRODUCTION BLOQUÉE**
 
-La condition demandée d’une clôture vérifiée de `A02` à `A08` n’est pas satisfaite. `A05` et `A06` disposent de preuves permettant de retenir leur clôture avec les réserves décrites ci-dessous. `A07`, auparavant fermée pour le seul périmètre web sans RTC ni notifications actives, est rouverte par l’activation contrôlée de TURN, Web Push, FCM et APNs. `A02`, `A03`, `A04`, `A07` et `A08` restent ouvertes. L’AIPD n’est donc pas formellement approuvée et les risques `R01`, `R02`, `R06`, `R08` et `R10` restent élevés.
+La condition demandée d’une clôture vérifiée de `A02` à `A08` n’est pas satisfaite. `A05` et `A06` disposent de preuves permettant de retenir leur clôture avec les réserves décrites ci-dessous. `A07`, auparavant fermée pour le seul périmètre web sans RTC ni notifications actives, est rouverte par l’activation contrôlée de TURN, Web Push, FCM et APNs puis par la distribution publique de l’APK Android du prototype. `A02`, `A03`, `A04`, `A07` et `A08` restent ouvertes. L’AIPD n’est donc pas formellement approuvée et les risques `R01`, `R02`, `R06`, `R08` et `R10` restent élevés.
 
 Avant l’ouverture à des enfants réels, le responsable doit :
 
@@ -70,6 +70,7 @@ Cette version repose notamment sur :
 - `server/services/admin-analytics-service.js`, `server/policies/platform-admin.js` et leurs tests pour l’agrégation, l’exclusion de la famille administratrice et l’accès nominatif ;
 - `server/parental-policy.js` et les contrôles de routes de `server/index.js` pour l’application serveur des règles ;
 - `server/auth-sessions.js` et `server/login-protection.js` pour les sessions et la limitation de connexion ;
+- `server/services/presence-service.js`, `src/presence.js` et leurs tests pour la distinction entre premier plan, veille joignable, session non joignable et déconnexion, ainsi que le blocage serveur des appels ;
 - `server/content-encryption.js` et `server/message-content.js` pour le chiffrement applicatif ;
 - `server/notification-privacy.js` et `server/legal-compliance.js` pour la minimisation push et le consentement ;
 - `server/privacy-service.js`, `docs/data-subject-rights.md` et `server/reapply-erasure-tombstones.js` pour les droits ;
@@ -183,7 +184,7 @@ Le point de vue de parents et d’enfants n’a pas encore été recueilli et au
 - Un identifiant opaque permet l’ajout ciblé sans annuaire public ni téléphone.
 - La liste des participants est nécessaire pour acheminer une communication et en contrôler l’accès.
 - Les règles, horaires et statuts sont nécessaires pour appliquer les choix parentaux côté serveur.
-- Les états reçu/vu, la présence courte et la saisie éphémère fournissent les fonctions explicites de communication ; ils ne servent pas au profilage.
+- Les états reçu/vu, la présence courte et la saisie éphémère fournissent les fonctions explicites de communication ; ils ne servent pas au profilage. La présence ne publie aucun horodatage exact : elle distingue seulement l’usage récent au premier plan, une session joignable en veille grâce à une route de notification valide, une session authentifiée mais non joignable et une session réellement déconnectée.
 - La signalisation WebRTC est nécessaire à un appel, mais le contenu audio/vidéo n’est pas enregistré.
 - Les jetons push ne sont nécessaires que lorsque l’utilisateur choisit la fonction facultative.
 
@@ -192,7 +193,7 @@ Le point de vue de parents et d’enfants n’a pas encore été recueilli et au
 - pas de numéro de téléphone enfant, synchronisation du carnet d’adresses, annuaire ou lien public ;
 - pas de message ni nom dans les notifications ;
 - pas de contenu des conversations enfant-ami dans le tableau parent ;
-- présence visible uniquement par la personne elle-même, sa famille ou ses contacts approuvés ;
+- présence visible uniquement par la personne elle-même, sa famille ou ses contacts approuvés, sans heure exacte ni historique individuel ;
 - permission caméra et microphone seulement au moment de l’usage ;
 - données temps réel rapidement expirées ;
 - suppression automatique et export direct ;
@@ -202,7 +203,7 @@ Le point de vue de parents et d’enfants n’a pas encore été recueilli et au
 
 Le chiffrement applicatif protège PostgreSQL et les sauvegardes, mais Render détient la clé active et peut déchiffrer après contrôle d’accès. Le service n’est donc pas « de bout en bout ». Cette capacité doit rester limitée au processus applicatif, avec secrets séparés, administrateurs nommés et rotation testée.
 
-Le suivi de présence et des accusés crée une attente sociale. L’interface doit rester neutre, ne pas produire de statistiques individuelles détaillées pour le parent et respecter les durées prévues.
+Le suivi de présence et des accusés crée une attente sociale. L’interface doit rester neutre, ne pas produire de statistiques individuelles détaillées pour le parent et respecter les durées prévues. Elle ne doit pas présenter une application suspendue ou un téléphone en veille comme une déconnexion lorsque la session et la route de notification restent valides ; inversement, elle ne doit pas promettre un appel lorsque aucun appareil n’est joignable.
 
 Les transferts hors EEE ne peuvent pas être justifiés par la seule mention contractuelle d’un fournisseur. La localisation, le mécanisme de transfert et les mesures supplémentaires doivent être vérifiés avant production.
 
@@ -226,6 +227,7 @@ Les transferts hors EEE ne peuvent pas être justifiés par la seule mention con
 - autorisation serveur par famille, relation approuvée et participation à la conversation ;
 - administration des agrégats réservée à un compte parent nominativement inscrit en base, sans identifiant ni mot de passe administrateur partagé ;
 - présence inaccessible par simple identifiant arbitraire.
+- état « En ligne » limité à un signal au premier plan de moins de 75 secondes ; état de veille joignable limité à une session active et une route Web Push/APNs/FCM encore valide ; l’API bloque la création d’un appel si le destinataire n’est pas joignable.
 
 ### Confidentialité, intégrité et minimisation
 
@@ -286,7 +288,7 @@ Les scénarios détaillés — menaces, impacts, contrôles et liens d’action 
 | A04 | **Ouverte** | Procédure et audit A04 ; contrôle GitHub expurgé ; support technique de rotation VAPID ; checklist fournisseur non validée | GitHub ne compte qu’un administrateur nominatif et la continuité VAPID est implémentée, mais MFA, accès Render/Cloudflare/Google/Apple et essais réels de récupération, rotation et révocation ne sont pas prouvés |
 | A05 | **Fermée avec réserve** | Procédure, registre, exercice `SIM-A05-2026-07-23`, manifeste et cinq contrôles automatisés réussis lors du rejeu | L’exercice synthétique couvre le contrôle préparatoire ; le 23/07/2027 est un objectif interne de revue, pas une échéance légale fixe |
 | A06 | **Fermée avec réserve** | Rapport A06 et nouveau rejeu sur PostgreSQL 18.4 local neuf : purge 1/1, droits 1/1, cycle complet 5/5 et commande de purge réussis | La date du 23/10/2026 est un objectif interne fondé sur le risque, non une périodicité légale. A06 ne prouve pas Render |
-| A07 | **Rouverte** | Rapport historique ; nouvelle évaluation locale du 25 juillet ; suite Node, audit npm, build web et lint Android | Les quatre erreurs Android trouvées ont été corrigées, mais les essais réels RTC, Web Push, FCM, APNs/PushKit et appareils verrouillés restent nécessaires |
+| A07 | **Rouverte** | Rapport historique ; nouvelle évaluation locale du 25 juillet ; suite Node, audit npm, build web, lint Android et APK 1.7 public | Les quatre erreurs Android trouvées ont été corrigées, mais les essais réels RTC, Web Push, FCM, APNs/PushKit et appareils verrouillés restent nécessaires ; l’APK conserve encore l’identité de signature Android de test |
 | A08 | **Ouverte** | Checklist privée historique du 23 juillet ; vérification publique du 25 juillet ; healthcheck avec provenance SHA et vérificateur automatisé | Le service public et la CI concordent, mais une nouvelle revue privée Render doit encore prouver régions, variables, transport, sessions, sauvegardes, restauration, Cron, alertes et journaux |
 
 **Conclusion de vérification :** la prémisse « A02 à A08 clôturées » est fausse. Aucun score ci-dessous ne peut être présenté comme un score définitif après clôture complète.
@@ -329,6 +331,10 @@ La version 1.14 ajoute l’activation contrôlée de FCM et APNs. Le responsable
 
 La version 1.15 ajoute la continuité de rotation VAPID, la provenance publique du SHA Render, une vérification automatisée du déploiement, le contrôle GitHub expurgé et une nouvelle évaluation locale incluant Android. Quatre erreurs de compatibilité Android détectées par lint ont été corrigées ; la CI couvre désormais ce lint. Ces mesures réduisent les lacunes techniques, mais ne remplacent ni les pièces contractuelles et privées, ni les essais fournisseur sur appareils réels, ni les décisions et signatures humaines. Les actions et scores restent donc inchangés.
 
+La version 1.16 distingue l’usage au premier plan, la veille joignable, la session authentifiée mais non joignable et la déconnexion réelle. PostgreSQL conserve séparément les derniers signaux de premier plan et d’arrière-plan dans la même enveloppe de rétention de 24 heures. La joignabilité en veille exige une session active, le consentement de notification applicable et une route Web Push/APNs/FCM valide ; le serveur recontrôle cette disponibilité avant de créer un appel. Cette évolution réduit les faux statuts et appels voués à l’échec sans ajouter de finalité, de destinataire, de prestataire ou de durée de conservation. Les actions et scores restent inchangés.
+
+La version 1.17 publie l’APK Android 1.7 dans les actifs web et restaure son accès exclusivement dans le groupe parent « Compte et application ». Pour rester compatible avec les APK 1.6 et antérieurs déjà installés sur les appareils du prototype, ce paquet conserve l’identité de signature Android de test. Cette distribution entre désormais dans le périmètre actif d’A07 et ajoute un constat élevé ouvert jusqu’à la mise en place d’une identité de signature de distribution protégée, d’une stratégie de migration et d’essais d’intégrité et de mise à jour sur appareils réels. Aucun score ne diminue et l’interdiction d’usage par des enfants réels est maintenue.
+
 ### 10.4 Consultation préalable de la CNIL
 
 L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-donnees/chapitre4) et la [procédure de soumission de la CNIL](https://www.cnil.fr/fr/services-en-ligne/soumettre-une-analyse-dimpact-relative-la-protection-des-donnees-aipd-la-cnil) imposent une consultation préalable lorsque l’AIPD conclut à un risque résiduel élevé après prise en compte des mesures destinées à l’atténuer.
@@ -351,7 +357,7 @@ L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-do
 | A04 | Administration et cycle de vie des clés | Sécurité/exploitation | Avant production | Pour les services actifs : accès nominatifs, authentification adaptée au risque, moindre privilège, séparation des secrets et essai représentatif de rotation/remplacement, récupération et révocation ; services inactifs `N/A` avec preuve | **Ouverte** |
 | A05 | Réponse aux incidents et violations | Responsable du traitement | Avant production, après incident/changement matériel, puis selon le risque | Procédure, registre et exercice incluant qualification, confinement, familles, enfants et CNIL sous 72 h | **Fermée avec réserve le 23/07/2026 ; objectif interne de revue 23/07/2027** |
 | A06 | Purge, droits, effacement et restauration | Exploitation | Avant production, après changement matériel, puis selon le risque | Toutes les durées, purge, droits, suppressions, tombstones et restauration réussis sur PostgreSQL local isolé via `TEST_DATABASE_URL` | **Fermée avec réserve le 23/07/2026 ; objectif interne de revue 23/10/2026** |
-| A07 | Évaluation de sécurité proportionnée | Évaluateur compétent | Avant production puis changement majeur | Évaluation du périmètre réellement actif, y compris WebRTC/TURN, Web Push, FCM et APNs, sans constat critique ou élevé non corrigé | **Rouverte le 24/07/2026** |
+| A07 | Évaluation de sécurité proportionnée | Évaluateur compétent | Avant production puis changement majeur | Évaluation du périmètre réellement actif, y compris WebRTC/TURN, Web Push, FCM, APNs et binaires publics signés pour la distribution, sans constat critique ou élevé non corrigé | **Rouverte le 24/07/2026** |
 | A08 | Preuve de configuration de production | Exploitation | Chaque déploiement | Preuves datées de l’état Render réel et lien non ambigu entre la version servie, les tests et le build par SHA ou provenance équivalente | **Ouverte** |
 
 Une action n’est « fermée » qu’avec une pièce datée, un auteur et un résultat vérifiable. La seule présence d’une option dans `render.yaml` ne prouve pas sa valeur effective.
@@ -364,7 +370,7 @@ L’audit A08 reste également **ouvert**. Le constat privé du 23 juillet est d
 
 L’évaluation `docs/a07-evaluation-securite-2026-07-23.md` a identifié puis fermé deux constats élevés et deux constats modérés : distribution publique d’un APK de débogage, activation implicite de fournisseurs, dépassement de la limite HTTP de 30 Mio et configuration Android trop permissive. La suite complète réussit 132 tests hors base, les cinq suites PostgreSQL réelles réussissent 9 tests supplémentaires, l’audit npm ne trouve aucune vulnérabilité et le build web réussit.
 
-Cette clôture historique valait uniquement tant que `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` restaient à `false` et qu’aucun APK/AAB/IPA n’était distribué. Les activations RTC, Web Push, FCM et APNs rouvrent donc `A07`. Les fiches D2 à D5, les tests de garde, un essai d’appel entre deux comptes et des essais de notification consentie sur appareils verrouillés sont des entrées de la nouvelle évaluation, mais ne suffisent pas seuls à la fermer.
+Cette clôture historique valait uniquement tant que `RTC_ENABLED`, `WEB_PUSH_ENABLED`, `NATIVE_PUSH_ENABLED` et `PRIVACY_ADMIN_ENABLED` restaient à `false` et qu’aucun APK/AAB/IPA n’était distribué. Les activations RTC, Web Push, FCM et APNs, puis la publication de l’APK 1.7, rouvrent donc `A07`. Les fiches D2 à D5, les tests de garde, un essai d’appel entre deux comptes, des essais de notification consentie sur appareils verrouillés et une signature Android de distribution protégée sont des entrées de la nouvelle évaluation, mais ne suffisent pas seuls à la fermer.
 
 ### Preuve de clôture A05
 
@@ -390,13 +396,13 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 | Périmètre | Ensemble des traitements listés au § 3 : comptes familiaux et enfants, contacts, communications et médias, présence, WebRTC, notifications, règles parentales, Clubhouse et jeux, sécurité, conservation, droits, Render/PostgreSQL et fournisseurs réseau/push |
 | Décision proposée | **Ne pas valider l’AIPD et ne pas autoriser la production** |
 | Motif | La clôture de A02 à A08 n’est pas vérifiée ; A02, A03, A04, A07 et A08 restent ouvertes ; R01, R02, R06, R08 et R10 restent élevés |
-| Réserves impératives | Aucun enfant réel ; RTC, Web Push, FCM et APNs sont limités à des essais contrôlés et doivent être désactivés si D2 à D5 ne peuvent pas être validés ; l’administration RGPD partagée, le tableau d’agrégats administrateur et la distribution publique native restent désactivés ; A05 reste un exercice synthétique ; A06 reste une validation locale et non une preuve Render |
+| Réserves impératives | Aucun enfant réel ; RTC, Web Push, FCM et APNs sont limités à des essais contrôlés et doivent être désactivés si D2 à D5 ne peuvent pas être validés ; l’administration RGPD partagée et le tableau d’agrégats administrateur restent désactivés ; l’APK public signé avec l’identité Android de test reste limité au prototype jusqu’à migration vers une signature de distribution protégée ; A05 reste un exercice synthétique ; A06 reste une validation locale et non une preuve Render |
 | Consultation CNIL | À réexaminer après les mesures encore réalisables. Obligatoire avant le traitement concerné si un risque résiduel élevé subsiste alors, ou si Mickael Thorez conclut qu’il ne peut pas être réduit |
 | Prochaine révision | Au plus tard le **5 septembre 2026**, avant la première échéance de recontrôle DPF inscrite dans A03, et plus tôt dès que A02, A03, A04 ou A08 reçoit une nouvelle preuve ou qu’un flux exclu d’A07 est activé |
 
 ### Déclaration réservée à Mickael Thorez
 
-> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.15, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
+> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.17, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
 
 | Champ à compléter personnellement | Valeur |
 |---|---|

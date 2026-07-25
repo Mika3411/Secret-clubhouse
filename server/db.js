@@ -526,9 +526,16 @@ export async function initializeDatabase() {
     create table if not exists presence (
       account_id uuid primary key references accounts(id) on delete cascade,
       last_seen timestamptz not null default now(),
+      last_foreground_at timestamptz,
+      last_background_at timestamptz,
       expires_at timestamptz not null default now() + interval '24 hours'
     );
     alter table presence add column if not exists expires_at timestamptz;
+    alter table presence add column if not exists last_foreground_at timestamptz;
+    alter table presence add column if not exists last_background_at timestamptz;
+    update presence
+      set last_foreground_at=coalesce(last_foreground_at,last_seen)
+      where last_foreground_at is null;
     update presence set expires_at=last_seen+interval '24 hours' where expires_at is null;
     alter table presence alter column expires_at set default now() + interval '24 hours';
     alter table presence alter column expires_at set not null;

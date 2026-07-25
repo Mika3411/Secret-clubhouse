@@ -7,6 +7,7 @@ import { Star } from "@phosphor-icons/react/Star";
 import { UserPlus } from "@phosphor-icons/react/UserPlus";
 import { WaveSine } from "@phosphor-icons/react/WaveSine";
 import { Brand } from "../../../Brand";
+import { normalizePresenceAvailability } from "../../../presence";
 import { Avatar } from "../../AuthenticatedShared";
 import "../../../styles/conversations.css";
 
@@ -62,12 +63,15 @@ export function FriendsStrip({ approvedFriends, onOpenFriend, onQr }) {
             <button type="button" onClick={onQr}><QrCode size={18} weight="bold" /> Ajouter ou partager</button>
           </div>
         )}
-        {approvedFriends.map((friend) => (
-          <button key={friend.id} type="button" className="friend-chip" onClick={() => onOpenFriend(friend)}>
-            <Avatar person={friend} size="friend" online={Boolean(friend.online)} />
-            <span>{friend.name}<small>{friend.online ? "En ligne" : "Hors ligne"}</small></span>
-          </button>
-        ))}
+        {approvedFriends.map((friend) => {
+          const availability = normalizePresenceAvailability(friend.availability);
+          return (
+            <button key={friend.id} type="button" className="friend-chip" onClick={() => onOpenFriend(friend)}>
+              <Avatar person={friend} size="friend" availability={availability} />
+              <span>{friend.name}<small className={`presence-label is-${availability.state}`}>{availability.shortLabel}</small></span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -90,11 +94,12 @@ export function ConversationList({ availableConversations, onOpen }) {
         )}
         {availableConversations.map((conversation) => {
           const ActivityIcon = conversation.ActivityIcon;
+          const availability = normalizePresenceAvailability(conversation.availability);
           return (
             <button key={conversation.id} type="button" className="conversation-row" onClick={() => onOpen(conversation)}>
-              <Avatar person={conversation} size="list" online={Boolean(conversation.online)} />
+              <Avatar person={conversation} size="list" availability={availability} />
               <span className="conversation-copy">
-                <strong>{conversation.name}</strong>
+                <span className="conversation-name-line"><strong>{conversation.name}</strong><small className={`presence-label is-${availability.state}`}>{availability.shortLabel}</small></span>
                 <span className="preview-text">{conversation.preview} <ActivityIcon size={16} weight="fill" aria-hidden="true" /></span>
               </span>
               <span className="conversation-meta">

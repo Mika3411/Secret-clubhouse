@@ -1,4 +1,4 @@
-export const aipdVersion = "1.15";
+export const aipdVersion = "1.17";
 export const aipdAssessmentDate = "2026-07-25";
 
 export const aipdRiskScale = Object.freeze({
@@ -151,11 +151,13 @@ export const aipdActions = Object.freeze([
       "server/route-authorization.test.js",
       "server/production-features.test.js",
       "server/security-hardening.test.js",
+      "android/app/build.gradle",
+      "src/features/ParentSpace.jsx",
     ]),
     acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
     reopenedAt: "2026-07-24",
-    reopenedBy: "Activation contrôlée de Cloudflare Realtime TURN, Web Push, FCM et APNs pour les essais du prototype",
-    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC, Web Push ni notifications natives. Leur activation rouvre A07 jusqu’à une évaluation du périmètre réellement déployé ; l’administration RGPD partagée, le tableau d’agrégats administrateur et la distribution publique des applications natives restent exclus.",
+    reopenedBy: "Activation contrôlée de Cloudflare Realtime TURN, Web Push, FCM et APNs, puis distribution publique de l’APK Android du prototype",
+    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC, Web Push, notifications natives ni binaire public. Leur activation et la distribution de l’APK rouvrent A07 jusqu’à une évaluation du périmètre réellement déployé ; l’administration RGPD partagée et le tableau d’agrégats administrateur restent exclus.",
   }),
   Object.freeze({
     id: "A08",
@@ -236,7 +238,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Collecte trop fine ou conservation trop longue", "Présentation trop détaillée aux adultes", "Détournement de la présence et des accusés de lecture"],
     impacts: ["Atteinte à la vie privée et à l’autonomie", "Pression familiale ou sociale", "Profil comportemental involontaire"],
     initial: { severity: 3, likelihood: 3 },
-    existingMeasures: ["Présence limitée au compte, à la famille et aux contacts approuvés", "Présence hors ligne après 75 secondes et purgée sous 24 heures", "Tableau parent limité aux alertes et à l’activité générale", "Aucun contenu enfant-ami exposé au parent", "Tableau opérateur limité à des agrégats PostgreSQL sans nom, identifiant, relation ou contenu individuel", "Compte administrateur et famille associée exclus des calculs"],
+    existingMeasures: ["Présence limitée au compte, à la famille et aux contacts approuvés", "État en ligne borné à 75 secondes sans signal au premier plan ; veille joignable dérivée uniquement d’une session active et d’une route push valide ; déconnexion liée à la révocation ou l’expiration de session ; traces purgées sous 24 heures", "Tableau parent limité aux alertes et à l’activité générale", "Aucun contenu enfant-ami exposé au parent", "Tableau opérateur limité à des agrégats PostgreSQL sans nom, identifiant, relation ou contenu individuel", "Compte administrateur et famille associée exclus des calculs"],
     residual: { severity: 3, likelihood: 2 },
     actionIds: ["A02", "A06"],
   }),
@@ -258,7 +260,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Mauvaise négociation ICE/TURN", "Permission caméra ou microphone mal comprise", "Signal réutilisé", "Contrôle d’horaire uniquement côté client", "Évaluation dans le fuseau local d’un téléphone en déplacement"],
     impacts: ["Atteinte à l’intimité physique ou sonore", "Localisation approximative par adresse IP", "Appel indésirable ou anxiogène"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Participants authentifiés et approuvés", "Règles parentales vérifiées par l’API", "Fuseau parental IANA transmis avec les plannings et partagé par les évaluations React/API", "Payloads offre/réponse/ICE chiffrés avant PostgreSQL", "Jetons d’action natifs limités à l’origine HTTPS API et au chemin /api/native/calls/ sur Android et iOS", "Permission média demandée à l’usage", "Signaux purgés sous 24 heures", "Relais TURN temporaire lorsqu’il est configuré", "Aucun enregistrement applicatif du flux"],
+    existingMeasures: ["Participants authentifiés et approuvés", "Règles parentales vérifiées par l’API", "Disponibilité du destinataire revérifiée par l’API avant la création de l’appel, sans confondre veille joignable et session déconnectée", "Fuseau parental IANA transmis avec les plannings et partagé par les évaluations React/API", "Payloads offre/réponse/ICE chiffrés avant PostgreSQL", "Jetons d’action natifs limités à l’origine HTTPS API et au chemin /api/native/calls/ sur Android et iOS", "Permission média demandée à l’usage", "Signaux purgés sous 24 heures", "Relais TURN temporaire lorsqu’il est configuré", "Aucun enregistrement applicatif du flux"],
     residual: { severity: 3, likelihood: 3 },
     actionIds: ["A03", "A07", "A08"],
   }),

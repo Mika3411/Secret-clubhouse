@@ -124,8 +124,11 @@ test("le client suit le drapeau RTC et conserve les deux actions d’appel", asy
   ]);
   assert.match(serverSource, /features:\s*\{[\s\S]{0,180}rtc:\s*productionFeatures\.rtc/u);
   assert.match(appSource, /session\.features\?\.rtc === true \? openRealtimeCall : null/u);
-  assert.match(conversationSource, /onStartCall\(selectedThread,\s*"audio"\)/u);
-  assert.match(conversationSource, /onStartCall\(selectedThread,\s*"video"\)/u);
+  assert.match(conversationSource, /onStartCall\(selectedThread,\s*"audio",\s*selectedCallPolicy\)/u);
+  assert.match(conversationSource, /onStartCall\(selectedThread,\s*"video",\s*selectedCallPolicy\)/u);
+  assert.match(conversationSource, /disabled=\{!selectedCallPolicy\.allowed\}/u);
+  assert.match(serverSource, /const calleeAvailability = await getAccountAvailability/u);
+  assert.match(serverSource, /if \(!calleeAvailability\.canCall\)/u);
   assert.match(appSource, /session\.features\?\.nativePush !== true/u);
   assert.match(notificationSource, /if \(!enabled\) return null/u);
 });
