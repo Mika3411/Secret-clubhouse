@@ -255,6 +255,15 @@ export async function initializeDatabase() {
       primary key (conversation_id, account_id)
     );
 
+    create table if not exists conversation_removals (
+      conversation_id uuid not null references conversations(id) on delete cascade,
+      account_id uuid not null references accounts(id) on delete cascade,
+      removed_at timestamptz not null default clock_timestamp(),
+      primary key (conversation_id, account_id)
+    );
+    create index if not exists conversation_removals_account_idx
+      on conversation_removals(account_id,removed_at);
+
     create table if not exists family_conversations (
       parent_id uuid not null references accounts(id) on delete cascade,
       child_id uuid not null unique references accounts(id) on delete cascade,
@@ -690,6 +699,7 @@ export async function initializeDatabase() {
       content_encryption_version smallint not null default 0,
       content_encryption_key_id text,
       message_kind text not null default 'user',
+      deleted_at timestamptz,
       created_at timestamptz not null default now(),
       sync_version bigint not null default nextval('message_sync_version_seq'),
       expires_at timestamptz not null default now() + interval '365 days'
@@ -700,6 +710,7 @@ export async function initializeDatabase() {
     alter table messages add column if not exists media_ciphertext bytea;
     alter table messages add column if not exists content_encryption_version smallint;
     alter table messages add column if not exists content_encryption_key_id text;
+    alter table messages add column if not exists deleted_at timestamptz;
     alter table messages add column if not exists sync_version bigint;
     alter table messages alter column sync_version set default nextval('message_sync_version_seq');
     update messages set sync_version=nextval('message_sync_version_seq') where sync_version is null;
@@ -736,7 +747,8 @@ export async function initializeDatabase() {
     alter table messages drop constraint if exists messages_encrypted_content_check;
     alter table messages add constraint messages_encrypted_content_check check (
       (
-        content_encryption_version=0
+        deleted_at is null
+        and content_encryption_version=0
         and content_encryption_key_id is null
         and body_ciphertext is null
         and media_name_ciphertext is null
@@ -746,7 +758,8 @@ export async function initializeDatabase() {
       )
       or
       (
-        content_encryption_version=1
+        deleted_at is null
+        and content_encryption_version=1
         and content_encryption_key_id ~ '^[0-9a-f]{16}$'
         and body is null
         and media_name is null
@@ -766,6 +779,20 @@ export async function initializeDatabase() {
             and media_type_ciphertext is not null
           )
         )
+      )
+      or
+      (
+        deleted_at is not null
+        and content_encryption_version=0
+        and content_encryption_key_id is null
+        and body is null
+        and media_name is null
+        and media_type is null
+        and media_data is null
+        and body_ciphertext is null
+        and media_name_ciphertext is null
+        and media_type_ciphertext is null
+        and media_ciphertext is null
       )
     );
     alter table messages drop constraint if exists messages_legacy_media_size_check;
@@ -790,6 +817,10 @@ export async function initializeDatabase() {
     create or replace function set_message_expiry()
     returns trigger language plpgsql as $$
     begin
+      if tg_op='UPDATE' and new.deleted_at is not null then
+        new.expires_at=old.expires_at;
+        return new;
+      end if;
       new.expires_at=new.created_at+case
         when new.media_data is not null or new.media_ciphertext is not null or new.message_kind='call_event' then interval '90 days'
         else interval '365 days'
