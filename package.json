@@ -22,9 +22,12 @@
     "preview": "vite preview",
     "start": "node server/index.js",
     "mobile:prepare": "node scripts/prepare-mobile-assets.js",
-    "mobile:sync": "npm run build && npm run mobile:prepare && cap sync",
+    "mobile:sync": "npm run build && npm run mobile:prepare && cap sync && node scripts/normalize-ios-spm-paths.js",
+    "mobile:sync:ios": "npm run build && npm run mobile:prepare && cap sync ios && node scripts/normalize-ios-spm-paths.js && npm run mobile:verify:ios",
+    "mobile:verify:ios": "node scripts/verify-ios-project.js",
+    "mobile:build:ios": "npm run mobile:sync:ios && xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination \"generic/platform=iOS Simulator\" CODE_SIGNING_ALLOWED=NO build",
     "mobile:android": "npm run mobile:sync && cap open android",
-    "mobile:ios": "npm run mobile:sync && cap open ios"
+    "mobile:ios": "npm run mobile:sync:ios && cap open ios"
   },
   "dependencies": {
     "@capacitor/android": "^8.0.0",

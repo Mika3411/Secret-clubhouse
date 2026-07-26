@@ -27,6 +27,41 @@ npm run build
 npm run preview
 ```
 
+## Client iOS
+
+La cible Capacitor se trouve dans `ios/App/App.xcodeproj`. La synchronisation reconstruit le client web, copie les ressources natives, normalise les chemins Swift Package générés sous Windows et vérifie la configuration APNs/VoIP, le manifeste de confidentialité et l’identité visuelle :
+
+```bash
+npm run mobile:sync:ios
+```
+
+Sur macOS avec Xcode installé, le build non signé pour le simulateur se lance avec :
+
+```bash
+npm run mobile:build:ios
+```
+
+Capacitor 8 exige Xcode 26 ou une version ultérieure. Une archive destinée à un iPhone exige ensuite l’équipe Apple Developer, le certificat et le profil d’approvisionnement du bundle `fr.secretclubhouse.app`. Ces éléments de signature ne sont jamais stockés dans le dépôt.
+
+### Publication TestFlight
+
+Le workflow GitHub Actions **Publier sur TestFlight** se lance manuellement depuis `main`. Il construit l’application sur `macos-26`, vérifie le profil APNs de production, signe l’archive et l’envoie directement dans App Store Connect. Les identifiants sont limités à l’environnement GitHub `testflight`.
+
+Variables de l’environnement :
+
+- `APPLE_TEAM_ID`
+- `APPSTORE_API_KEY_ID`
+- `APPSTORE_ISSUER_ID`
+
+Secrets de l’environnement :
+
+- `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` : certificat Apple Distribution `.p12` encodé en Base64
+- `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` : mot de passe du `.p12`
+- `APPLE_PROVISIONING_PROFILE_BASE64` : profil App Store Connect `.mobileprovision` pour `fr.secretclubhouse.app`, encodé en Base64
+- `APPSTORE_API_PRIVATE_KEY` : contenu privé du fichier `AuthKey_….p8`
+
+La clé App Store Connect doit pouvoir téléverser les builds de l’application. Après le premier envoi, Apple traite l’archive avant de l’afficher dans TestFlight.
+
 ## Déploiement avec Render Blueprint
 
 Le fichier `render.yaml` décrit le service web Node.js, la base PostgreSQL, le build Vite, le déploiement automatique à chaque commit, les variables de production et le Cron Job quotidien de purge. Les trois ressources sont fixées à `frankfurt` pour toute nouvelle création. Render ne changeant pas la région d’une ressource existante, la région du service, de la base et du Cron déjà déployés doit être vérifiée séparément dans le tableau de bord et migrée si nécessaire.

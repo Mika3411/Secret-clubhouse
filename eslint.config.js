@@ -26,6 +26,7 @@ export default [
       "public/**",
       "src/media-qa.jsx",
       "test-results/**",
+      "tmp/**",
     ],
   },
   {

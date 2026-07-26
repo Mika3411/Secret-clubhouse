@@ -1,0 +1,219 @@
+name: Publier sur TestFlight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  archive-and-upload:
+    name: Archiver et envoyer l’app iOS
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    environment: testflight
+    timeout-minutes: 45
+    env:
+      APPLE_BUNDLE_ID: fr.secretclubhouse.app
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APPSTORE_API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
+      APPSTORE_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
+      APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+      APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+      APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+    steps:
+      - name: Récupérer main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Installer Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.14.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Vérifier Xcode et les identifiants Apple
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcode_version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          if [[ "$xcode_version" != 26.* ]]; then
+            echo "Capacitor 8 exige Xcode 26 ; version trouvée : $xcode_version." >&2
+            exit 1
+          fi
+
+          missing=()
+          for variable in \
+            APPLE_TEAM_ID \
+            APPSTORE_API_KEY_ID \
+            APPSTORE_ISSUER_ID \
+            APPLE_DISTRIBUTION_CERTIFICATE_BASE64 \
+            APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD \
+            APPLE_PROVISIONING_PROFILE_BASE64 \
+            APPSTORE_API_PRIVATE_KEY
+          do
+            if [[ -z "${!variable:-}" ]]; then
+              missing+=("$variable")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Configuration TestFlight manquante : %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Installer les dépendances verrouillées
+        run: npm ci
+
+      - name: Synchroniser et vérifier le projet iOS
+        run: npm run mobile:sync:ios
+
+      - name: Installer la signature Apple temporaire
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          certificate_path="$RUNNER_TEMP/distribution.p12"
+          profile_source_path="$RUNNER_TEMP/app-store.mobileprovision"
+          profile_plist_path="$RUNNER_TEMP/app-store-profile.plist"
+          keychain_path="$RUNNER_TEMP/secret-clubhouse-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 36)"
+
+          printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" \
+            | base64 --decode > "$certificate_path"
+          printf '%s' "$APPLE_PROVISIONING_PROFILE_BASE64" \
+            | base64 --decode > "$profile_source_path"
+
+          security cms -D -i "$profile_source_path" > "$profile_plist_path"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist_path")"
+          profile_team_id="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$profile_plist_path")"
+          profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$profile_plist_path")"
+          profile_aps_environment="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$profile_plist_path")"
+
+          if [[ "$profile_team_id" != "$APPLE_TEAM_ID" ]]; then
+            echo "Le profil d’approvisionnement n’appartient pas à l’équipe Apple configurée." >&2
+            exit 1
+          fi
+          if [[ "$profile_app_id" != *".$APPLE_BUNDLE_ID" ]]; then
+            echo "Le profil d’approvisionnement ne correspond pas à $APPLE_BUNDLE_ID." >&2
+            exit 1
+          fi
+          if [[ "$profile_aps_environment" != "production" ]]; then
+            echo "Le profil TestFlight doit autoriser APNs en production." >&2
+            exit 1
+          fi
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+
+          profile_directory="$HOME/Library/MobileDevice/Provisioning Profiles"
+          profile_installed_path="$profile_directory/$profile_uuid.mobileprovision"
+          mkdir -p "$profile_directory"
+          cp "$profile_source_path" "$profile_installed_path"
+
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPSTORE_API_KEY_ID}.p8"
+          printf '%s' "$APPSTORE_API_PRIVATE_KEY" > "$api_key_path"
+          chmod 600 "$api_key_path"
+
+          {
+            echo "api_key_path=$api_key_path"
+            echo "keychain_path=$keychain_path"
+            echo "profile_installed_path=$profile_installed_path"
+            echo "profile_uuid=$profile_uuid"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Créer l’archive iOS signée
+        id: archive
+        shell: bash
+        env:
+          PROVISIONING_PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+        run: |
+          set -euo pipefail
+
+          build_number="$(date -u +%s)"
+          archive_path="$RUNNER_TEMP/SecretClubhouse.xcarchive"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive_path" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
+            PROVISIONING_PROFILE_SPECIFIER="$PROVISIONING_PROFILE_UUID" \
+            MARKETING_VERSION=1.14 \
+            CURRENT_PROJECT_VERSION="$build_number" \
+            clean archive
+
+      - name: Envoyer l’archive vers TestFlight
+        shell: bash
+        env:
+          APPSTORE_API_KEY_PATH: ${{ steps.signing.outputs.api_key_path }}
+          PROVISIONING_PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+        run: |
+          set -euo pipefail
+
+          archive_path="$RUNNER_TEMP/SecretClubhouse.xcarchive"
+          export_path="$RUNNER_TEMP/SecretClubhouse-export"
+          export_options_path="$RUNNER_TEMP/ExportOptions.plist"
+
+          plutil -create xml1 "$export_options_path"
+          plutil -insert destination -string upload "$export_options_path"
+          plutil -insert method -string app-store-connect "$export_options_path"
+          plutil -insert signingStyle -string manual "$export_options_path"
+          plutil -insert signingCertificate -string 'Apple Distribution' "$export_options_path"
+          plutil -insert teamID -string "$APPLE_TEAM_ID" "$export_options_path"
+          plutil -insert manageAppVersionAndBuildNumber -bool false "$export_options_path"
+          plutil -insert uploadSymbols -bool true "$export_options_path"
+          /usr/libexec/PlistBuddy -c 'Add :provisioningProfiles dict' "$export_options_path"
+          /usr/libexec/PlistBuddy \
+            -c "Add :provisioningProfiles:$APPLE_BUNDLE_ID string $PROVISIONING_PROFILE_UUID" \
+            "$export_options_path"
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$archive_path" \
+            -exportPath "$export_path" \
+            -exportOptionsPlist "$export_options_path" \
+            -authenticationKeyPath "$APPSTORE_API_KEY_PATH" \
+            -authenticationKeyID "$APPSTORE_API_KEY_ID" \
+            -authenticationKeyIssuerID "$APPSTORE_ISSUER_ID"
+
+          echo "Build ${{ steps.archive.outputs.build_number }} envoyé à App Store Connect."
+
+      - name: Supprimer les éléments de signature temporaires
+        if: always() && steps.signing.outcome != 'skipped'
+        shell: bash
+        env:
+          API_KEY_PATH: ${{ steps.signing.outputs.api_key_path }}
+          KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain_path }}
+          PROFILE_INSTALLED_PATH: ${{ steps.signing.outputs.profile_installed_path }}
+        run: |
+          if [[ -n "$KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
+          if [[ -n "$PROFILE_INSTALLED_PATH" ]]; then
+            rm -f "$PROFILE_INSTALLED_PATH"
+          fi
+          if [[ -n "$API_KEY_PATH" ]]; then
+            rm -f "$API_KEY_PATH"
+          fi

@@ -11,6 +11,7 @@ enum NativeNotificationContract {
     static let messageCategory = "CLUBHOUSE_MESSAGE"
     static let contactRequestCategory = "CLUBHOUSE_CONTACT_REQUEST"
     static let incomingCallCategory = "CLUBHOUSE_INCOMING_CALL"
+    static let authorizedContactLabel = "Contact autorisé"
 
     static let messageSound = "message_discreet.caf"
     static let contactRequestSound = "contact_gentle.caf"
@@ -244,7 +245,6 @@ final class NativeCallCoordinator: NSObject {
             ?? stringValue(in: payload, keys: ["callUUID", "call_uuid"]).flatMap(UUID.init(uuidString:))
             ?? UUID()
         let callType = stringValue(in: payload, keys: ["callType", "call_type"]) == "video" ? "video" : "audio"
-        let callerName = callerDisplayName(in: payload)
         let conversationId = stringValue(in: payload, keys: ["conversationId", "conversation_id"])
         let actionToken = stringValue(in: payload, keys: ["callActionToken", "call_action_token", "actionToken"])
         let actions = payload["actions"] as? [String: Any] ?? [:]
@@ -284,7 +284,7 @@ final class NativeCallCoordinator: NSObject {
 
         let update = CXCallUpdate()
         update.remoteHandle = CXHandle(type: .generic, value: conversationId ?? callId)
-        update.localizedCallerName = callerName
+        update.localizedCallerName = NativeNotificationContract.authorizedContactLabel
         update.hasVideo = callType == "video"
         update.supportsHolding = false
         update.supportsGrouping = false
@@ -665,23 +665,6 @@ final class NativeCallCoordinator: NSObject {
         return Date().addingTimeInterval(45)
     }
 
-    private func callerDisplayName(in payload: [String: Any]) -> String {
-        if let callerName = stringValue(
-            in: payload,
-            keys: ["callerName", "caller_name", "displayName", "display_name"]
-        ) {
-            return callerName
-        }
-        if
-            let aps = payload["aps"] as? [String: Any],
-            let alert = aps["alert"] as? [String: Any],
-            let title = alert["title"] as? String,
-            !title.isEmpty
-        {
-            return title.replacingOccurrences(of: " vous appelle", with: "")
-        }
-        return "Contact Secret Clubhouse"
-    }
 }
 
 extension NativeCallCoordinator: PKPushRegistryDelegate {
