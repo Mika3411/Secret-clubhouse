@@ -1,4 +1,4 @@
-export const aipdVersion = "1.22";
+export const aipdVersion = "1.23";
 export const aipdAssessmentDate = "2026-07-26";
 
 export const aipdRiskScale = Object.freeze({

@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.22 conserve A07 ouverte et tient compte de la révocation parentale", () => {
-  assert.equal(aipdVersion, "1.22");
+test("la réévaluation 1.23 conserve A07 ouverte et tient compte de la révocation parentale", () => {
+  assert.equal(aipdVersion, "1.23");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -189,7 +189,7 @@ test("A07 est rouverte par les fournisseurs actifs et l’APK public", () => {
   assert.match(action?.scopeRestriction ?? "", /coffre de session natif persistant/i);
 });
 
-test("l’AIPD 1.22 décrit sans surpromesse les sauvegardes et la révocation du jeton mobile", () => {
+test("l’AIPD 1.23 décrit sans surpromesse les sauvegardes et la révocation du jeton mobile", () => {
   const dossier = fs.readFileSync(dossierPath, "utf8");
   const risk = aipdRisks.find(({ id }) => id === "R02");
 

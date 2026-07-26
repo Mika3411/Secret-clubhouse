@@ -1,7 +1,7 @@
 # Analyse d’impact relative à la protection des données (AIPD)
 
 **Traitement :** Secret Clubhouse — service familial privé de communication et d’activités pour enfants de 6 à 13 ans
-**Version :** 1.22<br>
+**Version :** 1.23<br>
 **Date d’évaluation :** 26 juillet 2026
 **Responsable du traitement :** Mickael Thorez, éditeur individuel non professionnel
 **Contact RGPD :** `contact@secret-clubhouse.fr`
@@ -363,6 +363,8 @@ La version 1.21 complète et rectifie l’analyse de la persistance mobile. Elle
 
 La version 1.22 ajoute dans l’espace parent la liste minimisée des sessions actives, leur révocation individuelle et l’action « Déconnecter tous les autres appareils ». Le changement du mot de passe parent vérifie l’ancien mot de passe, conserve la session courante et révoque transactionnellement toutes les autres ; le changement du mot de passe enfant révoque transactionnellement toutes les sessions de cet enfant. Les tests HTTP vérifient le rattachement des sessions au compte, la non-exposition des secrets et l’ordre transactionnel. Ces mesures permettent de ramener la vraisemblance de `R02` de 3 à 2, soit `4×2=8 — Modéré`. Le risque n’est pas nul, car un tiers peut agir avant révocation sur un terminal déjà déverrouillé ; les essais sur appareils réels et la preuve Render restent requis par A07 et A08.
 
+La version 1.23 ajoute une notice parent accessible par l’onglet utilitaire « ? » et reconstruit l’APK Android public en version 1.14 (`versionCode 15`) avec le même client vérifié. La notice explique l’approbation des contacts, les protections, la révocation des appareils, les effets des changements de mot de passe et l’accès aux informations de confidentialité ; elle n’ajoute aucune collecte, finalité, durée, catégorie de destinataire ou transfert. Le code de version Android supérieur permet l’installation comme mise à jour du prototype. L’identité de signature de test reste inchangée : le constat A07 correspondant demeure élevé et ouvert, sans autorisation d’usage par des enfants réels.
+
 ### 10.4 Consultation préalable de la CNIL
 
 L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-donnees/chapitre4) et la [procédure de soumission de la CNIL](https://www.cnil.fr/fr/services-en-ligne/soumettre-une-analyse-dimpact-relative-la-protection-des-donnees-aipd-la-cnil) imposent une consultation préalable lorsque l’AIPD conclut à un risque résiduel élevé après prise en compte des mesures destinées à l’atténuer.
@@ -430,7 +432,7 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 
 ### Déclaration réservée à Mickael Thorez
 
-> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.22, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
+> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.23, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
 
 | Champ à compléter personnellement | Valeur |
 |---|---|

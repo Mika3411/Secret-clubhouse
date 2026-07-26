@@ -95,3 +95,18 @@ A07 ne peut pas être fermée sans :
 7. résultat de la CI incluant le lint Android sur le SHA finalement déployé.
 
 Les essais utilisent seulement des comptes et contenus synthétiques. Tant qu’ils ne sont pas consignés, aucun enfant réel n’est autorisé et A07 reste `open`.
+
+## 5. Reconstruction complémentaire du 26 juillet 2026
+
+L’APK du prototype a été reconstruit après synchronisation du bundle web par `npm run mobile:sync`. Android déclare désormais la version 1.14 (`versionCode 15`), ce qui permet au système de la reconnaître comme une mise à jour des versions précédentes du prototype.
+
+Les contrôles exécutés sur cette reconstruction donnent :
+
+- `android/gradlew testDebugUnitTest lint assembleDebug` : `BUILD SUCCESSFUL`, 190 tâches, sans erreur lint ;
+- manifeste APK vérifié par `aapt` : paquet `fr.secretclubhouse.app`, `minSdkVersion 24`, `targetSdkVersion 36`, version 1.14 (`versionCode 15`) ;
+- signature APK vérifiée par `apksigner` avec le schéma v2 ; certificat de test SHA-256 `2cf599c5481c9f20235999e9fcd45c6f4b8261ce234d4c50ee6e8216300cd302` ;
+- `npm test` : 236 tests, 231 réussis, 0 échec et 5 ignorés faute de `TEST_DATABASE_URL` locale ;
+- `npm run typecheck` et `npm run build` réussis ;
+- `npm audit --audit-level=high` : aucune vulnérabilité.
+
+Le binaire Gradle, `Secret-Clubhouse-debug.apk`, `public/downloads/Secret-Clubhouse.apk` et la copie finale `dist/downloads/Secret-Clubhouse.apk` ont tous le SHA-256 `35df054d2c4800f7bb10d80c3c8c66087648216dc9003e78546113dfd16b5188` et une taille de 15 060 776 octets. L’identité Android reste volontairement celle de test pour la continuité du prototype : cette vérification ne ferme donc pas le constat `A07-2026-07-25-05` et ne constitue pas une signature de distribution.

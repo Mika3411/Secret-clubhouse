@@ -767,7 +767,7 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
               {!Capacitor.isNativePlatform() && (
                 <a className="parent-apk-entry" href="/downloads/Secret-Clubhouse.apk" download="Secret-Clubhouse.apk">
                   <span><DownloadSimple size={23} weight="bold" /></span>
-                  <span><strong>Installer sur Android</strong><small>Version 1.12 · application Android</small></span>
+                  <span><strong>Installer sur Android</strong><small>Version 1.14 · application Android</small></span>
                   <span className="parent-apk-badge">APK</span>
                   <CaretRight size={18} weight="bold" aria-hidden="true" />
                 </a>
