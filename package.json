@@ -10,7 +10,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:e2e": "vite build --mode e2e",
+    "lint": "eslint .",
+    "typecheck": "tsc --project tsconfig.typecheck.json",
     "test": "node --test server/*.test.js",
+    "test:e2e": "playwright test",
     "retention:purge": "node server/run-retention.js",
     "retention:test-purge": "node server/run-test-retention.js",
     "privacy:reapply-erasure": "node server/reapply-erasure-tombstones.js",
@@ -48,5 +52,17 @@
     "ts-ebml": "3.0.2",
     "vite": "6.4.3",
     "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@eslint-react/eslint-plugin": "^5.18.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.0",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.7.0",
+    "typescript": "^6.0.3"
   }
 }

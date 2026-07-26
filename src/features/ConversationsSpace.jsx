@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Anchor } from "@phosphor-icons/react/Anchor";
 import { ArrowLeft } from "@phosphor-icons/react/ArrowLeft";
@@ -54,6 +54,13 @@ import {
   VoiceMessage,
   VoiceRecorder,
 } from "./conversations/media/ConversationMedia";
+import {
+  TypingIndicator,
+  useTypingIndicator,
+} from "./conversations/thread/TypingIndicator";
+import { useConversationBottom } from "./conversations/thread/useConversationBottom";
+export { TypingIndicator, useTypingIndicator } from "./conversations/thread/TypingIndicator";
+export { scrollConversationToLatest } from "./conversations/thread/useConversationBottom";
 
 function MessageText({ text }) {
   return (
@@ -267,65 +274,6 @@ function InteractiveConversationMessage({
       </button>
     </div>
   );
-}
-
-export function scrollConversationToLatest(scrollContainer) {
-  if (!scrollContainer) return;
-  scrollContainer.scrollTop = scrollContainer.scrollHeight;
-}
-
-function useConversationBottom(conversationId, latestItemKey) {
-  const scrollContainerRef = useRef(null);
-
-  useLayoutEffect(() => {
-    const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer || !conversationId) return undefined;
-
-    let keepPinnedToLatest = true;
-    const scrollToLatest = () => {
-      if (keepPinnedToLatest) scrollConversationToLatest(scrollContainer);
-    };
-    const releasePinnedPosition = () => {
-      keepPinnedToLatest = false;
-    };
-    const resizeObserver = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(scrollToLatest);
-    const observeMessageBlocks = () => {
-      if (!resizeObserver) return;
-      Array.from(scrollContainer.children).forEach((child) => resizeObserver.observe(child));
-    };
-    const mutationObserver = typeof MutationObserver === "undefined"
-      ? null
-      : new MutationObserver(() => {
-          observeMessageBlocks();
-          scrollToLatest();
-        });
-
-    scrollToLatest();
-    observeMessageBlocks();
-    mutationObserver?.observe(scrollContainer, { childList: true });
-    scrollContainer.addEventListener("load", scrollToLatest, true);
-    scrollContainer.addEventListener("wheel", releasePinnedPosition, { passive: true });
-    scrollContainer.addEventListener("touchstart", releasePinnedPosition, { passive: true });
-    scrollContainer.addEventListener("pointerdown", releasePinnedPosition, { passive: true });
-
-    const animationFrame = window.requestAnimationFrame(scrollToLatest);
-    const settledLayoutTimer = window.setTimeout(scrollToLatest, 250);
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame);
-      window.clearTimeout(settledLayoutTimer);
-      resizeObserver?.disconnect();
-      mutationObserver?.disconnect();
-      scrollContainer.removeEventListener("load", scrollToLatest, true);
-      scrollContainer.removeEventListener("wheel", releasePinnedPosition);
-      scrollContainer.removeEventListener("touchstart", releasePinnedPosition);
-      scrollContainer.removeEventListener("pointerdown", releasePinnedPosition);
-    };
-  }, [conversationId, latestItemKey]);
-
-  return scrollContainerRef;
 }
 
 export const conversationGameOptions = [
@@ -616,62 +564,6 @@ export function formatCallDuration(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
   const seconds = (totalSeconds % 60).toString().padStart(2, "0");
   return `${minutes}:${seconds}`;
-}
-
-export function useTypingIndicator(conversationId, enabled) {
-  const [typingName, setTypingName] = useState(null);
-  const lastSignalRef = useRef(0);
-  const stopTimerRef = useRef(null);
-
-  const stopTyping = () => {
-    if (!enabled || !conversationId) return;
-    window.clearTimeout(stopTimerRef.current);
-    stopTimerRef.current = null;
-    lastSignalRef.current = 0;
-    void api.setTyping(conversationId, false).catch(() => {});
-  };
-
-  const notifyTyping = () => {
-    if (!enabled || !conversationId) return;
-    const now = Date.now();
-    if (now - lastSignalRef.current > 2000) {
-      lastSignalRef.current = now;
-      void api.setTyping(conversationId, true).catch(() => {});
-    }
-    window.clearTimeout(stopTimerRef.current);
-    stopTimerRef.current = window.setTimeout(stopTyping, 3500);
-  };
-
-  useEffect(() => {
-    if (!enabled || !conversationId) {
-      setTypingName(null);
-      return undefined;
-    }
-    let active = true;
-    const refresh = async () => {
-      try {
-        const result = await api.typing(conversationId);
-        if (active) setTypingName(result.typing ? result.name : null);
-      } catch {
-        if (active) setTypingName(null);
-      }
-    };
-    void refresh();
-    const pollTimer = window.setInterval(refresh, 1500);
-    return () => {
-      active = false;
-      window.clearInterval(pollTimer);
-      window.clearTimeout(stopTimerRef.current);
-      void api.setTyping(conversationId, false).catch(() => {});
-    };
-  }, [conversationId, enabled]);
-
-  return { typingName, notifyTyping, stopTyping };
-}
-
-export function TypingIndicator({ name }) {
-  if (!name) return null;
-  return <div className="typing-indicator" role="status" aria-live="polite"><span aria-hidden="true"><i /><i /><i /></span><small>{name} est en train d’écrire…</small></div>;
 }
 
 export function AudioCallScreen({ child, conversation, policy, autoReply, onClose }) {
@@ -1428,7 +1320,6 @@ export function RealtimeCallScreen({
 }
 
 export function ChatScreen({
-  child,
   conversation,
   settings,
   schedule,
@@ -1712,7 +1603,7 @@ export function ChatScreen({
   );
 }
 
-export function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onLoadOlderMessages, onRetryMessages, onHome, onManagement, onSend, onSendMedia, onReactMessage, onForwardMessage, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
+export function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onLoadOlderMessages, onRetryMessages, onHome, onManagement, onHelp, onSend, onSendMedia, onReactMessage, onForwardMessage, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
   const availableRequesterIds = [parentContactId, ...familyChildren.map((child) => child.contactId)].filter(Boolean);
   const requesterProfileMismatch = Boolean(
     initialContactId
@@ -2047,7 +1938,7 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
           )}
         </section>
       </div>
-      <ParentModeNavigation active="conversations" unreadMessages={threads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onManagement={onManagement} onConversations={() => {}} />
+      <ParentModeNavigation active="conversations" unreadMessages={threads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onManagement={onManagement} onConversations={() => {}} onHelp={onHelp} />
       {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={closeContactModal}>
         <section className="add-contact-modal" role="dialog" aria-modal="true" aria-labelledby="add-contact-title" onMouseDown={(event) => event.stopPropagation()}>
           <span className="add-contact-icon"><UserPlus size={27} weight="fill" /></span>

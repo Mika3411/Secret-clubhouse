@@ -11,6 +11,11 @@ const exactAllowedRequests = new Set([
 
 const childDeletionPath = /^\/api\/children\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
+/**
+ * @param {unknown} method
+ * @param {unknown} requestPath
+ * @returns {boolean}
+ */
 export function isAllowedDuringPrivacyRestriction(method, requestPath) {
   const normalizedMethod = String(method ?? "").toUpperCase();
   const normalizedPath = String(requestPath ?? "");

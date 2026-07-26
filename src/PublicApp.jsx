@@ -119,6 +119,13 @@ function FamilyPublicApp() {
     void restoreSession();
   }, []);
 
+  useEffect(() => {
+    if (!sessionRestoreError) return undefined;
+    const retryWhenOnline = () => void restoreSession();
+    window.addEventListener("online", retryWhenOnline);
+    return () => window.removeEventListener("online", retryWhenOnline);
+  }, [sessionRestoreError]);
+
   const dismissFamilyInvitation = () => {
     clearFamilyInviteFromUrl();
     setFamilyInviteToken("");

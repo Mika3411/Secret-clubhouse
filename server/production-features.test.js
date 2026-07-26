@@ -73,7 +73,7 @@ test("le Blueprint active les fournisseurs qualifiés avec leurs secrets Render 
     "PRIVACY_ADMIN_ENABLED",
     "ADMIN_ANALYTICS_ENABLED",
   ]) {
-    assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*value:\\s*\"false\"`, "u"));
+    assert.match(blueprint, new RegExp(`key:\\s*${key}\\s*\\r?\\n\\s*value:\\s*"false"`, "u"));
   }
   for (const secretKey of [
     "RTC_TURN_CREDENTIAL",

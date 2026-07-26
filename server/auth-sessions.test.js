@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import {
   AUTH_SESSIONS_SCHEMA_SQL,
+  DEFAULT_SESSION_RENEWAL_INTERVAL_SECONDS,
   DEFAULT_SESSION_TTL_SECONDS,
   DEVELOPMENT_SESSION_COOKIE,
   MAX_SESSION_TTL_SECONDS,
@@ -19,9 +20,13 @@ import {
   initializeAuthSessionStore,
   issueNativeSession,
   issueWebSession,
+  listAccountAuthSessions,
   logoutAuthSession,
   normalizeSessionTtlSeconds,
+  revokeAccountAuthSessionById,
+  revokeAllAccountAuthSessions,
   revokeAuthSession,
+  revokeOtherAccountAuthSessions,
   serializeClearedSessionCookie,
   serializeSessionCookie,
 } from "./auth-sessions.js";
@@ -57,8 +62,9 @@ test("génère exactement 256 bits et produit uniquement un hash SHA-256 stable"
   assert.throws(() => hashSessionToken("trop-court"), /invalide/);
 });
 
-test("borne la durée configurée et conserve douze heures par défaut", () => {
-  assert.equal(DEFAULT_SESSION_TTL_SECONDS, 12 * 60 * 60);
+test("borne la durée configurée et conserve trente jours glissants par défaut", () => {
+  assert.equal(DEFAULT_SESSION_TTL_SECONDS, 30 * 24 * 60 * 60);
+  assert.equal(DEFAULT_SESSION_RENEWAL_INTERVAL_SECONDS, 24 * 60 * 60);
   assert.equal(normalizeSessionTtlSeconds(undefined), DEFAULT_SESSION_TTL_SECONDS);
   assert.equal(normalizeSessionTtlSeconds("1"), MIN_SESSION_TTL_SECONDS);
   assert.equal(normalizeSessionTtlSeconds(MAX_SESSION_TTL_SECONDS * 2), MAX_SESSION_TTL_SECONDS);
@@ -79,6 +85,8 @@ test("expose un schéma PostgreSQL autonome qui ne contient aucun secret brut", 
   assert.equal(calls[0].params, undefined);
   assert.match(AUTH_SESSIONS_SCHEMA_SQL, /token_hash text not null unique/i);
   assert.match(AUTH_SESSIONS_SCHEMA_SQL, /references accounts\(id\) on delete cascade/i);
+  assert.match(AUTH_SESSIONS_SCHEMA_SQL, /device_label text/i);
+  assert.match(AUTH_SESSIONS_SCHEMA_SQL, /last_used_at timestamptz/i);
   assert.doesNotMatch(AUTH_SESSIONS_SCHEMA_SQL, /raw_token|session_token/i);
 });
 
@@ -94,7 +102,7 @@ test("crée une session PostgreSQL sans jamais transmettre le jeton brut", async
           client_type: "native",
           device_id: "android-test",
           created_at: now,
-          expires_at: params[4],
+          expires_at: params[5],
           revoked_at: null,
         }],
       };
@@ -132,7 +140,7 @@ test("le helper web pose un cookie HttpOnly sans retourner le secret", async () 
           client_type: "web",
           device_id: null,
           created_at: now,
-          expires_at: params[4],
+          expires_at: params[5],
           revoked_at: null,
         }],
       };
@@ -287,6 +295,62 @@ test("retrouve seulement une session active à partir du hash", async () => {
   );
 });
 
+test("renouvelle une session web utilisée et prolonge son cookie sans changer le secret", async () => {
+  const calls = [];
+  const response = fakeResponse();
+  const sessionId = "45454545-4545-4545-8545-454545454545";
+  const executor = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (String(sql).includes("where session.token_hash=$1")) {
+        return {
+          rows: [{
+            id: sessionId,
+            account_id: accountId,
+            role: "parent",
+            client_type: "web",
+            device_id: null,
+            created_at: now,
+            expires_at: new Date("2026-07-24T12:00:00.000Z"),
+            revoked_at: null,
+          }],
+        };
+      }
+      assert.match(String(sql), /update auth_sessions\s+set expires_at=\$3/i);
+      assert.equal(params[0], fixedHash);
+      assert.equal(params.includes(fixedToken), false);
+      return {
+        rows: [{
+          id: sessionId,
+          account_id: accountId,
+          client_type: "web",
+          device_id: null,
+          created_at: now,
+          expires_at: params[2],
+          revoked_at: null,
+        }],
+      };
+    },
+  };
+
+  const authenticated = await authenticateSessionRequest(
+    executor,
+    { headers: { cookie: `${PRODUCTION_SESSION_COOKIE}=${fixedToken}` } },
+    {
+      now,
+      production: true,
+      expectedClientType: "web",
+      response,
+    },
+  );
+
+  assert.equal(authenticated.accountId, accountId);
+  assert.equal(authenticated.expiresAt.toISOString(), "2026-08-22T12:00:00.000Z");
+  assert.equal(calls.length, 2);
+  assert.match(response.getHeader("Set-Cookie"), /Max-Age=2592000/);
+  assert.match(response.getHeader("Set-Cookie"), new RegExp(`^${PRODUCTION_SESSION_COOKIE}=${fixedToken};`));
+});
+
 test("refuse une session web par Bearer et une session native par cookie", async () => {
   let clientType = "web";
   const executor = {
@@ -336,7 +400,7 @@ test("le helper natif émet un secret opaque pour la mémoire du client", async 
           client_type: "native",
           device_id: "device-native",
           created_at: now,
-          expires_at: params[4],
+          expires_at: params[5],
           revoked_at: null,
         }],
       };
@@ -400,4 +464,91 @@ test("révoque par hash et réalise un logout idempotent qui efface le cookie", 
   assert.equal(anonymous.revoked, false);
   assert.match(anonymousResponse.getHeader("Set-Cookie"), new RegExp(`^${DEVELOPMENT_SESSION_COOKIE}=;`));
   assert.equal(calls.length, 2);
+});
+
+test("liste uniquement les métadonnées utiles et révoque les sessions par compte", async () => {
+  const currentSessionId = "77777777-7777-4777-8777-777777777777";
+  const otherSessionId = "88888888-8888-4888-8888-888888888888";
+  const calls = [];
+  const executor = {
+    async query(sql, params) {
+      const statement = String(sql).replace(/\s+/gu, " ").trim();
+      calls.push({ statement, params });
+      if (statement.startsWith("select id,account_id,client_type,device_label")) {
+        return {
+          rows: [
+            {
+              id: currentSessionId,
+              account_id: accountId,
+              client_type: "web",
+              device_label: "Navigateur web",
+              device_id: "identifiant-non-expose",
+              token_hash: fixedHash,
+              created_at: now,
+              last_used_at: now,
+              expires_at: new Date("2026-08-22T12:00:00.000Z"),
+            },
+            {
+              id: otherSessionId,
+              account_id: accountId,
+              client_type: "native",
+              device_label: "Application Android",
+              created_at: now,
+              last_used_at: now,
+              expires_at: new Date("2026-08-22T12:00:00.000Z"),
+            },
+          ],
+        };
+      }
+      if (statement.includes("where id=$1") && statement.includes("account_id=$2")) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (statement.includes("id<>$2") && statement.includes("account_id=$1")) {
+        return { rows: [], rowCount: 3 };
+      }
+      if (statement.includes("where account_id=$1") && !statement.includes("id<>")) {
+        return { rows: [], rowCount: 2 };
+      }
+      throw new Error(`Requête inattendue : ${statement}`);
+    },
+  };
+
+  const sessions = await listAccountAuthSessions(executor, {
+    accountId,
+    currentSessionId,
+    now,
+  });
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[0].current, true);
+  assert.equal(sessions[1].deviceLabel, "Application Android");
+  assert.equal(Object.hasOwn(sessions[0], "tokenHash"), false);
+  assert.equal(Object.hasOwn(sessions[0], "deviceId"), false);
+
+  assert.equal(await revokeAccountAuthSessionById(executor, {
+    accountId,
+    sessionId: currentSessionId,
+    currentSessionId,
+    now,
+  }), false);
+  assert.equal(await revokeAccountAuthSessionById(executor, {
+    accountId,
+    sessionId: otherSessionId,
+    currentSessionId,
+    now,
+  }), true);
+  assert.equal(await revokeOtherAccountAuthSessions(executor, {
+    accountId,
+    currentSessionId,
+    now,
+  }), 3);
+  assert.equal(await revokeAllAccountAuthSessions(executor, {
+    accountId,
+    now,
+    reason: "child_password_change_by_parent",
+  }), 2);
+
+  assert.equal(calls.length, 4);
+  assert.deepEqual(calls[1].params.slice(0, 3), [otherSessionId, accountId, currentSessionId]);
+  assert.equal(calls[2].params[3], "parent_other_devices_revocation");
+  assert.equal(calls[3].params[2], "child_password_change_by_parent");
 });

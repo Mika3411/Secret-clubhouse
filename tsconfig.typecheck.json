@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2023",
+    "types": ["node", "react", "react-dom"]
+  },
+  "include": [
+    "shared/message-interactions.js",
+    "src/Brand.jsx",
+    "src/child-username.js",
+    "src/message-links.js",
+    "src/policy-time.js",
+    "server/conversation-sync.js",
+    "server/http-errors.js",
+    "server/notifications/notification-privacy.js",
+    "server/privacy-restriction.js",
+    "server/production-features.js",
+    "server/retention/policy.js"
+  ]
+}

@@ -70,6 +70,7 @@ export function serializeAccountAvailability(row = {}) {
   const online = connected && Boolean(row.recently_online);
   const backgroundReachable = connected && !online && Boolean(row.background_reachable);
   const accountAllowsCalls = row.processing_restricted_at == null
+    && row.admin_suspended_at == null
     && (row.role !== "child" || row.status === "active");
   const canCall = accountAllowsCalls && (online || backgroundReachable);
   const state = online
@@ -125,6 +126,7 @@ export async function listAuthorizedContactAvailability(executor, {
        account.age,
        account.status,
        account.processing_restricted_at,
+       account.admin_suspended_at,
        ${availabilityProjection({
          accountAlias: "account",
          webPushParameter: "$3",
@@ -151,6 +153,7 @@ export async function getAccountAvailability(executor, accountId, {
        account.age,
        account.status,
        account.processing_restricted_at,
+       account.admin_suspended_at,
        ${availabilityProjection({
          accountAlias: "account",
          webPushParameter: "$2",

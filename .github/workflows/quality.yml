@@ -30,6 +30,12 @@ jobs:
       - name: Installer les dépendances verrouillées
         run: npm ci
 
+      - name: Vérifier la qualité statique
+        run: npm run lint
+
+      - name: Vérifier les types JavaScript
+        run: npm run typecheck
+
       - name: Exécuter les tests
         run: npm test
 
@@ -54,6 +60,57 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew testDebugUnitTest lint --no-daemon --console=plain
+
+  e2e:
+    name: Parcours E2E Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: secret_clubhouse_e2e_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d secret_clubhouse_e2e_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/secret_clubhouse_e2e_test
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v5
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.14.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Installer les dépendances verrouillées
+        run: npm ci
+
+      - name: Installer Chromium Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Exécuter les parcours E2E isolés
+        run: npm run test:e2e
+
+      - name: Conserver le rapport en cas d’échec
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-playwright
+          path: |
+            playwright-report
+            test-results/playwright
+          if-no-files-found: ignore
+          retention-days: 7
 
   verify-production:
     name: Vérifier le SHA servi par Render

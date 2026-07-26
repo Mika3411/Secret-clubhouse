@@ -1,0 +1,147 @@
+.friend-list.is-mouse-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.home-screen {
+  min-height: 100%;
+  background: #fff;
+}
+
+.hero {
+  position: relative;
+  height: 228px;
+  overflow: hidden;
+  padding: 13px 16px 15px;
+  color: #fff;
+  background: var(--navy);
+}
+
+.hero__decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.decor {
+  position: absolute;
+}
+
+.decor--wave {
+  top: 18px;
+  right: 126px;
+  color: #8c6dff;
+  transform: rotate(-10deg);
+}
+
+.decor--star {
+  top: 9px;
+  right: 84px;
+  color: #9b7aff;
+  transform: rotate(12deg);
+}
+
+.decor--bolt {
+  top: 34px;
+  right: 35px;
+  color: var(--mint);
+  transform: rotate(8deg);
+}
+
+.decor--outline-star {
+  top: 49px;
+  right: 3px;
+  color: #fff;
+  transform: rotate(9deg);
+}
+
+.hero__main {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr) 67px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 28px;
+}
+
+.hero__copy {
+  align-self: stretch;
+  min-width: 0;
+  padding-top: 20px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.5px;
+}
+
+.hero__copy > p {
+  margin: 5px 0 12px;
+  color: #e9e8ff;
+  font-size: 12.5px;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.secure-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.secure-note > svg {
+  flex: none;
+  color: var(--mint);
+}
+
+.secure-note span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.secure-note strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.secure-note small {
+  color: #dbdaed;
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+
+.qr-action {
+  display: grid;
+  justify-items: center;
+  align-self: center;
+  gap: 5px;
+  min-width: 60px;
+  padding: 0;
+  color: var(--mint);
+  background: transparent;
+  font-family: "Baloo 2", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.qr-action__icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--navy);
+  background: var(--mint);
+  transition: transform 160ms ease;
+}
+
+.qr-action:hover .qr-action__icon {
+  transform: scale(1.05);
+}

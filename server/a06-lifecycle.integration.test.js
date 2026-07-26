@@ -231,7 +231,7 @@ test("validation A06 PostgreSQL : droits, effacements, sauvegarde et restauratio
        order by created_at desc limit 1`,
       [parentId],
     )).rows[0];
-    assertSeconds(session, "expires_at", "created_at", 12 * 3_600);
+    assertSeconds(session, "expires_at", "created_at", 30 * 86_400);
 
     const messages = (await pool.query(
       `insert into messages(conversation_id,sender_id,body,media_name,media_type,media_data,message_kind)

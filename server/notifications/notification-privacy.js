@@ -22,6 +22,10 @@ const visibleProfiles = Object.freeze({
   }),
 });
 
+/**
+ * @param {Record<string, unknown>} [payload]
+ * @returns {Record<string, unknown>}
+ */
 export function privacySafeNotificationPayload(payload = {}) {
   const notificationType = String(payload.notificationType ?? "");
   if (notificationType === "call-state") {
@@ -33,14 +37,17 @@ export function privacySafeNotificationPayload(payload = {}) {
     } = payload;
     return silentPayload;
   }
-  const profile = visibleProfiles[notificationType] ?? visibleProfiles.default;
+  const profile = notificationType in visibleProfiles
+    ? visibleProfiles[/** @type {keyof typeof visibleProfiles} */ (notificationType)]
+    : visibleProfiles.default;
+  /** @type {Record<string, unknown>} */
   const safePayload = {
     ...payload,
     title: profile.title,
     body: profile.body,
   };
   if (notificationType === "incoming-call") {
-    safePayload.callerName = profile.callerName;
+    safePayload.callerName = visibleProfiles["incoming-call"].callerName;
   } else {
     delete safePayload.callerName;
   }

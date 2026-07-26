@@ -5,6 +5,10 @@ export const defaultMessagePageSize = 50;
 export const maximumMessagePageSize = 100;
 export const conversationSyncPageSize = 200;
 
+/**
+ * @param {unknown} value
+ * @returns {number | null}
+ */
 export function normalizeMessagePageLimit(value) {
   if (value === undefined || value === null || value === "") return defaultMessagePageSize;
   const parsed = Number(value);
@@ -12,12 +16,20 @@ export function normalizeMessagePageLimit(value) {
   return Math.min(parsed, maximumMessagePageSize);
 }
 
+/**
+ * @param {{ createdAt: string | number, id: unknown }} cursor
+ * @returns {string}
+ */
 export function encodeMessagePageCursor({ createdAt, id }) {
   const timestamp = new Date(createdAt);
   if (Number.isNaN(timestamp.getTime()) || !uuidPattern.test(String(id ?? ""))) return "";
   return Buffer.from(JSON.stringify([timestamp.toISOString(), String(id)]), "utf8").toString("base64url");
 }
 
+/**
+ * @param {unknown} value
+ * @returns {{ createdAt: string, id: string } | false | null}
+ */
 export function decodeMessagePageCursor(value) {
   if (!value) return null;
   try {
@@ -32,6 +44,10 @@ export function decodeMessagePageCursor(value) {
   }
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
 export function normalizeConversationSyncCursor(value) {
   const cursor = String(value ?? "0").trim();
   if (!syncCursorPattern.test(cursor)) return null;
@@ -44,6 +60,11 @@ export function normalizeConversationSyncCursor(value) {
   }
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [maximum]
+ * @returns {string[] | null}
+ */
 export function normalizeConversationMessageIds(value, maximum = conversationSyncPageSize) {
   if (!Array.isArray(value) || value.length > maximum) return null;
   const normalized = [...new Set(value.map((id) => String(id ?? "").trim()))];

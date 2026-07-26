@@ -105,7 +105,7 @@ export default function PhaserMemoryGame({ onComplete }) {
       sceneTimers.add(timer);
     };
 
-    const useCompatibleGame = () => {
+    const enableCompatibleGame = () => {
       if (cancelled) return;
       game?.destroy(true);
       game = undefined;
@@ -115,7 +115,7 @@ export default function PhaserMemoryGame({ onComplete }) {
     import("./phaser-memory-runtime").then((phaserModule) => {
       const Phaser = phaserModule.default ?? phaserModule.Phaser ?? window.Phaser;
       if (!Phaser) {
-        useCompatibleGame();
+        enableCompatibleGame();
         return;
       }
       if (cancelled || !hostRef.current) return;
@@ -239,11 +239,11 @@ export default function PhaserMemoryGame({ onComplete }) {
           audio: { noAudio: true },
         });
       } catch {
-        useCompatibleGame();
+        enableCompatibleGame();
       }
-    }).catch(useCompatibleGame);
+    }).catch(enableCompatibleGame);
 
-    fallbackTimer = window.setTimeout(useCompatibleGame, 7000);
+    fallbackTimer = window.setTimeout(enableCompatibleGame, 7000);
 
     return () => {
       cancelled = true;

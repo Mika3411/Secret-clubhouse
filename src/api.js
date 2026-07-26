@@ -6,10 +6,40 @@ import {
 } from "./native-session-memory.js";
 
 const LEGACY_TOKEN_KEY = "secret-clubhouse-session";
+const NATIVE_DEVICE_KEY = "secret-clubhouse-native-installation";
+const WEB_DEVICE_KEY = "secret-clubhouse-web-installation";
 const API_ORIGIN = (import.meta.env?.VITE_API_URL || "").replace(/\/$/, "");
 const isNativeClient = Capacitor.isNativePlatform();
 let nativeSessionToken = null;
 let nativeSessionRevision = 0;
+
+function readOrCreateDeviceId() {
+  const storageKey = isNativeClient ? NATIVE_DEVICE_KEY : WEB_DEVICE_KEY;
+  try {
+    const current = globalThis.localStorage?.getItem(storageKey);
+    if (/^[A-Za-z0-9._:-]{8,160}$/u.test(String(current || ""))) return current;
+    const generated = globalThis.crypto?.randomUUID?.()
+      ?? `installation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    globalThis.localStorage?.setItem(storageKey, generated);
+    return generated;
+  } catch {
+    return `installation-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`;
+  }
+}
+
+function sessionDeviceLabel() {
+  if (isNativeClient) {
+    if (Capacitor.getPlatform() === "ios") return "Application iPhone ou iPad";
+    if (Capacitor.getPlatform() === "android") return "Application Android";
+    return "Application mobile";
+  }
+  const userAgent = String(globalThis.navigator?.userAgent || "");
+  if (/iPhone|iPad|iPod|Android|Mobile/iu.test(userAgent)) return "Navigateur mobile";
+  return "Navigateur web";
+}
+
+const sessionDeviceId = readOrCreateDeviceId();
+const deviceLabel = sessionDeviceLabel();
 
 function removeLegacyStoredToken() {
   for (const storageName of ["sessionStorage", "localStorage"]) {
@@ -58,6 +88,8 @@ const storeToken = async (token) => {
 async function request(path, options = {}) {
   await waitForNativeSession();
   const headers = new Headers(options.headers);
+  headers.set("X-Secret-Clubhouse-Device", sessionDeviceId);
+  headers.set("X-Secret-Clubhouse-Device-Label", deviceLabel);
   if (isNativeClient && nativeSessionToken) {
     headers.set("Authorization", `Bearer ${nativeSessionToken}`);
   }
@@ -70,7 +102,7 @@ async function request(path, options = {}) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401) await clearToken();
+    if (response.status === 401 || payload.accountSuspended) await clearToken();
     if (response.status === 423 && payload.processingRestricted && typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("secret-clubhouse:processing-restricted", { detail: payload }));
     }
@@ -101,6 +133,19 @@ export const api = {
   },
   me: () => request("/me"),
   adminAnalytics: () => request("/admin/analytics"),
+  adminFamilies: ({ search = "", status = "all", page = 1, pageSize = 20 } = {}) => {
+    const params = new URLSearchParams({
+      search,
+      status,
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    return request(`/admin/families?${params.toString()}`);
+  },
+  updateAdminAccountStatus: (accountId, data) => request(
+    `/admin/accounts/${encodeURIComponent(accountId)}/status`,
+    { method: "PATCH", body: JSON.stringify(data) },
+  ),
   privacyContact: () => request("/privacy/contact"),
   privacyRequests: () => request("/privacy/requests"),
   submitPrivacyRequest: (data) => request("/privacy/requests", { method: "POST", body: JSON.stringify(data) }),
@@ -114,6 +159,9 @@ export const api = {
   revokeFamilyInvitation: (invitationId) => request(`/family/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" }),
   removeFamilyParent: (accountId) => request(`/family/members/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
   updateParentPassword: (data) => request("/account/password", { method: "PATCH", body: JSON.stringify(data) }),
+  accountSessions: () => request("/account/sessions"),
+  revokeAccountSession: (sessionId) => request(`/account/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
+  revokeOtherAccountSessions: () => request("/account/sessions/revoke-others", { method: "POST" }),
   updateAvatar: (avatar) => request("/account/avatar", { method: "PATCH", body: JSON.stringify({ avatar }) }),
   clubhouse: () => request("/clubhouse"),
   completeClubhouseActivity: (activityId) => request(`/clubhouse/activities/${encodeURIComponent(activityId)}/complete`, { method: "POST" }),
@@ -218,6 +266,8 @@ export const api = {
   media: async (messageId) => {
     await waitForNativeSession();
     const headers = new Headers();
+    headers.set("X-Secret-Clubhouse-Device", sessionDeviceId);
+    headers.set("X-Secret-Clubhouse-Device-Label", deviceLabel);
     if (isNativeClient && nativeSessionToken) {
       headers.set("Authorization", `Bearer ${nativeSessionToken}`);
     }

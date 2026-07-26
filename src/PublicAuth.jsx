@@ -24,6 +24,7 @@ const loadLegalModals = () => import("./features/LegalModals");
 const TermsModal = lazyNamed(loadLegalModals, "TermsModal");
 const PrivacyPolicyModal = lazyNamed(loadLegalModals, "PrivacyPolicyModal");
 const LegalNoticeModal = lazyNamed(loadLegalModals, "LegalNoticeModal");
+const describedBy = (...ids) => ids.filter(Boolean).join(" ") || undefined;
 
 export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false, familyInvitation, familyInvitationError, isFamilyInvitationLoading = false, onDismissFamilyInvite }) {
   const [audience, setAudience] = useState("parent");
@@ -39,21 +40,33 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
   const [parentalAuthorityConfirmed, setParentalAuthorityConfirmed] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState("");
-  const [invalidChildFields, setInvalidChildFields] = useState([]);
+  const [invalidFields, setInvalidFields] = useState([]);
+  const nameRef = useRef(null);
+  const emailRef = useRef(null);
   const childUsernameRef = useRef(null);
   const passwordRef = useRef(null);
+  const termsRef = useRef(null);
+  const parentalAuthorityRef = useRef(null);
   const privacyReturnUrlRef = useRef(null);
   const legalNoticeReturnUrlRef = useRef(null);
 
   const clearAuthError = () => {
     setError("");
-    setInvalidChildFields([]);
+    setInvalidFields([]);
   };
 
-  const showChildAuthError = (message, fields, fieldToFocus) => {
+  const showAuthError = (message, fields = [], fieldToFocus = null) => {
     setError(message);
-    setInvalidChildFields(fields);
-    if (fieldToFocus) window.requestAnimationFrame(() => fieldToFocus.current?.focus());
+    setInvalidFields(fields);
+    const firstInvalidRef = fieldToFocus ?? {
+      name: nameRef,
+      email: emailRef,
+      username: childUsernameRef,
+      password: passwordRef,
+      terms: termsRef,
+      parentalAuthority: parentalAuthorityRef,
+    }[fields[0]];
+    if (firstInvalidRef) window.requestAnimationFrame(() => firstInvalidRef.current?.focus());
   };
 
   useEffect(() => {
@@ -121,7 +134,7 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
     event.preventDefault();
     if (audience === "child") {
       if (isPrivateContactId(childUsername)) {
-        showChildAuthError(
+        showAuthError(
           "Cet identifiant SC-… sert maintenant au QR et aux contacts. Pour te connecter, utilise le pseudo privé affiché dans l’espace parent.",
           ["username"],
           childUsernameRef,
@@ -136,7 +149,7 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
           ...(!hasValidUsername ? ["username"] : []),
           ...(!hasValidPassword ? ["password"] : []),
         ];
-        showChildAuthError(
+        showAuthError(
           "Saisis le pseudo privé choisi avec ton parent et ton mot de passe.",
           invalidFields,
           !hasValidUsername ? childUsernameRef : passwordRef,
@@ -151,7 +164,7 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
         throw invalidCredentialsError;
       } catch (authError) {
         const feedback = childLoginFeedback(authError);
-        showChildAuthError(
+        showAuthError(
           feedback.message,
           feedback.invalidFields,
           feedback.focus === "username" ? childUsernameRef : null,
@@ -160,15 +173,23 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
       return;
     }
     const cleanEmail = email.trim().toLowerCase();
-    if (!cleanEmail.includes("@") || password.length < 8) {
-      setError("Saisissez une adresse e-mail valide et un mot de passe de 8 caractères minimum.");
+    const invalidParentFields = [
+      ...(mode === "register" && name.trim().length < 2 ? ["name"] : []),
+      ...(!cleanEmail.includes("@") ? ["email"] : []),
+      ...(password.length < 8 ? ["password"] : []),
+      ...(mode === "register" && !termsAccepted ? ["terms"] : []),
+      ...(mode === "register" && !parentalAuthorityConfirmed ? ["parentalAuthority"] : []),
+    ];
+    if (invalidParentFields.length) {
+      showAuthError(
+        mode === "register"
+          ? "Vérifiez les champs signalés : votre prénom, une adresse e-mail valide, un mot de passe de 8 caractères minimum et les deux confirmations demandées."
+          : "Saisissez une adresse e-mail valide et un mot de passe de 8 caractères minimum.",
+        invalidParentFields,
+      );
       return;
     }
     if (mode === "register") {
-      if (name.trim().length < 2 || !parentalAuthorityConfirmed || !termsAccepted) {
-        setError("Indiquez votre prénom, acceptez les conditions d’utilisation et confirmez votre autorité parentale.");
-        return;
-      }
       try {
         await onRegister({
           name: name.trim(),
@@ -177,14 +198,20 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
           legal: registrationLegalEvidence(),
         });
       } catch (authError) {
-        setError(authError.message);
+        showAuthError(
+          authError.message || "L’inscription n’a pas pu aboutir. Vérifiez les informations puis réessayez.",
+          authError.status === 409 ? ["email"] : [],
+        );
       }
       return;
     }
     try {
       await onLogin({ email: cleanEmail, password });
     } catch (authError) {
-      setError(authError.message);
+      showAuthError(
+        authError.message || "La connexion n’a pas pu aboutir. Réessayez dans un instant.",
+        authError.status === 401 ? ["email", "password"] : [],
+      );
     }
   };
 
@@ -220,16 +247,82 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
             <button type="button" role="tab" aria-selected={mode === "register"} className={mode === "register" ? "is-active" : ""} onClick={() => changeMode("register")}>Inscription</button>
           </div>}
 
-          <form className="auth-form" onSubmit={submitAuth}>
+          <form className="auth-form" onSubmit={submitAuth} noValidate>
             <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
-            {audience === "parent" && mode === "register" && <label className="auth-field"><span>Prénom du parent</span><input value={name} onChange={(event) => { setName(event.target.value); setError(""); }} autoComplete="given-name" placeholder="Marie" /></label>}
-            {audience === "parent" ? <label className="auth-field"><span>Adresse e-mail</span><input type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" placeholder="parent@exemple.fr" readOnly={Boolean(familyInvitation?.email)} /></label> : <label className="auth-field"><span>Ton pseudo privé</span><input ref={childUsernameRef} value={childUsername} onChange={(event) => { setChildUsername(event.target.value.slice(0, childUsernameMaxLength)); clearAuthError(); }} autoComplete="username" autoCapitalize="none" spellCheck="false" placeholder="jules.club" aria-invalid={invalidChildFields.includes("username")} aria-describedby={error ? "auth-error" : undefined} /><small>Utilise le pseudo choisi avec ton parent, jamais l’identifiant SC-… du QR.</small></label>}
-            <label className="auth-field"><span>Mot de passe</span><span className="auth-password-field"><input ref={audience === "child" ? passwordRef : undefined} type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); clearAuthError(); }} autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder={audience === "child" ? "6 caractères minimum" : "8 caractères minimum"} minLength={audience === "child" ? 6 : 8} aria-invalid={audience === "child" && invalidChildFields.includes("password")} aria-describedby={audience === "child" && error ? "auth-error" : undefined} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button></span></label>
+            {audience === "parent" && mode === "register" && (
+              <label className="auth-field">
+                <span>Prénom du parent</span>
+                <input
+                  ref={nameRef}
+                  value={name}
+                  onChange={(event) => { setName(event.target.value); clearAuthError(); }}
+                  autoComplete="given-name"
+                  placeholder="Marie"
+                  aria-invalid={invalidFields.includes("name")}
+                  aria-describedby={invalidFields.includes("name") && error ? "auth-error" : undefined}
+                />
+              </label>
+            )}
+            {audience === "parent" ? (
+              <label className="auth-field">
+                <span>Adresse e-mail</span>
+                <input
+                  ref={emailRef}
+                  type="email"
+                  value={email}
+                  onChange={(event) => { setEmail(event.target.value); clearAuthError(); }}
+                  autoComplete="email"
+                  placeholder="parent@exemple.fr"
+                  readOnly={Boolean(familyInvitation?.email)}
+                  aria-invalid={invalidFields.includes("email")}
+                  aria-describedby={invalidFields.includes("email") && error ? "auth-error" : undefined}
+                />
+              </label>
+            ) : (
+              <label className="auth-field">
+                <span>Ton pseudo privé</span>
+                <input
+                  ref={childUsernameRef}
+                  value={childUsername}
+                  onChange={(event) => { setChildUsername(event.target.value.slice(0, childUsernameMaxLength)); clearAuthError(); }}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck="false"
+                  placeholder="jules.club"
+                  aria-invalid={invalidFields.includes("username")}
+                  aria-describedby={describedBy("child-username-help", invalidFields.includes("username") && error ? "auth-error" : null)}
+                />
+                <small id="child-username-help">Utilise le pseudo choisi avec ton parent, jamais l’identifiant SC-… du QR.</small>
+              </label>
+            )}
+            <label className="auth-field">
+              <span>Mot de passe</span>
+              <span className="auth-password-field">
+                <input
+                  ref={passwordRef}
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => { setPassword(event.target.value); clearAuthError(); }}
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  placeholder={audience === "child" ? "6 caractères minimum" : "8 caractères minimum"}
+                  minLength={audience === "child" ? 6 : 8}
+                  aria-invalid={invalidFields.includes("password")}
+                  aria-describedby={invalidFields.includes("password") && error ? "auth-error" : undefined}
+                />
+                <button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button>
+              </span>
+            </label>
             {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> Votre e-mail et les profils créés servent à fournir et sécuriser le service familial. L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
             {audience === "parent" && mode === "register" && (
               <div className="auth-legal-confirmations">
-                <label className="auth-consent"><input type="checkbox" checked={termsAccepted} onChange={(event) => { setTermsAccepted(event.target.checked); setError(""); }} /><span>J’accepte les <button type="button" onClick={(event) => { event.preventDefault(); setIsTermsOpen(true); }}>conditions d’utilisation</button> (version du {legalDocumentVersions.terms.label}). Cette acceptation conclut le contrat de service ; ce n’est pas un consentement RGPD.</span></label>
-                <label className="auth-consent"><input type="checkbox" checked={parentalAuthorityConfirmed} onChange={(event) => { setParentalAuthorityConfirmed(event.target.checked); setError(""); }} /><span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span></label>
+                <label className="auth-consent">
+                  <input ref={termsRef} type="checkbox" checked={termsAccepted} onChange={(event) => { setTermsAccepted(event.target.checked); clearAuthError(); }} aria-invalid={invalidFields.includes("terms")} aria-describedby={invalidFields.includes("terms") && error ? "auth-error" : undefined} />
+                  <span>J’accepte les <button type="button" onClick={(event) => { event.preventDefault(); setIsTermsOpen(true); }}>conditions d’utilisation</button> (version du {legalDocumentVersions.terms.label}). Cette acceptation conclut le contrat de service ; ce n’est pas un consentement RGPD.</span>
+                </label>
+                <label className="auth-consent">
+                  <input ref={parentalAuthorityRef} type="checkbox" checked={parentalAuthorityConfirmed} onChange={(event) => { setParentalAuthorityConfirmed(event.target.checked); clearAuthError(); }} aria-invalid={invalidFields.includes("parentalAuthority")} aria-describedby={invalidFields.includes("parentalAuthority") && error ? "auth-error" : undefined} />
+                  <span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span>
+                </label>
               </div>
             )}
             {error && <p className="auth-error" id="auth-error" role="alert">{error}</p>}

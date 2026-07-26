@@ -16,7 +16,7 @@ function restoreGlobal(name, previous) {
   else delete globalThis[name];
 }
 
-test("le client sépare le cookie web du Bearer natif gardé uniquement en mémoire", async () => {
+test("le client sépare le cookie web du Bearer natif restauré par le coffre sécurisé de l’appareil", async () => {
   const previousGlobals = Object.fromEntries(
     ["androidBridge", "Capacitor", "fetch", "localStorage", "sessionStorage"]
       .map((name) => [name, rememberGlobal(name)]),
@@ -74,6 +74,8 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
       const headers = new Headers(call.options.headers);
       assert.equal(headers.has("Authorization"), false);
       assert.equal(headers.has("X-Secret-Clubhouse-Client"), false);
+      assert.equal(headers.get("X-Secret-Clubhouse-Device"), nativeToken);
+      assert.equal(headers.get("X-Secret-Clubhouse-Device-Label"), "Navigateur web");
     }
     assert.equal(webClient.hasNativeSession(), false);
 
@@ -129,6 +131,10 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
       new Headers(nativeLogin.options.headers).get("X-Secret-Clubhouse-Client"),
       "native",
     );
+    assert.equal(
+      new Headers(nativeLogin.options.headers).get("X-Secret-Clubhouse-Device-Label"),
+      "Application Android",
+    );
 
     await nativeClient.api.me();
     const nativeAuthenticated = calls.shift();
@@ -156,12 +162,20 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
       `Bearer ${nativeToken}`,
     );
 
+    globalThis.fetch = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    await assert.rejects(reloadedNativeClient.api.me(), /Failed to fetch/);
+    assert.equal(reloadedNativeClient.hasNativeSession(), true);
+    assert.equal(nativeVaultToken, nativeToken);
+    globalThis.fetch = successfulFetch;
+
     await reloadedNativeClient.api.logout();
     assert.equal(reloadedNativeClient.hasNativeSession(), false);
     assert.equal(nativeVaultToken, "");
     assert.equal(calls.shift().options.credentials, "omit");
     assert.deepEqual(nativeVaultCalls, ["get", "set", "get", "clear"]);
-    assert.equal(storageAccess.reads, 0);
+    assert.ok(storageAccess.reads >= 3);
     assert.equal(storageAccess.writes, 0);
     assert.ok(storageAccess.removals >= 6);
   } finally {
@@ -171,7 +185,7 @@ test("le client sépare le cookie web du Bearer natif gardé uniquement en mémo
   }
 });
 
-test("les coffres natifs de session restent volatils et ne touchent aucun stockage persistant", async () => {
+test("les coffres natifs chiffrent la session sur l’appareil sans stockage JavaScript ni sauvegarde Android", async () => {
   const androidSource = await readFile(
     new URL("../android/app/src/main/java/fr/secretclubhouse/app/auth/NativeSessionMemoryPlugin.java", import.meta.url),
     "utf8",
@@ -184,10 +198,18 @@ test("les coffres natifs de session restent volatils et ne touchent aucun stocka
     new URL("../capacitor.config.json", import.meta.url),
     "utf8",
   ));
+  const androidManifest = await readFile(
+    new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url),
+    "utf8",
+  );
 
-  assert.match(androidSource, /static volatile String sessionToken/);
-  assert.doesNotMatch(androidSource, /SharedPreferences|KeyStore|FileOutputStream|SQLite/i);
-  assert.match(iosSource, /static var sessionToken/);
-  assert.doesNotMatch(iosSource, /UserDefaults|Keychain|SecItem|write\(to:/i);
+  assert.match(androidSource, /AndroidKeyStore/);
+  assert.match(androidSource, /AES\/GCM\/NoPadding/);
+  assert.match(androidSource, /SharedPreferences/);
+  assert.doesNotMatch(androidSource, /putString\([^,\n]+,\s*token\)/i);
+  assert.match(androidManifest, /android:allowBackup="false"/);
+  assert.match(iosSource, /SecItemAdd/);
+  assert.match(iosSource, /kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly/);
+  assert.doesNotMatch(iosSource, /UserDefaults|write\(to:/i);
   assert.equal(capacitorConfig.loggingBehavior, "none");
 });

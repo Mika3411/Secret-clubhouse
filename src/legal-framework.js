@@ -89,6 +89,15 @@ export const legalBasisRegister = Object.freeze([
     optional: false,
   }),
   Object.freeze({
+    id: "account-administration-support",
+    subjects: "Familles et utilisateurs",
+    purpose: "Permettre à un administrateur nominativement autorisé d’identifier un compte, traiter une demande de support et suspendre ou réactiver son accès en cas de nécessité.",
+    basisCode: "RGPD, article 6 § 1 f)",
+    basisLabel: "Intérêt légitime",
+    justification: "La gestion individuelle est limitée aux données de compte nécessaires, exclut tout contenu de communication et tout secret, protège les comptes administrateurs, révoque les sessions lors d’une suspension et journalise chaque consultation ou action.",
+    optional: false,
+  }),
+  Object.freeze({
     id: "optional-notifications",
     subjects: "Utilisateur de l’appareil et, pour un enfant de moins de 15 ans, son responsable légal",
     purpose: "Conserver un jeton push et envoyer les notifications facultatives activées sur un appareil.",

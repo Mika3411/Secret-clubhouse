@@ -2,7 +2,7 @@ export const retentionPolicy = Object.freeze({
   accountInactivityDays: 730,
   textMessageDays: 365,
   mediaMessageDays: 90,
-  authSessionHours: 12,
+  authSessionIdleDays: 30,
   revokedSessionPurgeHours: 24,
   loginRateLimitHours: 48,
   incomingCallTimeoutSeconds: 45,

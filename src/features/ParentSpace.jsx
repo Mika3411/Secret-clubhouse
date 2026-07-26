@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Bell } from "@phosphor-icons/react/Bell";
 import { CaretRight } from "@phosphor-icons/react/CaretRight";
@@ -9,6 +9,8 @@ import { Clock } from "@phosphor-icons/react/Clock";
 import { Copy } from "@phosphor-icons/react/Copy";
 import { DeviceMobile } from "@phosphor-icons/react/DeviceMobile";
 import { DownloadSimple } from "@phosphor-icons/react/DownloadSimple";
+import { Eye } from "@phosphor-icons/react/Eye";
+import { EyeSlash } from "@phosphor-icons/react/EyeSlash";
 import { GameController } from "@phosphor-icons/react/GameController";
 import { GearSix } from "@phosphor-icons/react/GearSix";
 import { IdentificationCard } from "@phosphor-icons/react/IdentificationCard";
@@ -40,6 +42,7 @@ export function ParentPasswordModal({ onClose, onSave }) {
   const [error, setError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [revokedSessions, setRevokedSessions] = useState(0);
 
   const submitPassword = async (event) => {
     event.preventDefault();
@@ -62,7 +65,8 @@ export function ParentPasswordModal({ onClose, onSave }) {
     setIsSaving(true);
     setError("");
     try {
-      await onSave({ currentPassword, newPassword });
+      const result = await onSave({ currentPassword, newPassword });
+      setRevokedSessions(Number(result?.revokedSessions ?? 0));
       setIsComplete(true);
     } catch (saveError) {
       setError(saveError.message);
@@ -75,7 +79,7 @@ export function ParentPasswordModal({ onClose, onSave }) {
     <div className="modal-backdrop" role="presentation" onMouseDown={isSaving ? undefined : onClose}>
       <section className="parent-password-modal" role="dialog" aria-modal="true" aria-labelledby="parent-password-title" onMouseDown={(event) => event.stopPropagation()}>
         <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer" disabled={isSaving}><X size={21} weight="bold" /></button>
-        {isComplete ? <div className="parent-password-success"><span><CheckCircle size={36} weight="fill" /></span><h2 id="parent-password-title">Mot de passe modifié</h2><p>Votre nouveau mot de passe est actif. Votre session actuelle reste ouverte.</p><button type="button" className="primary-button" onClick={onClose}>Terminer</button></div> : <>
+        {isComplete ? <div className="parent-password-success"><span><CheckCircle size={36} weight="fill" /></span><h2 id="parent-password-title">Mot de passe modifié</h2><p>Votre session actuelle reste ouverte. {revokedSessions > 0 ? `${revokedSessions} autre${revokedSessions > 1 ? "s" : ""} session${revokedSessions > 1 ? "s ont" : " a"} été déconnectée${revokedSessions > 1 ? "s" : ""}.` : "Aucune autre session n’était connectée."}</p><button type="button" className="primary-button" onClick={onClose}>Terminer</button></div> : <>
           <div className="parent-password-heading"><span><LockKey size={28} weight="fill" /></span><div><small>Sécurité du compte parent</small><h2 id="parent-password-title">Modifier le mot de passe</h2><p>Confirmez d’abord votre mot de passe actuel.</p></div></div>
           <form className="parent-password-form" onSubmit={submitPassword}>
             <label><span>Mot de passe actuel</span><span className="parent-password-field"><input type={showCurrentPassword ? "text" : "password"} value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setError(""); }} autoComplete="current-password" placeholder="Votre mot de passe actuel" autoFocus /><button type="button" onClick={() => setShowCurrentPassword((current) => !current)} aria-label={showCurrentPassword ? "Masquer le mot de passe actuel" : "Afficher le mot de passe actuel"}>{showCurrentPassword ? <EyeSlash size={19} weight="bold" /> : <Eye size={19} weight="bold" />}</button></span></label>
@@ -86,6 +90,141 @@ export function ParentPasswordModal({ onClose, onSave }) {
             <div className="parent-password-actions"><button type="button" onClick={onClose} disabled={isSaving}>Annuler</button><button type="submit" disabled={isSaving}>{isSaving ? "Enregistrement…" : "Modifier le mot de passe"}</button></div>
           </form>
         </>}
+      </section>
+    </div>
+  );
+}
+
+const sessionDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+function formatSessionDate(value) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? sessionDateFormatter.format(date) : "activité inconnue";
+}
+
+export function ParentSessionsModal({ onClose, onLoad, onRevoke, onRevokeOthers }) {
+  const [sessions, setSessions] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [busySessionId, setBusySessionId] = useState("");
+  const [confirmSessionId, setConfirmSessionId] = useState("");
+  const [confirmOthers, setConfirmOthers] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setIsLoading(true);
+    setError("");
+    void onLoad()
+      .then((result) => {
+        if (active) setSessions(result.sessions ?? []);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError.message || "Impossible de charger les appareils connectés.");
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [onLoad]);
+
+  const revokeSession = async (sessionId) => {
+    if (confirmSessionId !== sessionId) {
+      setConfirmSessionId(sessionId);
+      setConfirmOthers(false);
+      setNotice("");
+      return;
+    }
+    setBusySessionId(sessionId);
+    setError("");
+    try {
+      await onRevoke(sessionId);
+      setSessions((current) => current.filter((session) => session.id !== sessionId));
+      setConfirmSessionId("");
+      setNotice("Cet appareil a été déconnecté.");
+    } catch (revokeError) {
+      setError(revokeError.message || "Impossible de déconnecter cet appareil.");
+    } finally {
+      setBusySessionId("");
+    }
+  };
+
+  const revokeOthers = async () => {
+    if (!confirmOthers) {
+      setConfirmOthers(true);
+      setConfirmSessionId("");
+      setNotice("");
+      return;
+    }
+    setBusySessionId("others");
+    setError("");
+    try {
+      const result = await onRevokeOthers();
+      setSessions((current) => current.filter((session) => session.current));
+      setConfirmOthers(false);
+      const count = Number(result.revokedSessions ?? 0);
+      setNotice(count > 0
+        ? `${count} autre${count > 1 ? "s" : ""} appareil${count > 1 ? "s ont" : " a"} été déconnecté${count > 1 ? "s" : ""}.`
+        : "Aucun autre appareil n’était connecté.");
+    } catch (revokeError) {
+      setError(revokeError.message || "Impossible de déconnecter les autres appareils.");
+    } finally {
+      setBusySessionId("");
+    }
+  };
+
+  const otherSessionCount = sessions.filter((session) => !session.current).length;
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={busySessionId ? undefined : onClose}>
+      <section className="parent-sessions-modal" role="dialog" aria-modal="true" aria-labelledby="parent-sessions-title" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer" disabled={Boolean(busySessionId)}><X size={21} weight="bold" /></button>
+        <div className="parent-sessions-heading">
+          <span><DeviceMobile size={28} weight="fill" /></span>
+          <div><small>Sécurité du compte parent</small><h2 id="parent-sessions-title">Appareils connectés</h2><p>Chaque appareil peut être déconnecté immédiatement.</p></div>
+        </div>
+
+        <div className="parent-sessions-safety"><ShieldCheck size={18} weight="fill" /><span>La déconnexion révoque la session côté serveur. Aucun mot de passe ni jeton secret n’est affiché ici.</span></div>
+
+        {isLoading ? <p className="parent-sessions-status" role="status">Chargement des appareils…</p> : (
+          <div className="parent-session-list">
+            {sessions.map((session) => (
+              <article className={`parent-session-card ${session.current ? "is-current" : ""}`} key={session.id}>
+                <span className="parent-session-card__icon"><DeviceMobile size={22} weight="fill" /></span>
+                <div className="parent-session-card__copy">
+                  <div><strong>{session.deviceLabel}</strong>{session.current && <span>Appareil actuel</span>}</div>
+                  <small>Dernière activité : {formatSessionDate(session.lastUsedAt)}</small>
+                  <small>Connecté le {formatSessionDate(session.createdAt)}</small>
+                </div>
+                {!session.current && (
+                  <button
+                    type="button"
+                    className={confirmSessionId === session.id ? "is-confirming" : ""}
+                    onClick={() => revokeSession(session.id)}
+                    disabled={Boolean(busySessionId)}
+                  >
+                    <SignOut size={17} weight="bold" />
+                    {busySessionId === session.id ? "Déconnexion…" : confirmSessionId === session.id ? "Confirmer" : "Déconnecter"}
+                  </button>
+                )}
+              </article>
+            ))}
+            {!sessions.length && <p className="parent-sessions-status">Aucune session active n’a été trouvée.</p>}
+          </div>
+        )}
+
+        {confirmOthers && <div className="parent-sessions-confirmation" role="alert"><strong>Déconnecter tous les autres appareils ?</strong><span>Ils devront saisir de nouveau le mot de passe parent.</span><button type="button" onClick={() => setConfirmOthers(false)} disabled={Boolean(busySessionId)}>Annuler</button></div>}
+        {notice && <p className="parent-sessions-notice" role="status">{notice}</p>}
+        {error && <p className="parent-password-error" role="alert">{error}</p>}
+        <button type="button" className="parent-sessions-revoke-all" onClick={revokeOthers} disabled={isLoading || Boolean(busySessionId) || otherSessionCount === 0}>
+          <SignOut size={19} weight="bold" />
+          {busySessionId === "others" ? "Déconnexion…" : confirmOthers ? "Confirmer la déconnexion" : "Déconnecter tous les autres appareils"}
+        </button>
       </section>
     </div>
   );
@@ -321,12 +460,13 @@ export function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
-export function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, features, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, contactRequests = [], contactRelationships = [], contactRequestBusyId = "", contactRequestError = "", onRespondToContactRequest, onRetryContactRequests, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onOpenDataRights, onEditSchedule, onLogout }) {
+export function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, features, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, contactRequests = [], contactRelationships = [], contactRequestBusyId = "", contactRequestError = "", onRespondToContactRequest, onRetryContactRequests, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onOpenSessions, onOpenDataRights, onEditSchedule, onLogout }) {
   const notificationsEnabled = Capacitor.isNativePlatform()
     ? features?.nativePush === true
     : features?.webPush === true;
   const scheduleDetail = schedule.enabled ? `Messages ${formatScheduleTime(schedule.messages.start)}–${formatScheduleTime(schedule.messages.end)}` : "Planification désactivée";
   const isHome = activeSection === "home";
+  const isHelp = activeSection === "help";
   const pendingRequests = contactRequests.filter((request) => request.status === "pending");
   const selectedChildRequests = child
     ? pendingRequests.filter((request) => request.requester.id === child.id || request.target.id === child.id)
@@ -340,7 +480,7 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
       <header className="parent-topbar">
         <div>
           <span className="parent-topbar__eyebrow"><ShieldCheck size={15} weight="fill" /> Mode parent</span>
-          <h1 id="parent-dashboard-title">{isHome ? `Bonjour, ${parentName}` : "Gestion de la famille"}</h1>
+          <h1 id="parent-dashboard-title">{isHome ? `Bonjour, ${parentName}` : isHelp ? "Notice parent" : "Gestion de la famille"}</h1>
         </div>
         <div className="parent-topbar__actions">
           <span className="parent-avatar" aria-label={`Profil de ${parentName}`} role="img"><UserCircle size={30} weight="fill" /></span>
@@ -438,7 +578,72 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
         </section>}
         </>}
 
-        {!isHome && <>
+        {isHelp && <>
+        <section className="parent-help-hero" aria-labelledby="parent-help-title">
+          <span className="parent-help-hero__icon"><ShieldCheck size={30} weight="fill" /></span>
+          <div>
+            <small>Repères essentiels</small>
+            <h2 id="parent-help-title">Accompagner votre famille simplement</h2>
+            <p>Cette notice explique les contacts, les protections et les connexions sans afficher le contenu privé des conversations de votre enfant.</p>
+          </div>
+        </section>
+
+        <section className="parent-help-section parent-help-section--contacts" aria-labelledby="parent-help-contacts-title">
+          <div className="parent-help-section__heading">
+            <span><UserPlus size={22} weight="fill" /></span>
+            <div><small>Ajouter un ami</small><h2 id="parent-help-contacts-title">Quand un enfant saisit un identifiant</h2></div>
+          </div>
+          <ol className="parent-help-steps">
+            <li><span>1</span><div><strong>L’enfant saisit l’identifiant privé</strong><p>Il utilise le code exact commençant par SC-. Il n’existe ni recherche publique ni ajout par numéro de téléphone.</p></div></li>
+            <li><span>2</span><div><strong>Son parent confirme l’envoi</strong><p>« Continuer avec mon parent » ferme uniquement la session enfant pour permettre l’authentification du parent sur cet appareil.</p></div></li>
+            <li><span>3</span><div><strong>L’autre famille répond</strong><p>Un parent ou coparent de l’enfant destinataire accepte ou refuse la demande depuis son espace protégé.</p></div></li>
+            <li><span>4</span><div><strong>Le contact devient disponible</strong><p>Après acceptation seulement, la relation et la conversation privée entre les deux enfants sont créées.</p></div></li>
+          </ol>
+          <div className="parent-help-callout"><LockKey size={18} weight="fill" /><p>Un identifiant personnel, invalide, déjà en attente, déjà approuvé ou appartenant à la même famille est refusé. Un enfant peut uniquement demander l’ajout d’un autre enfant.</p></div>
+          <button type="button" className="parent-help-action" onClick={onOpenMessages}><ChatCircleDots size={19} weight="fill" /> Ouvrir les conversations</button>
+        </section>
+
+        <div className="parent-help-grid">
+          <section className="parent-help-section" aria-labelledby="parent-help-protection-title">
+            <div className="parent-help-section__heading">
+              <span><Shield size={22} weight="fill" /></span>
+              <div><small>Protections</small><h2 id="parent-help-protection-title">Ce que vous gardez sous contrôle</h2></div>
+            </div>
+            <ul className="parent-help-list">
+              <li><CheckCircle size={17} weight="fill" /><span><strong>Contacts approuvés</strong><small>Messages, appels et jeux restent limités aux relations autorisées.</small></span></li>
+              <li><Clock size={17} weight="fill" /><span><strong>Horaires séparés</strong><small>Messages, appels audio et vidéo suivent les plages définies pour chaque enfant.</small></span></li>
+              <li><PencilSimple size={17} weight="fill" /><span><strong>Partage de médias</strong><small>Photos et vidéos restent bloquées tant que vous ne les avez pas autorisées.</small></span></li>
+            </ul>
+            <button type="button" className="parent-help-action parent-help-action--secondary" onClick={() => onChangeSection("management")}><GearSix size={19} weight="fill" /> Vérifier les réglages</button>
+          </section>
+
+          <section className="parent-help-section" aria-labelledby="parent-help-sessions-title">
+            <div className="parent-help-section__heading">
+              <span><DeviceMobile size={22} weight="fill" /></span>
+              <div><small>Connexions</small><h2 id="parent-help-sessions-title">Appareils et perte du téléphone</h2></div>
+            </div>
+            <ul className="parent-help-list">
+              <li><DeviceMobile size={17} weight="fill" /><span><strong>Chaque appareil reste révocable</strong><small>Vous pouvez consulter les appareils, en retirer un ou déconnecter tous les autres.</small></span></li>
+              <li><LockKey size={17} weight="fill" /><span><strong>Les mots de passe protègent les accès</strong><small>Changer le mot de passe parent révoque les autres sessions. Changer celui d’un enfant révoque toutes ses sessions.</small></span></li>
+            </ul>
+            <button type="button" className="parent-help-action parent-help-action--secondary" onClick={onOpenSessions}><DeviceMobile size={19} weight="fill" /> Gérer les appareils</button>
+          </section>
+        </div>
+
+        <section className="parent-help-section parent-help-section--privacy" aria-labelledby="parent-help-privacy-title">
+          <div className="parent-help-section__heading">
+            <span><LockKey size={22} weight="fill" /></span>
+            <div><small>Vie privée et assistance</small><h2 id="parent-help-privacy-title">Des échanges privés, des recours accessibles</h2></div>
+          </div>
+          <p>Le tableau de bord présente les autorisations et l’activité générale, pas le contenu des conversations entre votre enfant et ses amis. Vous pouvez exporter les données ou exercer les droits de votre famille depuis « Gestion ».</p>
+          <div className="parent-help-links">
+            <a href="/confidentialite">Politique de confidentialité</a>
+            <a href="/confidentialite-enfants">Version expliquée aux enfants</a>
+          </div>
+        </section>
+        </>}
+
+        {!isHome && !isHelp && <>
         <div className="parent-section-intro">
           <span><GearSix size={22} weight="fill" /></span>
           <div><strong>Tout gérer au même endroit</strong><small>Profils, contacts, sécurité et compte parent.</small></div>
@@ -545,6 +750,12 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
                 <CaretRight size={18} weight="bold" aria-hidden="true" />
               </button>
 
+              <button type="button" className="parent-sessions-entry" onClick={onOpenSessions}>
+                <span><DeviceMobile size={22} weight="fill" /></span>
+                <span><strong>Appareils connectés</strong><small>Consulter ou révoquer les sessions actives.</small></span>
+                <CaretRight size={18} weight="bold" aria-hidden="true" />
+              </button>
+
               <button type="button" className="parent-data-rights-entry" onClick={onOpenDataRights}>
                 <span><ShieldCheck size={22} weight="fill" /></span>
                 <span><strong>Données et droits RGPD</strong><small>Exporter, corriger, limiter, s’opposer ou supprimer.</small></span>
@@ -572,6 +783,7 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
         onHome={() => onChangeSection("home")}
         onManagement={() => onChangeSection("management")}
         onConversations={onOpenMessages}
+        onHelp={() => onChangeSection("help")}
       />
     </section>
   );
@@ -660,7 +872,7 @@ export function ChildAccountModal({ child, canDelete = true, onClose, onSave, on
           <label className="form-field"><span>Prénom</span><input value={name} onChange={(event) => updateName(event.target.value)} placeholder="Ex. Jules" autoFocus /></label>
           <label className="form-field"><span>Âge</span><select value={age} onChange={(event) => setAge(event.target.value)}>{Array.from({ length: 8 }, (_, index) => index + 6).map((value) => <option key={value} value={value}>{value} ans</option>)}</select></label>
           <label className="form-field form-field--full"><span>Pseudo privé de connexion</span><div className="username-field"><span>@</span><input value={username} onChange={(event) => { setUsername(event.target.value); setUsernameEdited(true); setError(""); }} maxLength={childUsernameMaxLength} autoComplete="off" autoCapitalize="none" spellCheck="false" placeholder="jules.club" /></div><small>Votre enfant l’utilise avec son mot de passe pour se connecter. Il n’apparaît jamais dans son QR et ne sert pas à ajouter un contact.</small></label>
-          <label className="form-field form-field--full"><span>{isEditing ? "Nouveau mot de passe enfant" : "Mot de passe enfant"}</span><div className="child-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete="new-password" placeholder={isEditing ? "Laisser vide pour ne pas le changer" : "6 caractères minimum"} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe enfant" : "Afficher le mot de passe enfant"}>{showPassword ? "Masquer" : "Afficher"}</button></div><small>{isEditing ? "Laissez ce champ vide pour conserver le mot de passe actuel." : "Transmettez-le uniquement à votre enfant."}</small></label>
+          <label className="form-field form-field--full"><span>{isEditing ? "Nouveau mot de passe enfant" : "Mot de passe enfant"}</span><div className="child-password-field"><input type={showPassword ? "text" : "password"} value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete="new-password" placeholder={isEditing ? "Laisser vide pour ne pas le changer" : "6 caractères minimum"} /><button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe enfant" : "Afficher le mot de passe enfant"}>{showPassword ? "Masquer" : "Afficher"}</button></div><small>{isEditing ? "Tout nouveau mot de passe déconnecte immédiatement l’enfant de tous ses appareils." : "Transmettez-le uniquement à votre enfant."}</small></label>
         </div>
 
         {!child?.image && (

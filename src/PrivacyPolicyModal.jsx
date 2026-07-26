@@ -65,7 +65,7 @@ function ParentPrivacyPolicy() {
         <div className="privacy-table-wrap">
           <table>
             <thead><tr><th>Personnes concernées</th><th>Ce que nous faisons</th><th>Base légale</th></tr></thead>
-            <tbody>{parentPrivacyPolicy.purposes.map((row) => <tr key={row.id}><td>{row.subjects}</td><td>{row.purpose}{row.optional && <small className="privacy-optional-badge">Facultatif</small>}</td><td>{row.legalBasis}</td></tr>)}</tbody>
+            <tbody>{parentPrivacyPolicy.purposes.map((row) => <tr key={row.id}><td data-label="Personnes concernées">{row.subjects}</td><td data-label="Ce que nous faisons">{row.purpose}{row.optional && <small className="privacy-optional-badge">Facultatif</small>}</td><td data-label="Base légale">{row.legalBasis}</td></tr>)}</tbody>
           </table>
         </div>
         <aside><strong>Aucune décision automatisée.</strong> Secret Clubhouse ne réalise ni profilage publicitaire ni décision produisant un effet juridique uniquement par un algorithme. Les restrictions du profil enfant viennent des choix du parent et de règles de sécurité explicites.</aside>
@@ -108,7 +108,7 @@ function ParentPrivacyPolicy() {
         <div className="privacy-table-wrap">
           <table>
             <thead><tr><th>Données</th><th>Durée ou critère</th></tr></thead>
-            <tbody>{parentPrivacyPolicy.retention.map((row) => <tr key={row.data}><td>{row.data}</td><td>{row.duration}</td></tr>)}</tbody>
+            <tbody>{parentPrivacyPolicy.retention.map((row) => <tr key={row.data}><td data-label="Données">{row.data}</td><td data-label="Durée ou critère">{row.duration}</td></tr>)}</tbody>
           </table>
         </div>
       </section>

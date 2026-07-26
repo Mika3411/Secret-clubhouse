@@ -1,26 +1,43 @@
 import Capacitor
 import Foundation
+import Security
 
 private enum NativeSessionMemoryVault {
-    private static let lock = NSLock()
-    private static var sessionToken: String?
+    private static let service = "fr.secretclubhouse.app.native-session"
+    private static let account = "opaque-session-token"
 
     static func read() -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        return sessionToken ?? ""
+        var query = baseQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let token = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return token
     }
 
-    static func write(_ token: String) {
-        lock.lock()
-        sessionToken = token
-        lock.unlock()
+    static func write(_ token: String) -> Bool {
+        let query = baseQuery()
+        SecItemDelete(query as CFDictionary)
+        var item = query
+        item[kSecValueData as String] = Data(token.utf8)
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
     }
 
     static func clear() {
-        lock.lock()
-        sessionToken = nil
-        lock.unlock()
+        SecItemDelete(baseQuery() as CFDictionary)
+    }
+
+    private static func baseQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
     }
 }
 
@@ -50,7 +67,10 @@ public final class NativeSessionMemoryPlugin: CAPInstancePlugin, CAPBridgedPlugi
             call.reject("Session native invalide.")
             return
         }
-        NativeSessionMemoryVault.write(token)
+        guard NativeSessionMemoryVault.write(token) else {
+            call.reject("La session native n’a pas pu être protégée.")
+            return
+        }
         call.resolve()
     }
 

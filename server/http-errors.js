@@ -1,4 +1,9 @@
 export class PublicHttpError extends Error {
+  /**
+   * @param {number} statusCode
+   * @param {string} message
+   * @param {ErrorOptions} [options]
+   */
   constructor(statusCode, message, options = {}) {
     super(message, options);
     if (!Number.isInteger(statusCode) || statusCode < 400 || statusCode >= 500) {
@@ -9,10 +14,16 @@ export class PublicHttpError extends Error {
   }
 }
 
+/**
+ * @param {number} statusCode
+ * @param {string} message
+ * @param {ErrorOptions} [options]
+ */
 export function publicHttpError(statusCode, message, options) {
   return new PublicHttpError(statusCode, message, options);
 }
 
+/** @type {Readonly<Record<string, string>>} */
 const multerMessages = Object.freeze({
   LIMIT_FILE_SIZE: "Un fichier dépasse la taille autorisée.",
   LIMIT_FILE_COUNT: "Trop de fichiers ont été envoyés.",
@@ -23,6 +34,11 @@ const multerMessages = Object.freeze({
   LIMIT_UNEXPECTED_FILE: "Un fichier inattendu a été envoyé.",
 });
 
+/**
+ * @param {PublicHttpError | { type?: string, code?: string }} error
+ * @param {{ multerError?: boolean }} [options]
+ * @returns {{ statusCode: number, message: string }}
+ */
 export function safeHttpErrorResponse(error, { multerError = false } = {}) {
   if (error instanceof PublicHttpError) {
     return { statusCode: error.statusCode, message: error.message };
@@ -31,9 +47,10 @@ export function safeHttpErrorResponse(error, { multerError = false } = {}) {
     return { statusCode: 400, message: "Le contenu JSON de la requête est invalide." };
   }
   if (multerError) {
+    const multerCode = String(error?.code ?? "");
     return {
-      statusCode: String(error?.code ?? "").startsWith("LIMIT_") ? 413 : 400,
-      message: multerMessages[error?.code] ?? "L’envoi de média est invalide.",
+      statusCode: multerCode.startsWith("LIMIT_") ? 413 : 400,
+      message: multerMessages[multerCode] ?? "L’envoi de média est invalide.",
     };
   }
   return { statusCode: 500, message: "Erreur interne." };

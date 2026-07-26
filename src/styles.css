@@ -272,7 +272,7 @@ input:focus-visible {
   max-width: 330px;
   margin: 0 auto;
   color: #dddaf0;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -316,7 +316,7 @@ input:focus-visible {
 
 .auth-role-tabs button {
   display: flex;
-  min-height: 42px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -324,7 +324,7 @@ input:focus-visible {
   border-radius: 13px;
   color: #6f6a7e;
   background: #faf9fd;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -345,11 +345,11 @@ input:focus-visible {
 }
 
 .auth-tabs button {
-  min-height: 38px;
+  min-height: 44px;
   border-radius: 10px;
   color: #746f87;
   background: transparent;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -393,27 +393,27 @@ input:focus-visible {
 .auth-form__heading p {
   margin: 2px 0 0;
   color: #817d91;
-  font-size: 8.5px;
+  font-size: 12px;
 }
 
 .auth-field {
   display: grid;
   gap: 4px;
   color: #504c61;
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 900;
 }
 
 .auth-field input {
   width: 100%;
-  height: 43px;
+  height: 44px;
   padding: 0 11px;
   border: 1px solid #ded9e8;
   border-radius: 12px;
   color: var(--ink);
   outline: 0;
   background: #faf9fd;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -422,9 +422,15 @@ input:focus-visible {
   box-shadow: 0 0 0 3px rgba(117, 89, 219, 0.11);
 }
 
+.auth-field input[aria-invalid="true"],
+.auth-consent input[aria-invalid="true"] {
+  border-color: #c23a58;
+  box-shadow: 0 0 0 3px rgba(194, 58, 88, 0.12);
+}
+
 .auth-field > small {
   color: #817d91;
-  font-size: 8.5px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1.35;
 }
@@ -444,7 +450,7 @@ input:focus-visible {
   right: 3px;
   display: grid;
   width: 44px;
-  height: 40px;
+  height: 44px;
   padding: 0;
   transform: translateY(-50%);
   place-items: center;
@@ -498,17 +504,18 @@ input:focus-visible {
 
 .auth-consent {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  min-height: 44px;
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: flex-start;
   gap: 7px;
   color: #696579;
-  font-size: 8.5px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .auth-consent input {
-  width: 17px;
-  height: 17px;
+  width: 22px;
+  height: 22px;
   margin: 0;
   accent-color: #6d52dc;
 }
@@ -519,6 +526,9 @@ input:focus-visible {
 }
 
 .auth-consent button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
   padding: 0;
   border: 0;
   color: #6045c8;
@@ -539,7 +549,7 @@ input:focus-visible {
   border-radius: 13px;
   color: #5d5770;
   background: #f7f3ff;
-  font-size: 8.5px;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -551,10 +561,13 @@ input:focus-visible {
 .auth-data-notice strong {
   display: block;
   color: #302758;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .auth-data-notice button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
   padding: 0;
   border: 0;
   color: #6045c8;
@@ -569,7 +582,7 @@ input:focus-visible {
 .auth-error {
   margin: 0;
   color: #b52f4c;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 1.35;
 }
@@ -578,7 +591,7 @@ input:focus-visible {
   width: 100%;
   min-height: 44px;
   margin-top: 1px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .auth-legal {
@@ -589,7 +602,7 @@ input:focus-visible {
   gap: 2px 5px;
   margin: 9px 0 0;
   color: #888497;
-  font-size: 8.5px;
+  font-size: 12px;
 }
 
 .auth-legal svg {
@@ -597,7 +610,7 @@ input:focus-visible {
 }
 
 .auth-legal button {
-  min-height: 28px;
+  min-height: 44px;
   padding: 3px 0;
   border: 0;
   color: #654dc7;
@@ -655,18 +668,18 @@ input:focus-visible {
 }
 
 .family-invite-auth-note > div { display: grid; min-width: 0; }
-.family-invite-auth-note strong { font-size: 11px; }
-.family-invite-auth-note small { color: #68627b; font-size: 8.5px; line-height: 1.35; }
+.family-invite-auth-note strong { font-size: 12px; }
+.family-invite-auth-note small { color: #68627b; font-size: 12px; line-height: 1.35; }
 .family-invite-auth-note.has-error { border-color: #efc5d1; background: #fff0f4; }
 .family-invite-auth-note.has-error > span { color: #8f2445; background: #ffdce7; }
 .family-invite-auth-note > button {
   grid-column: 1 / -1;
-  min-height: 34px;
+  min-height: 44px;
   color: #6b4fc7;
   border: 1px solid #d8cff6;
   border-radius: 11px;
   background: #fff;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 900;
 }
 
@@ -743,7 +756,7 @@ input:focus-visible {
   }
 
   .auth-field {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .auth-field input {
@@ -862,7 +875,7 @@ input:focus-visible {
     display: block;
     max-width: 320px;
     margin-inline: 0;
-    font-size: 11.5px;
+    font-size: 12px;
   }
 
   .auth-trust {

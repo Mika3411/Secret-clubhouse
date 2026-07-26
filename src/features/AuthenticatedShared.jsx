@@ -1,6 +1,7 @@
 import { ChatCircleDots } from "@phosphor-icons/react/ChatCircleDots";
 import { GearSix } from "@phosphor-icons/react/GearSix";
 import { House } from "@phosphor-icons/react/House";
+import { Question } from "@phosphor-icons/react/Question";
 import { normalizePresenceAvailability } from "../presence";
 
 export async function copyContactId(contactId) {
@@ -70,17 +71,18 @@ export function Avatar({ person, size = "medium", online = null, availability = 
   );
 }
 
-export function ParentModeNavigation({ active, unreadMessages = 0, onHome, onManagement, onConversations }) {
+export function ParentModeNavigation({ active, unreadMessages = 0, onHome, onManagement, onConversations, onHelp }) {
   const items = [
     { id: "home", label: "Accueil", Icon: House, onClick: onHome },
     { id: "management", label: "Gestion", Icon: GearSix, onClick: onManagement },
     { id: "conversations", label: "Conversations", Icon: ChatCircleDots, onClick: onConversations, badge: unreadMessages },
+    { id: "help", label: "?", accessibleLabel: "Aide et notice parent", Icon: Question, onClick: onHelp },
   ];
 
   return (
     <nav className="parent-mode-navigation" aria-label="Navigation du mode parent">
-      {items.map(({ id, label, Icon, onClick, badge }) => (
-        <button type="button" key={id} className={active === id ? "is-active" : ""} onClick={onClick} aria-current={active === id ? "page" : undefined}>
+      {items.map(({ id, label, accessibleLabel, Icon, onClick, badge }) => (
+        <button type="button" key={id} className={active === id ? "is-active" : ""} onClick={onClick} aria-label={accessibleLabel} aria-current={active === id ? "page" : undefined}>
           <span><Icon size={20} weight={active === id ? "fill" : "bold"} />{badge > 0 && <em>{badge}</em>}</span>
           <strong>{label}</strong>
         </button>

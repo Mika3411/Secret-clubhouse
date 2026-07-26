@@ -1,5 +1,5 @@
-export const aipdVersion = "1.18";
-export const aipdAssessmentDate = "2026-07-25";
+export const aipdVersion = "1.22";
+export const aipdAssessmentDate = "2026-07-26";
 
 export const aipdRiskScale = Object.freeze({
   severity: Object.freeze({
@@ -49,7 +49,7 @@ export const aipdHighRiskCriteria = Object.freeze([
     id: "systematic-monitoring",
     label: "Surveillance ou suivi régulier",
     applicable: true,
-    evidence: "Présence, activité, horaires, accusés de réception, progression Clubhouse, série personnelle et interactions sont suivis pour fournir et sécuriser le service ; le pilotage interne réutilise seulement ces dates et événements sous forme agrégée, sans détail individuel.",
+    evidence: "Présence, activité, horaires, accusés de réception, progression Clubhouse, série personnelle et interactions sont suivis pour fournir et sécuriser le service ; les statistiques internes réutilisent seulement ces dates et événements sous forme agrégée. L’annuaire de support séparé expose des identités et états de compte, mais aucun historique comportemental, contenu ou secret.",
   }),
   Object.freeze({
     id: "innovative-technology",
@@ -151,13 +151,18 @@ export const aipdActions = Object.freeze([
       "server/route-authorization.test.js",
       "server/production-features.test.js",
       "server/security-hardening.test.js",
+      "server/api-client-session.test.js",
+      "server/account-session-management.test.js",
       "android/app/build.gradle",
+      "android/app/src/main/AndroidManifest.xml",
+      "android/app/src/main/java/fr/secretclubhouse/app/auth/NativeSessionMemoryPlugin.java",
+      "ios/App/App/NativeSessionMemoryPlugin.swift",
       "src/features/ParentSpace.jsx",
     ]),
-    acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
+    acceptance: "Le périmètre réellement actif est testé par une personne compétente avec une séparation suffisante pour rendre les résultats fiables ; aucun constat critique ou élevé non corrigé. Pour la session native persistante, les preuves couvrent sur appareils Android et iOS réels la fermeture/réouverture, la perte et le retour du réseau, la restauration autorisée par le système, l’absence de migration vers un autre appareil, la révocation distante, l’effacement local et le scénario d’un terminal déverrouillé perdu ou volé. Les flux WebRTC, push et applications natives peuvent être notés non applicables seulement s’ils sont techniquement désactivés et non distribués. Un prestataire indépendant est possible mais n’est pas une condition automatique de clôture.",
     reopenedAt: "2026-07-24",
     reopenedBy: "Activation contrôlée de Cloudflare Realtime TURN, Web Push, FCM et APNs, puis distribution publique de l’APK Android du prototype",
-    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC, Web Push, notifications natives ni binaire public. Leur activation et la distribution de l’APK rouvrent A07 jusqu’à une évaluation du périmètre réellement déployé ; l’administration RGPD partagée et le tableau d’agrégats administrateur restent exclus.",
+    scopeRestriction: "L’évaluation du 23 juillet reste une preuve historique du web/API sans RTC, Web Push, notifications natives, binaire public, coffre de session natif persistant ni annuaire administrateur individuel. Leur activation, la distribution de l’APK, la persistance du Bearer mobile et l’ajout de la gestion des comptes maintiennent A07 ouverte jusqu’à une évaluation du périmètre réellement déployé ; l’administration RGPD partagée, les agrégats et l’annuaire support restent exclus de la preuve historique.",
   }),
   Object.freeze({
     id: "A08",
@@ -213,11 +218,11 @@ export const aipdRisks = Object.freeze([
     id: "R02",
     title: "Usurpation ou prise de contrôle d’un compte",
     fearedEvent: "Un tiers agit comme un enfant ou un parent et contacte ses relations.",
-    threats: ["Mot de passe deviné ou réutilisé", "Vol d’un appareil ou d’une session", "Tentatives automatisées"],
+    threats: ["Mot de passe deviné ou réutilisé", "Accès à l’application déjà ouverte sur un appareil déverrouillé perdu ou volé", "Extraction ou restauration abusive d’un jeton mobile persistant", "Session laissée active avant que la famille ou l’administrateur ne la révoque", "Tentatives automatisées"],
     impacts: ["Contact trompeur ou manipulation", "Modification des protections", "Accès aux données et perte de contrôle du compte"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Hash bcrypt des mots de passe", "Limitation persistante des connexions par identité et IP", "Nom d’utilisateur enfant privé distinct de l’identifiant de contact QR, lequel est refusé par l’authentification", "Sessions valables 12 heures en production et révocables", "Vérification du mot de passe actuel pour les opérations sensibles"],
-    residual: { severity: 4, likelihood: 3 },
+    existingMeasures: ["Hash bcrypt des mots de passe", "Limitation persistante des connexions par identité et IP", "Nom d’utilisateur enfant privé distinct de l’identifiant de contact QR, lequel est refusé par l’authentification", "Sessions opaques révocables sans coupure fixe après 12 heures, avec fenêtre glissante de 30 jours renouvelée sur activité", "Bearer natif absent du stockage JavaScript et conservé dans le Keychain iOS ThisDeviceOnly ou chiffré par AES-GCM avec une clé Android Keystore non exportable", "Sauvegarde Android désactivée ; élément iOS non synchronisable et non migrable vers un autre appareil, mais restauration possible sur le même appareil explicitement documentée", "Aucun mot de passe, profil complet, message ou média mis en cache pour la restauration ; l’e-mail parent mémorisé séparément n’est pas un secret de session", "Chaque appel API revalide le hash serveur : une session révoquée ne permet aucun accès au retour du réseau", "Une panne réseau ne révoque ni n’efface la session ; un rejet authentifié, une suspension ou une déconnexion explicite efface le coffre local", "Liste parentale des sessions actives avec libellé d’appareil, dates de connexion et de dernière activité, sans jeton ni identifiant technique exposé", "Révocation parentale immédiate d’une session précise ou de toutes les autres sessions", "Changement du mot de passe parent après vérification de l’ancien, avec révocation transactionnelle de toutes les autres sessions et maintien de la session courante", "Changement du mot de passe enfant par un parent autorisé, avec révocation transactionnelle de toutes les sessions de l’enfant", "Le parent peut se reconnecter depuis un autre appareil pour changer son mot de passe, révoquer les sessions, supprimer un profil enfant ou supprimer son compte ou sa famille selon son rôle"],
+    residual: { severity: 4, likelihood: 2 },
     actionIds: ["A07", "A08"],
   }),
   risk({
@@ -238,7 +243,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Collecte trop fine ou conservation trop longue", "Présentation trop détaillée aux adultes", "Détournement de la présence et des accusés de lecture"],
     impacts: ["Atteinte à la vie privée et à l’autonomie", "Pression familiale ou sociale", "Profil comportemental involontaire"],
     initial: { severity: 3, likelihood: 3 },
-    existingMeasures: ["Présence limitée au compte, à la famille et aux contacts approuvés", "État en ligne borné à 75 secondes sans signal au premier plan ; veille joignable dérivée uniquement d’une session active et d’une route push valide ; déconnexion liée à la révocation ou l’expiration de session ; traces purgées sous 24 heures", "Tableau parent limité aux alertes et à l’activité générale", "Aucun contenu enfant-ami exposé au parent", "Tableau opérateur limité à des agrégats PostgreSQL sans nom, identifiant, relation ou contenu individuel", "Compte administrateur et famille associée exclus des calculs"],
+    existingMeasures: ["Présence limitée au compte, à la famille et aux contacts approuvés", "État en ligne borné à 75 secondes sans signal au premier plan ; veille joignable dérivée uniquement d’une session active et d’une route push valide ; déconnexion liée à la révocation ou l’expiration de session ; traces purgées sous 24 heures", "Tableau parent limité aux alertes et à l’activité générale", "Aucun contenu enfant-ami exposé au parent", "Statistiques opérateur limitées aux agrégats PostgreSQL avec exclusion de la famille administratrice", "Annuaire support séparé limité aux données de compte nécessaires, sans contenu, contact extérieur, jeton ou secret, avec pagination et journalisation"],
     residual: { severity: 3, likelihood: 2 },
     actionIds: ["A02", "A06"],
   }),
@@ -304,7 +309,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Privilèges trop larges", "Secret partagé", "Absence de revue des accès", "Données personnelles dans des journaux"],
     impacts: ["Divulgation massive", "Altération des protections ou des preuves", "Impossibilité d’attribuer une action"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Erreurs publiques génériques avec identifiant de corrélation", "Journaux de sécurité minimisés", "Secrets séparés dans Render", "Contenus chiffrés en base", "Accès aux agrégats réservé à un parent nominativement inscrit et lecture journalisée sans contenu"],
+    existingMeasures: ["Erreurs publiques génériques avec identifiant de corrélation", "Journaux de sécurité minimisés", "Secrets séparés dans Render", "Contenus chiffrés en base", "Administration réservée à un parent nominativement inscrit", "Lectures de l’annuaire et actions de compte journalisées sans contenu", "Comptes administrateurs protégés contre la suspension", "Sessions actives révoquées lors d’une suspension"],
     residual: { severity: 4, likelihood: 3 },
     actionIds: ["A04", "A05", "A07", "A08"],
   }),
@@ -313,6 +318,6 @@ export const aipdRisks = Object.freeze([
 export const aipdDecision = Object.freeze({
   status: "blocked",
   productionApproved: false,
-  reason: "La clôture globale A02 à A08 n’est pas vérifiée : A02, A03, A04, A07 et A08 restent ouvertes, et les risques résiduels R01, R02, R06, R08 et R10 restent élevés.",
+  reason: "La clôture globale A02 à A08 n’est pas vérifiée : A02, A03, A04, A07 et A08 restent ouvertes, et les risques résiduels R01, R06, R08 et R10 restent élevés.",
   priorConsultationRule: "Les mesures encore réalisables doivent être achevées avant toute production. Si un risque résiduel élevé subsiste ensuite, ou si le responsable décide qu’il ne peut pas le réduire, il doit consulter la CNIL préalablement au traitement concerné.",
 });

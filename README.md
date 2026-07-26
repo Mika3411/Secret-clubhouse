@@ -11,6 +11,15 @@ npm ci
 npm run dev
 ```
 
+Contrôles statiques locaux :
+
+```bash
+npm run lint
+npm run typecheck
+```
+
+Le lint couvre les sources React, Node et partagées. Le contrôle TypeScript reste non destructif : `tsconfig.typecheck.json` applique `strict` et `checkJs` à un premier ensemble de modules JavaScript/JSDoc, à étendre progressivement sans convertir les fichiers existants.
+
 Vérifier la version de production :
 
 ```bash
@@ -38,14 +47,17 @@ Documentation officielle : [Blueprints Render](https://render.com/docs/infrastru
 ## Sécurité des données et des sessions
 
 - L’API chiffre le texte des messages, le nom et le type des médias, leurs octets, ainsi que les offres, réponses et candidats ICE WebRTC avant l’écriture dans PostgreSQL. Les enveloppes AES-256-GCM sont versionnées, authentifient leur contexte et portent un identifiant de clé pour permettre la rotation. Le service Render déchiffre le contenu seulement après avoir autorisé le participant : il s’agit d’un chiffrement applicatif, pas d’un chiffrement de bout en bout.
-- En production web, le jeton opaque n’est jamais rendu accessible à JavaScript : il reste dans le cookie `__Host-sc_session`, `Secure`, `HttpOnly` et `SameSite=Lax`. Le client natif conserve son secret Bearer uniquement dans la mémoire du processus applicatif : il survit aux transitions arrière-plan/premier plan et à une recréation de la WebView dans ce même processus, puis disparaît lorsque le processus se termine. Il n’entre ni dans le stockage JavaScript, ni dans les préférences natives, fichiers, journaux ou sauvegardes. Les requêtes web incluent le cookie sans Bearer, les requêtes natives omettent les cookies et présentent l’en-tête client natif avec le Bearer, et le serveur vérifie cette correspondance avec le `client_type` enregistré. PostgreSQL ne conserve que le hash SHA-256 révocable du jeton ; la validité par défaut et celle du Blueprint sont de 12 heures.
+- En production web, le jeton opaque n’est jamais rendu accessible à JavaScript : il reste dans le cookie `__Host-sc_session`, `Secure`, `HttpOnly` et `SameSite=Lax`. Sur iOS, le secret Bearer natif est conservé dans un élément Keychain `ThisDeviceOnly` non synchronisable et non migrable vers un autre appareil, mais restaurable sur le même appareil depuis sa sauvegarde ; sur Android, il est chiffré par AES-GCM avec une clé non exportable de l’Android Keystore avant son écriture dans les préférences privées de l’application, dont la sauvegarde est désactivée. Le secret peut ainsi restaurer la session après une fermeture complète de l’application sans entrer dans le stockage JavaScript, les journaux ou PostgreSQL en clair. Une coupure réseau ne l’efface pas. Les requêtes web incluent le cookie sans Bearer, les requêtes natives omettent les cookies et présentent l’en-tête client natif avec le Bearer, et le serveur vérifie cette correspondance avec le `client_type` enregistré. PostgreSQL conserve le hash SHA-256 révocable du jeton et les métadonnées minimales nécessaires à la liste parentale des appareils ; le hash et l’identifiant d’installation ne sont jamais affichés. La session n’a plus de coupure fixe après 12 heures : en production, chaque activité authentifiée renouvelle une fenêtre glissante de 30 jours, au plus une fois par jour ; une révocation ou une déconnexion manuelle reste immédiate.
+- L’espace parent permet de révoquer une autre session précise ou toutes les autres sessions. Un changement du mot de passe parent conserve la session courante et révoque toutes les autres dans la même transaction ; un changement du mot de passe enfant révoque toutes les sessions de l’enfant.
 - `DATABASE_TRANSPORT=render-private` impose l’URL PostgreSQL interne de Render. Sur un runtime Render identifié par `RENDER=true`, cette URL privée sans domaine peut aussi être reconnue automatiquement lorsque la variable manque sur un service existant. Toute autre base doit utiliser `DATABASE_TRANSPORT=tls`, la vérification du certificat (`rejectUnauthorized: true`) et, si nécessaire, une CA de confiance ; les paramètres de l’URL ne peuvent pas désactiver cette politique.
 - Les charges Web Push, APNs et FCM contiennent des identifiants opaques de routage et des libellés génériques. Elles n’incluent jamais le texte d’un message, le nom d’un fichier, le nom d’un enfant ou celui d’un contact ; un appel entrant affiche le libellé neutre « Contact autorisé ».
 - Le gestionnaire central n’expose que les erreurs 4xx explicitement déclarées comme publiques. Une erreur inattendue devient `Erreur interne.` ; chaque réponse porte `X-Request-ID`, et le JSON du gestionnaire d’erreurs répète cet identifiant dans `requestId` pour permettre la corrélation avec les journaux serveur sans divulguer de détail interne.
 
-### Tableau de bord administrateur
+### Administration de la plateforme
 
-La route `/administration` présente uniquement des agrégats : nombre de familles, utilisateurs actifs sur 7 et 30 jours, retour des familles après 30 jours, sessions ouvertes et volumes d’activités. Elle ne renvoie aucun nom, identifiant de contact, conversation, message ou média. Les comptes administrateurs et leur propre famille sont exclus des calculs.
+La route `/administration` sépare la vue d’ensemble agrégée d’un annuaire paginé de support. La vue d’ensemble présente le nombre de familles, les utilisateurs actifs sur 7 et 30 jours, le retour des familles après 30 jours, les sessions ouvertes et les volumes d’activités ; les comptes administrateurs et leur propre famille restent exclus de ces calculs.
+
+L’onglet « Familles et comptes » montre uniquement les informations nécessaires à la gestion des accès : famille, parents et co-parents, enfants, identifiants privés, état et dates d’activité. Il permet de suspendre ou réactiver un compte non administrateur ; la suspension révoque ses sessions. Aucun mot de passe, conversation, message, média, contact extérieur, jeton push ou secret d’authentification n’est sélectionné. Les lectures et actions sont journalisées.
 
 L’accès réutilise une véritable session parent et exige une nomination explicite. Aucun compte ni mot de passe administrateur par défaut n’existe :
 

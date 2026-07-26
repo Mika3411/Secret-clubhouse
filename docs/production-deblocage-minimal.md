@@ -52,7 +52,7 @@ La checklist `docs/a08-checklist-configuration-production-2026-07-23.md` doit co
 - service, PostgreSQL et Cron réellement à Frankfurt ;
 - déploiement réussi de la version évaluée ;
 - transport PostgreSQL privé ;
-- session mesurée à 12 heures ;
+- session glissante mesurée à 30 jours, avec renouvellement après activité et révocation immédiate ; fermeture/réouverture native et coupure/rétablissement réseau vérifiés sur Android et iOS, coffre local effacé après déconnexion ou révocation ;
 - chiffrement applicatif et démarrage fermé ;
 - quatre drapeaux sensibles à `false` et routes correspondantes refusées ;
 - absence de distribution du fichier de débogage ;

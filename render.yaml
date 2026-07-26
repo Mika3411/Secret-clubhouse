@@ -22,7 +22,7 @@ services:
       - key: CONTENT_ENCRYPTION_KEY
         generateValue: true
       - key: AUTH_SESSION_TTL_SECONDS
-        value: "43200"
+        value: "2592000"
       - key: NODE_ENV
         value: production
       - key: VITE_PUBLIC_APP_URL

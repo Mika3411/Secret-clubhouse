@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 
 export const PRODUCTION_SESSION_COOKIE = "__Host-sc_session";
 export const DEVELOPMENT_SESSION_COOKIE = "sc_session";
-export const DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60;
+export const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const DEFAULT_SESSION_RENEWAL_INTERVAL_SECONDS = 24 * 60 * 60;
+export const DEFAULT_SESSION_ACTIVITY_INTERVAL_SECONDS = 15 * 60;
 export const MIN_SESSION_TTL_SECONDS = 5 * 60;
 export const MAX_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -13,12 +15,19 @@ export const AUTH_SESSIONS_SCHEMA_SQL = `
     token_hash text not null unique check (char_length(token_hash)=64),
     client_type text not null check (client_type in ('web','native')),
     device_id text,
+    device_label text,
     created_at timestamptz not null default now(),
+    last_used_at timestamptz not null default now(),
     expires_at timestamptz not null,
     revoked_at timestamptz,
     revoked_reason text,
     check (expires_at>created_at)
   );
+  alter table auth_sessions add column if not exists device_label text;
+  alter table auth_sessions add column if not exists last_used_at timestamptz;
+  update auth_sessions set last_used_at=created_at where last_used_at is null;
+  alter table auth_sessions alter column last_used_at set default now();
+  alter table auth_sessions alter column last_used_at set not null;
   create index if not exists auth_sessions_account_active_idx
     on auth_sessions(account_id,expires_at desc)
     where revoked_at is null;
@@ -33,9 +42,9 @@ const SESSION_CLIENT_TYPES = new Set(["web", "native"]);
 const TOKEN_COLLISION_RETRIES = 3;
 
 const insertSessionSql = `
-  insert into auth_sessions(account_id,token_hash,client_type,device_id,expires_at)
-  values($1,$2,$3,$4,$5)
-  returning id,account_id,client_type,device_id,created_at,expires_at,revoked_at
+  insert into auth_sessions(account_id,token_hash,client_type,device_id,device_label,expires_at)
+  values($1,$2,$3,$4,$5,$6)
+  returning id,account_id,client_type,device_id,device_label,created_at,last_used_at,expires_at,revoked_at
 `;
 
 const findSessionSql = `
@@ -44,7 +53,9 @@ const findSessionSql = `
     session.account_id,
     session.client_type,
     session.device_id,
+    session.device_label,
     session.created_at,
+    session.last_used_at,
     session.expires_at,
     session.revoked_at,
     account.role
@@ -53,6 +64,7 @@ const findSessionSql = `
   where session.token_hash=$1
     and session.revoked_at is null
     and session.expires_at>$2
+    and account.admin_suspended_at is null
   limit 1
 `;
 
@@ -61,12 +73,70 @@ const revokeSessionSql = `
   set revoked_at=coalesce(revoked_at,$2),
       revoked_reason=coalesce(revoked_reason,$3)
   where token_hash=$1
-  returning id,account_id,client_type,device_id,created_at,expires_at,revoked_at
+  returning id,account_id,client_type,device_id,device_label,created_at,last_used_at,expires_at,revoked_at
+`;
+
+const renewSessionSql = `
+  update auth_sessions
+  set expires_at=$3,
+      last_used_at=$2
+  where token_hash=$1
+    and revoked_at is null
+    and expires_at>$2
+  returning id,account_id,client_type,device_id,device_label,created_at,last_used_at,expires_at,revoked_at
+`;
+
+const touchSessionSql = `
+  update auth_sessions
+  set last_used_at=$2
+  where token_hash=$1
+    and revoked_at is null
+    and expires_at>$2
+  returning id,account_id,client_type,device_id,device_label,created_at,last_used_at,expires_at,revoked_at
+`;
+
+const listAccountSessionsSql = `
+  select id,account_id,client_type,device_label,created_at,last_used_at,expires_at
+  from auth_sessions
+  where account_id=$1
+    and revoked_at is null
+    and expires_at>$2
+  order by (id=$3::uuid) desc,last_used_at desc,created_at desc
+`;
+
+const revokeAccountSessionByIdSql = `
+  update auth_sessions
+  set revoked_at=$4,
+      revoked_reason=$5
+  where id=$1
+    and account_id=$2
+    and id<>$3
+    and revoked_at is null
+    and expires_at>$4
+`;
+
+const revokeOtherAccountSessionsSql = `
+  update auth_sessions
+  set revoked_at=$3,
+      revoked_reason=$4
+  where account_id=$1
+    and id<>$2
+    and revoked_at is null
+    and expires_at>$3
+`;
+
+const revokeAllAccountSessionsSql = `
+  update auth_sessions
+  set revoked_at=$2,
+      revoked_reason=$3
+  where account_id=$1
+    and revoked_at is null
+    and expires_at>$2
 `;
 
 /**
  * Invalid configuration falls back to the default, while valid values are
- * clamped so an environment mistake cannot create near-eternal sessions.
+ * clamped so an environment mistake cannot create near-eternal abandoned sessions.
  */
 export function normalizeSessionTtlSeconds(value, fallback = DEFAULT_SESSION_TTL_SECONDS) {
   const fallbackNumber = Number(fallback);
@@ -197,6 +267,7 @@ export async function createAuthSession(executor, options = {}) {
     throw new TypeError("clientType doit être web ou native.");
   }
   const deviceId = normalizeDeviceId(options.deviceId);
+  const deviceLabel = normalizeDeviceLabel(options.deviceLabel, clientType);
   const now = normalizeDate(options.now ?? new Date(), "now");
   const ttlSeconds = normalizeSessionTtlSeconds(
     options.ttlSeconds ?? process.env.AUTH_SESSION_TTL_SECONDS,
@@ -213,13 +284,16 @@ export async function createAuthSession(executor, options = {}) {
         tokenHash,
         clientType,
         deviceId,
+        deviceLabel,
         expiresAt,
       ]);
       const row = result.rows?.[0] ?? {
         account_id: accountId,
         client_type: clientType,
         device_id: deviceId,
+        device_label: deviceLabel,
         created_at: now,
+        last_used_at: now,
         expires_at: expiresAt,
         revoked_at: null,
       };
@@ -256,16 +330,140 @@ export async function findAuthSession(executor, token, options = {}) {
   return result.rows?.[0] ? normalizeSessionRow(result.rows[0]) : null;
 }
 
+export async function renewAuthSession(executor, token, options = {}) {
+  assertExecutor(executor);
+  if (!isSessionToken(token)) return null;
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const ttlSeconds = normalizeSessionTtlSeconds(
+    options.ttlSeconds ?? process.env.AUTH_SESSION_TTL_SECONDS,
+  );
+  const expiresAt = new Date(now.getTime() + ttlSeconds * 1000);
+  const result = await executor.query(renewSessionSql, [
+    hashSessionToken(token),
+    now,
+    expiresAt,
+  ]);
+  return result.rows?.[0] ? normalizeSessionRow(result.rows[0]) : null;
+}
+
+export async function touchAuthSession(executor, token, options = {}) {
+  assertExecutor(executor);
+  if (!isSessionToken(token)) return null;
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const result = await executor.query(touchSessionSql, [
+    hashSessionToken(token),
+    now,
+  ]);
+  return result.rows?.[0] ? normalizeSessionRow(result.rows[0]) : null;
+}
+
+export async function listAccountAuthSessions(executor, options = {}) {
+  assertExecutor(executor);
+  const accountId = normalizeRequiredId(options.accountId, "accountId");
+  const currentSessionId = normalizeRequiredId(options.currentSessionId, "currentSessionId");
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const result = await executor.query(listAccountSessionsSql, [
+    accountId,
+    now,
+    currentSessionId,
+  ]);
+  return (result.rows ?? []).map((row) => {
+    const session = normalizeSessionRow(row);
+    return {
+      id: session.id,
+      clientType: session.clientType,
+      deviceLabel: session.deviceLabel,
+      createdAt: session.createdAt,
+      lastUsedAt: session.lastUsedAt,
+      expiresAt: session.expiresAt,
+      current: session.id === currentSessionId,
+    };
+  });
+}
+
+export async function revokeAccountAuthSessionById(executor, options = {}) {
+  assertExecutor(executor);
+  const accountId = normalizeRequiredId(options.accountId, "accountId");
+  const sessionId = normalizeRequiredId(options.sessionId, "sessionId");
+  const currentSessionId = normalizeRequiredId(options.currentSessionId, "currentSessionId");
+  if (sessionId === currentSessionId) return false;
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const reason = normalizeRevocationReason(options.reason ?? "parent_device_revocation");
+  const result = await executor.query(revokeAccountSessionByIdSql, [
+    sessionId,
+    accountId,
+    currentSessionId,
+    now,
+    reason,
+  ]);
+  return Number(result.rowCount ?? 0) > 0;
+}
+
+export async function revokeOtherAccountAuthSessions(executor, options = {}) {
+  assertExecutor(executor);
+  const accountId = normalizeRequiredId(options.accountId, "accountId");
+  const currentSessionId = normalizeRequiredId(options.currentSessionId, "currentSessionId");
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const reason = normalizeRevocationReason(options.reason ?? "parent_other_devices_revocation");
+  const result = await executor.query(revokeOtherAccountSessionsSql, [
+    accountId,
+    currentSessionId,
+    now,
+    reason,
+  ]);
+  return Number(result.rowCount ?? 0);
+}
+
+export async function revokeAllAccountAuthSessions(executor, options = {}) {
+  assertExecutor(executor);
+  const accountId = normalizeRequiredId(options.accountId, "accountId");
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const reason = normalizeRevocationReason(options.reason ?? "account_security_change");
+  const result = await executor.query(revokeAllAccountSessionsSql, [
+    accountId,
+    now,
+    reason,
+  ]);
+  return Number(result.rowCount ?? 0);
+}
+
 export async function authenticateSessionRequest(executor, source, options = {}) {
   const credential = extractSessionCredential(source, options);
   if (!credential) return null;
-  const session = await findAuthSession(executor, credential.token, options);
+  let session = await findAuthSession(executor, credential.token, options);
   if (!session) return null;
   const transportClientType = credential.transport === "cookie" ? "web" : "native";
   const expectedClientType = normalizeExpectedClientType(options.expectedClientType);
   if (session.clientType !== transportClientType
     || (expectedClientType && session.clientType !== expectedClientType)) {
     return null;
+  }
+  const now = normalizeDate(options.now ?? new Date(), "now");
+  const ttlSeconds = normalizeSessionTtlSeconds(
+    options.ttlSeconds ?? process.env.AUTH_SESSION_TTL_SECONDS,
+  );
+  const renewalIntervalSeconds = normalizeRenewalIntervalSeconds(
+    options.renewalIntervalSeconds,
+    ttlSeconds,
+  );
+  if (options.renew !== false
+    && shouldRenewSession(session, now, ttlSeconds, renewalIntervalSeconds)) {
+    const renewedSession = await renewAuthSession(executor, credential.token, {
+      now,
+      ttlSeconds,
+    });
+    if (!renewedSession) return null;
+    session = { ...session, ...renewedSession };
+    if (credential.transport === "cookie" && options.response) {
+      setSessionCookie(options.response, credential.token, {
+        production: options.production,
+        ttlSeconds,
+      });
+    }
+  } else if (options.touch !== false && shouldTouchSession(session, now, options.activityIntervalSeconds)) {
+    const touchedSession = await touchAuthSession(executor, credential.token, { now });
+    if (!touchedSession) return null;
+    session = { ...session, ...touchedSession };
   }
   return { ...session, transport: credential.transport };
 }
@@ -306,7 +504,9 @@ function normalizeSessionRow(row) {
     role: row.role ?? null,
     clientType: row.client_type,
     deviceId: row.device_id ?? null,
+    deviceLabel: normalizeDeviceLabel(row.device_label, row.client_type),
     createdAt: row.created_at ?? null,
+    lastUsedAt: row.last_used_at ?? row.created_at ?? null,
     expiresAt: row.expires_at ?? null,
     revokedAt: row.revoked_at ?? null,
   };
@@ -319,6 +519,20 @@ function normalizeDeviceId(value) {
   return normalized;
 }
 
+function normalizeDeviceLabel(value, clientType = "web") {
+  const fallback = clientType === "native" ? "Application mobile" : "Navigateur web";
+  if (value === undefined || value === null || value === "") return fallback;
+  const normalized = String(value).replace(/\s+/gu, " ").trim();
+  if (!normalized) return fallback;
+  return normalized.slice(0, 80);
+}
+
+function normalizeRequiredId(value, label) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) throw new TypeError(`${label} est requis.`);
+  return normalized;
+}
+
 function normalizeExpectedClientType(value) {
   if (value === undefined || value === null || value === "") return null;
   const normalized = String(value).trim().toLowerCase();
@@ -326,6 +540,31 @@ function normalizeExpectedClientType(value) {
     throw new TypeError("expectedClientType doit être web ou native.");
   }
   return normalized;
+}
+
+function normalizeRenewalIntervalSeconds(value, ttlSeconds) {
+  const maximum = Math.max(1, ttlSeconds - 1);
+  const fallback = Math.min(DEFAULT_SESSION_RENEWAL_INTERVAL_SECONDS, maximum);
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(maximum, Math.max(1, Math.trunc(parsed)));
+}
+
+function shouldRenewSession(session, now, ttlSeconds, renewalIntervalSeconds) {
+  const expiresAt = normalizeDate(session.expiresAt, "expiresAt");
+  const remainingMilliseconds = expiresAt.getTime() - now.getTime();
+  const renewalThresholdMilliseconds = (ttlSeconds - renewalIntervalSeconds) * 1000;
+  return remainingMilliseconds <= renewalThresholdMilliseconds;
+}
+
+function shouldTouchSession(session, now, intervalSeconds = DEFAULT_SESSION_ACTIVITY_INTERVAL_SECONDS) {
+  const lastUsedAt = normalizeDate(session.lastUsedAt ?? session.createdAt, "lastUsedAt");
+  const parsedInterval = Number(intervalSeconds);
+  const safeInterval = Number.isFinite(parsedInterval) && parsedInterval > 0
+    ? Math.trunc(parsedInterval)
+    : DEFAULT_SESSION_ACTIVITY_INTERVAL_SECONDS;
+  return now.getTime() - lastUsedAt.getTime() >= safeInterval * 1000;
 }
 
 function normalizeRevocationReason(value) {

@@ -1,6 +1,16 @@
 const enabledValues = new Set(["1", "true", "yes", "on"]);
 const disabledValues = new Set(["0", "false", "no", "off"]);
 
+/**
+ * @typedef {{ rtc: boolean, webPush: boolean, nativePush: boolean, privacyAdministration: boolean }} ProductionFeatures
+ */
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} key
+ * @param {{ productionDefault?: boolean, nonProductionDefault?: boolean }} [options]
+ * @returns {boolean}
+ */
 export function resolveFeatureFlag(env, key, {
   productionDefault = false,
   nonProductionDefault = true,
@@ -12,6 +22,10 @@ export function resolveFeatureFlag(env, key, {
   throw new Error(`${key} doit être un booléen explicite (true ou false).`);
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {Readonly<ProductionFeatures>}
+ */
 export function resolveProductionFeatures(env = process.env) {
   return Object.freeze({
     rtc: resolveFeatureFlag(env, "RTC_ENABLED"),
@@ -21,17 +35,27 @@ export function resolveProductionFeatures(env = process.env) {
   });
 }
 
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
 function hasConfiguredTurnUrl(value) {
   return String(value ?? "")
     .split(",")
     .some((url) => /^(?:turn|turns):/u.test(url.trim()));
 }
 
+/**
+ * @param {unknown} value
+ * @returns {boolean}
+ */
 function hasConfiguredTurnInJson(value) {
   if (!String(value ?? "").trim()) return false;
   try {
-    const servers = JSON.parse(value);
+    /** @type {Array<{ urls?: unknown, username?: unknown, credential?: unknown }>} */
+    const servers = JSON.parse(String(value));
     return Array.isArray(servers) && servers.some((server) => {
+      /** @type {unknown[]} */
       const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls];
       return urls.some((url) => /^(?:turn|turns):/u.test(String(url ?? "").trim()))
         && Boolean(String(server?.username ?? "").trim())
@@ -42,6 +66,10 @@ function hasConfiguredTurnInJson(value) {
   }
 }
 
+/**
+ * @param {Readonly<ProductionFeatures> | null | undefined} features
+ * @param {NodeJS.ProcessEnv} [env]
+ */
 export function assertProductionFeatureConfiguration(features, env = process.env) {
   if (env.NODE_ENV !== "production" || features?.rtc !== true) return;
 

@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.18 conserve A07 ouverte pour les essais réels et le binaire public", () => {
-  assert.equal(aipdVersion, "1.18");
+test("la réévaluation 1.22 conserve A07 ouverte et tient compte de la révocation parentale", () => {
+  assert.equal(aipdVersion, "1.22");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -152,7 +152,7 @@ test("la réévaluation 1.18 conserve A07 ouverte pour les essais réels et le b
   );
   assert.deepEqual(likelihoodByRisk, {
     R01: 3,
-    R02: 3,
+    R02: 2,
     R03: 2,
     R04: 2,
     R05: 3,
@@ -166,7 +166,7 @@ test("la réévaluation 1.18 conserve A07 ouverte pour les essais réels et le b
   const highRiskIds = aipdRisks
     .filter(({ residual }) => aipdRiskLevel(residual) === "high")
     .map(({ id }) => id);
-  assert.deepEqual(highRiskIds, ["R01", "R02", "R06", "R08", "R10"]);
+  assert.deepEqual(highRiskIds, ["R01", "R06", "R08", "R10"]);
   assert.match(aipdDecision.reason, /A02, A03, A04, A07 et A08 restent ouvertes/i);
 });
 
@@ -179,9 +179,30 @@ test("A07 est rouverte par les fournisseurs actifs et l’APK public", () => {
   assert.ok(action?.evidence?.includes("docs/d2-cloudflare-turn-review-2026-07-24.md"));
   assert.ok(action?.evidence?.includes("docs/d3-web-push-review-2026-07-24.md"));
   assert.ok(action?.evidence?.includes("docs/d4-d5-native-push-review-2026-07-24.md"));
-  assert.match(action?.scopeRestriction ?? "", /activation[\s\S]+rouvrent A07/i);
-  assert.match(action?.scopeRestriction ?? "", /RTC, Web Push, notifications natives ni binaire public/i);
+  assert.ok(action?.evidence?.includes("server/api-client-session.test.js"));
+  assert.ok(action?.evidence?.includes("android/app/src/main/java/fr/secretclubhouse/app/auth/NativeSessionMemoryPlugin.java"));
+  assert.ok(action?.evidence?.includes("ios/App/App/NativeSessionMemoryPlugin.swift"));
+  assert.match(action?.acceptance ?? "", /fermeture\/réouverture[\s\S]+révocation distante[\s\S]+terminal déverrouillé perdu ou volé/i);
+  assert.match(action?.scopeRestriction ?? "", /activation[\s\S]+maintiennent A07 ouverte/i);
+  assert.match(action?.scopeRestriction ?? "", /RTC, Web Push, notifications natives, binaire public/i);
   assert.match(action?.scopeRestriction ?? "", /distribution de l’APK/i);
+  assert.match(action?.scopeRestriction ?? "", /coffre de session natif persistant/i);
+});
+
+test("l’AIPD 1.22 décrit sans surpromesse les sauvegardes et la révocation du jeton mobile", () => {
+  const dossier = fs.readFileSync(dossierPath, "utf8");
+  const risk = aipdRisks.find(({ id }) => id === "R02");
+
+  assert.match(dossier, /restauré sur le même appareil depuis sa sauvegarde/i);
+  assert.match(dossier, /aucun verrou biométrique ou code local propre à Secret Clubhouse/i);
+  assert.match(dossier, /aucun mot de passe, profil, message ou média n’est mis en cache/i);
+  assert.match(dossier, /Android Keystore/i);
+  assert.match(dossier, /Keychain iOS/i);
+  assert.match(dossier, /A07 reste donc ouverte/i);
+  assert.ok(risk?.threats.some((threat) => /appareil déverrouillé/i.test(threat)));
+  assert.ok(risk?.existingMeasures.some((measure) => /restauration possible sur le même appareil/i.test(measure)));
+  assert.ok(risk?.existingMeasures.some((measure) => /toutes les autres sessions/i.test(measure)));
+  assert.equal(risk?.residual.likelihood, 2);
 });
 
 test("A04 reste ouverte sans contrôle réel des services et secrets actifs", () => {

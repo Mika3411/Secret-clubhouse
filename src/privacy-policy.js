@@ -36,11 +36,15 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       title: "Données techniques et de sécurité",
-      text: "Session web placée dans un cookie sécurisé, HttpOnly et inaccessible à JavaScript ; session native temporaire limitée à la session de l’application ; seul un hash de session révocable est conservé dans PostgreSQL. S’ajoutent l’adresse e-mail parent mémorisée localement, les signaux récents de présence au premier plan ou de passage en arrière-plan, l’indicateur de saisie, les abonnements de notification, le type d’appareil et le hash irréversible de l’adresse IP utilisé pour limiter les tentatives de connexion.",
+      text: "Session web placée dans un cookie sécurisé, HttpOnly et inaccessible à JavaScript ; session native conservée après fermeture dans le coffre sécurisé lié à l’appareil ; seul un hash de session révocable est conservé dans PostgreSQL. Pour permettre au parent d’identifier et de révoquer ses connexions, PostgreSQL conserve aussi un identifiant d’installation opaque non affiché, un libellé général tel que « Application Android » ou « Navigateur web », la date de connexion et la dernière activité. S’ajoutent l’adresse e-mail parent mémorisée localement, les signaux récents de présence au premier plan ou de passage en arrière-plan, l’indicateur de saisie, les abonnements de notification, le type d’appareil et le hash irréversible de l’adresse IP utilisé pour limiter les tentatives de connexion.",
     },
     {
       title: "Statistiques agrégées du service",
-      text: "Le nombre de familles et de comptes, les dates de création et de dernière activité, les ouvertures de session et les volumes d’actions déjà horodatées sont regroupés pour mesurer l’activité sur 7 et 30 jours et le retour des familles après 30 jours. Le tableau d’administration ne contient aucun nom, identifiant, contact, message, média ni détail individuel.",
+      text: "Le nombre de familles et de comptes, les dates de création et de dernière activité, les ouvertures de session et les volumes d’actions déjà horodatées sont regroupés pour mesurer l’activité sur 7 et 30 jours et le retour des familles après 30 jours. La vue statistique ne contient aucun nom, identifiant, contact, message, média ni détail individuel.",
+    },
+    {
+      title: "Administration des comptes et support",
+      text: "Un administrateur nominativement autorisé peut rechercher une famille et voir les seules informations nécessaires à la gestion des accès : nom de famille, noms et e-mails des parents, rôles familiaux, noms d’usage, âges et noms d’utilisateur privés des enfants, identifiants de contact opaques, état des comptes, dates de création et de dernière activité, limitation éventuelle et motif interne de suspension. Il peut suspendre ou réactiver un compte non administrateur ; une suspension ferme immédiatement ses sessions. Les mots de passe, conversations, messages, médias, contacts extérieurs, jetons push et secrets d’authentification ne sont jamais affichés dans cet espace.",
     },
     {
       title: "Caméra et microphone",
@@ -63,7 +67,7 @@ export const parentPrivacyPolicy = Object.freeze({
     "Chaque message, média ou appel est accessible uniquement à son auteur, aux participants autorisés de la conversation et aux systèmes techniques nécessaires à son acheminement.",
     "Les parents et co-parents autorisés accèdent aux profils, contacts, réglages et alertes de sécurité de leur famille. Ils ne voient pas dans le tableau de bord le contenu des conversations de leurs enfants avec leurs amis.",
     "L’éditeur et les personnes strictement habilitées peuvent intervenir lorsque cela est nécessaire à la sécurité, au support ou à l’exercice d’un droit.",
-    "Un administrateur nominativement autorisé peut consulter des nombres agrégés sur les familles, l’activité et la fidélité du service. Ses accès sont journalisés ; son propre compte et sa famille sont exclus des calculs.",
+    "Un administrateur nominativement autorisé peut consulter des nombres agrégés et, pour la sécurité ou le support, les informations de compte strictement listées ci-dessus. Les consultations individuelles et les suspensions sont journalisées, les comptes administrateurs y sont protégés et les contenus de communication restent exclus. Son propre compte et sa famille sont exclus des calculs statistiques.",
     "Les autorités administratives ou judiciaires reçoivent uniquement les données dont la communication est légalement exigée.",
     "Aucune donnée n’est vendue, louée, utilisée pour de la publicité ciblée ou communiquée à un annuaire public.",
   ],
@@ -138,7 +142,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       data: "Sécurité et limitation des connexions",
-      duration: "Une session expire après 12 heures en production ; son hash est refusé immédiatement à l’expiration ou à la révocation, puis supprimé par la purge quotidienne (une session révoquée devient supprimable après 24 heures). Les compteurs de limitation sont supprimés au plus tard 48 heures après leur dernière mise à jour ; le hash d’identité est aussi effacé après une connexion réussie. Les événements du journal de sécurité sont supprimés après 365 jours et ne contiennent ni adresse e-mail ni adresse IP en clair.",
+      duration: "Il n’y a plus de déconnexion automatique fixe après 12 heures et une coupure Internet ne supprime pas la session. Sur l’application mobile, le jeton opaque est conservé après fermeture dans le coffre sécurisé lié à l’appareil, sans stockage JavaScript : l’élément Keychain iOS ne se synchronise pas et ne migre pas vers un autre appareil, mais peut être restauré sur le même appareil depuis sa sauvegarde ; Android utilise un chiffrement par l’Android Keystore et exclut l’application des sauvegardes. En production, une activité authentifiée renouvelle au plus une fois par jour une fenêtre glissante de 30 jours et actualise périodiquement sa dernière activité. Une session sans activité pendant 30 jours expire ; son hash est alors refusé et supprimé par la purge quotidienne. Le parent peut révoquer une session précise ou toutes les autres sessions depuis son espace protégé. Changer le mot de passe parent ferme toutes les autres sessions ; changer le mot de passe d’un enfant ferme toutes les sessions de cet enfant. Une déconnexion manuelle ou une révocation reste immédiate et efface la copie locale au prochain échange authentifié, puis une session révoquée devient supprimable après 24 heures. Les compteurs de limitation sont supprimés au plus tard 48 heures après leur dernière mise à jour ; le hash d’identité est aussi effacé après une connexion réussie. Les événements du journal de sécurité sont supprimés après 365 jours et ne contiennent ni adresse e-mail ni adresse IP en clair.",
     },
     {
       data: "Notifications",
@@ -190,8 +194,8 @@ export const childPrivacyCards = Object.freeze([
   },
   {
     icon: "person",
-    title: "Des nombres, jamais ton histoire",
-    text: "La personne qui gère l’application peut voir combien de familles reviennent et combien de sessions ou d’activités ont eu lieu au total. Elle ne voit pas ton nom, ton ID, tes contacts ni tes messages dans ces statistiques.",
+    title: "Pour aider avec ton compte",
+    text: "La personne autorisée qui gère l’app peut voir ton pseudo, ton âge, ton identifiant et si ton compte fonctionne pour t’aider ou protéger le service. Elle peut bloquer puis rouvrir le compte. Elle ne voit ni ton mot de passe ni tes discussions ici.",
   },
   {
     icon: "sparkle",
@@ -206,7 +210,7 @@ export const childPrivacyCards = Object.freeze([
   {
     icon: "eye",
     title: "Qui peut voir quoi ?",
-    text: "La personne approuvée voit ce que tu lui envoies. Ton parent voit tes contacts, tes protections et les alertes, mais pas le contenu de tes discussions avec tes amis dans son tableau de bord.",
+    text: "La personne approuvée voit ce que tu lui envoies. Ton parent voit tes contacts, protections et alertes, mais pas tes discussions avec tes amis. L’administrateur voit seulement les informations utiles pour aider avec ton compte, jamais tes discussions ici.",
   },
   {
     icon: "globe",

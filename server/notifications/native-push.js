@@ -474,7 +474,11 @@ export function createNativePushService({
     const response = await sendHttp2Request(http2Connect, request, requestTimeoutMs);
     if (response.statusCode === 200) return response;
     let body = {};
-    try { body = JSON.parse(response.body || "{}"); } catch {}
+    try {
+      body = JSON.parse(response.body || "{}");
+    } catch {
+      // Une réponse APNs non JSON est traitée par le statut HTTP générique ci-dessous.
+    }
     if (response.statusCode === 403 && body.reason === "ExpiredProviderToken" && retry) {
       apnsProviderToken = null;
       return sendApns(tokenRow, payload, false);
@@ -539,6 +543,7 @@ export function createNativePushService({
        join account_consent_preferences consent
          on consent.subject_account_id=account.id and consent.purpose='notifications'
        where token.enabled=true and token.expires_at>now() and token.account_id=any($1::uuid[])
+         and account.admin_suspended_at is null
          and consent.subject_agreed_at is not null
          and (account.role<>'child' or account.age>=15 or consent.guardian_agreed_at is not null)`,
       [uniqueIds],
@@ -556,6 +561,7 @@ export function createNativePushService({
          on consent.subject_account_id=account.id and consent.purpose='notifications'
        where token.enabled=true and token.expires_at>now()
          and member.conversation_id=$1 and member.account_id<>$2
+         and account.admin_suspended_at is null
          and consent.subject_agreed_at is not null
          and (account.role<>'child' or account.age>=15 or consent.guardian_agreed_at is not null)`,
       [conversationId, senderId],

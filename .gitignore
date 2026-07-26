@@ -1,5 +1,9 @@
 node_modules/
 dist/
+playwright-report/
+test-results/
+.design-audit/
+tmp/
 .npm-cache/
 .prototype-bootstrap/
 .vite-server*.log

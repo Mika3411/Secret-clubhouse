@@ -57,7 +57,7 @@ test("la présence distingue le premier plan, la veille joignable et la déconne
   });
 });
 
-test("un enfant en pause ou restreint reste inappelable même si son appareil est joignable", () => {
+test("un enfant en pause, restreint ou suspendu reste inappelable même si son appareil est joignable", () => {
   for (const row of [
     {
       role: "child",
@@ -72,6 +72,14 @@ test("un enfant en pause ou restreint reste inappelable même si son appareil es
       processing_restricted_at: new Date().toISOString(),
       connected: true,
       recently_online: false,
+      background_reachable: true,
+    },
+    {
+      role: "child",
+      status: "active",
+      admin_suspended_at: new Date().toISOString(),
+      connected: true,
+      recently_online: true,
       background_reachable: true,
     },
   ]) {

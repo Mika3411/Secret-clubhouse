@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const conversationsSource = await readFile(
-  new URL("../src/features/ConversationsSpace.jsx", import.meta.url),
+  new URL("../src/features/conversations/thread/useConversationBottom.js", import.meta.url),
   "utf8",
 );
 

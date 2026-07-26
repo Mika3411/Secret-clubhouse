@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 
 const testJwtSecret = "test-only-secret-with-more-than-thirty-two-characters";
 process.env.JWT_SECRET = testJwtSecret;
@@ -132,7 +131,7 @@ test("les routes applicatives protègent la connexion et la présence", async (t
           client_type: "native",
           device_id: null,
           created_at: new Date().toISOString(),
-          expires_at: params[4],
+          expires_at: params[5],
           revoked_at: null,
         }]);
       }
@@ -414,7 +413,7 @@ test("les routes applicatives protègent la connexion et la présence", async (t
           client_type: "web",
           device_id: null,
           created_at: new Date().toISOString(),
-          expires_at: params[4],
+          expires_at: params[5],
           revoked_at: null,
         }]);
       }
@@ -435,6 +434,18 @@ test("les routes applicatives protègent la connexion et la présence", async (t
       }
       if (statement.includes("select processing_restricted_at,processing_restriction_reason from accounts")) {
         return queryResult([{ processing_restricted_at: null, processing_restriction_reason: null }]);
+      }
+      if (statement.startsWith("update auth_sessions set expires_at=")) {
+        assert.equal(params[0], sessionHash);
+        return queryResult([{
+          id: sessionId,
+          account_id: accountId,
+          client_type: "web",
+          device_id: null,
+          created_at: new Date().toISOString(),
+          expires_at: params[2],
+          revoked_at: null,
+        }]);
       }
       if (statement.startsWith("update auth_sessions set revoked_at=")) {
         assert.equal(params[0], sessionHash);
@@ -490,7 +501,7 @@ test("les routes applicatives protègent la connexion et la présence", async (t
 
       assert.equal(logoutResponse.status, 204);
       assert.equal(revoked, true);
-      assert.match(clearedCookie, /^__Host-sc_session=;/);
+      assert.match(clearedCookie, /(?:^|, )__Host-sc_session=;/);
       assert.match(clearedCookie, /Max-Age=0/);
       assert.match(clearedCookie, /HttpOnly/);
       assert.match(clearedCookie, /SameSite=Lax/);

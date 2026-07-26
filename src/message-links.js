@@ -1,6 +1,14 @@
 const messageUrlPattern = /https?:\/\/[^\s<>"']+/giu;
 const trailingUrlPunctuationPattern = /[.,!?;:]+$/u;
 
+/**
+ * @typedef {{ type: "text", value: string } | { type: "link", value: string, href: string }} MessagePart
+ */
+
+/**
+ * @param {MessagePart[]} parts
+ * @param {string} value
+ */
 function appendText(parts, value) {
   if (!value) return;
   const previousPart = parts.at(-1);
@@ -11,8 +19,13 @@ function appendText(parts, value) {
   parts.push({ type: "text", value });
 }
 
+/**
+ * @param {unknown} value
+ * @returns {MessagePart[]}
+ */
 export function splitMessageLinks(value) {
   const text = String(value ?? "");
+  /** @type {MessagePart[]} */
   const parts = [];
   let cursor = 0;
 

@@ -34,14 +34,19 @@ import {
   createReadablePrivacyExport,
   listPrivacyRequests,
   privacyRequestTypes,
-  resolvePrivacySubject,
   serializePrivacyRequest,
 } from "./services/privacy-service.js";
 import { getAdminAnalytics } from "./services/admin-analytics-service.js";
 import {
+  listAdminFamilies,
+  normalizeAdminAccountStatusChange,
+  updateAdminAccountStatus,
+} from "./services/admin-family-service.js";
+import {
   getAccountAvailability,
   listAuthorizedContactAvailability,
 } from "./services/presence-service.js";
+import { createRtcIceServerProvider } from "./services/rtc-ice-service.js";
 import {
   assertNativePushConfiguration,
   createNativePushService,
@@ -51,12 +56,17 @@ import {
 } from "./notifications/native-push.js";
 import { PublicHttpError, safeHttpErrorResponse } from "./http-errors.js";
 import { privacySafeNotificationPayload } from "./notifications/notification-privacy.js";
+import { initializeWebPushNotifications } from "./notifications/web-push-initialization.js";
 import { retentionPolicy } from "./retention/policy.js";
 import { buildClubhouseState } from "./clubhouse-progress.js";
 import {
   authenticateSessionRequest,
   createAuthSession,
+  listAccountAuthSessions,
   logoutAuthSession,
+  revokeAccountAuthSessionById,
+  revokeAllAccountAuthSessions,
+  revokeOtherAccountAuthSessions,
   setSessionCookie,
 } from "./auth-sessions.js";
 import { getContentCipher } from "./encryption/content-encryption.js";
@@ -97,7 +107,6 @@ import {
 } from "./policies/platform-admin.js";
 import { defaultParentalTimeZone } from "../src/policy-time.js";
 import {
-  loadVapidKeyRing,
   sendNotificationWithVapidKeyRing,
 } from "./web-push-keyring.js";
 
@@ -124,120 +133,19 @@ let vapidPublicKey = "";
 let vapidKeyRing = null;
 let nativePushService = null;
 
-function parseRtcIceServers() {
-  if (process.env.RTC_ICE_SERVERS_JSON) {
-    try {
-      const parsed = JSON.parse(process.env.RTC_ICE_SERVERS_JSON);
-      if (Array.isArray(parsed) && parsed.length) return parsed;
-    } catch (error) {
-      console.warn(`Configuration RTC_ICE_SERVERS_JSON ignorée : ${error.message}.`);
-    }
-  }
-
-  const defaultStunUrls = process.env.NODE_ENV === "production" ? "" : "stun:stun.cloudflare.com:3478";
-  const stunUrls = String(process.env.RTC_STUN_URLS || defaultStunUrls)
-    .split(",")
-    .map((url) => url.trim())
-    .filter((url) => url.startsWith("stun:") || url.startsWith("stuns:"));
-  const turnUrls = String(process.env.RTC_TURN_URLS || "")
-    .split(",")
-    .map((url) => url.trim())
-    .filter((url) => url.startsWith("turn:") || url.startsWith("turns:"));
-  const iceServers = stunUrls.length ? [{ urls: stunUrls }] : [];
-  if (turnUrls.length && process.env.RTC_TURN_USERNAME && process.env.RTC_TURN_CREDENTIAL) {
-    iceServers.push({
-      urls: turnUrls,
-      username: process.env.RTC_TURN_USERNAME,
-      credential: process.env.RTC_TURN_CREDENTIAL,
-    });
-  }
-  return iceServers;
-}
-
-const fallbackRtcIceServers = parseRtcIceServers();
-let managedTurnCache = null;
-
-async function getRtcIceServers() {
-  if (!productionFeatures.rtc) return [];
-  const keyId = process.env.RTC_TURN_KEY_ID;
-  const apiToken = process.env.RTC_TURN_API_TOKEN;
-  if (!keyId || !apiToken) return fallbackRtcIceServers;
-  if (managedTurnCache?.expiresAt > Date.now()) return managedTurnCache.iceServers;
-
-  try {
-    const response = await fetch(
-      `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ ttl: 3600 }),
-      },
-    );
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const payload = await response.json();
-    if (!Array.isArray(payload.iceServers) || !payload.iceServers.length) throw new Error("réponse ICE vide");
-    managedTurnCache = {
-      iceServers: payload.iceServers,
-      expiresAt: Date.now() + 55 * 60 * 1000,
-    };
-    return managedTurnCache.iceServers;
-  } catch (error) {
-    console.warn(`Identifiants TURN temporaires indisponibles, repli STUN/TURN statique : ${error.message}.`);
-    managedTurnCache = {
-      iceServers: fallbackRtcIceServers,
-      expiresAt: Date.now() + 60 * 1000,
-    };
-    return managedTurnCache.iceServers;
-  }
-}
+const getRtcIceServers = createRtcIceServerProvider({
+  enabled: productionFeatures.rtc,
+});
 
 async function initializeWebPush() {
-  if (!productionFeatures.webPush) {
-    pushEnabled = false;
-    vapidPublicKey = "";
-    vapidKeyRing = null;
-    console.log("Web Push désactivé par WEB_PUSH_ENABLED.");
-    return;
-  }
-  let keys = process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY
-    ? { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY }
-    : null;
-
-  if (!keys) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("WEB_PUSH_ENABLED=true exige VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY en production.");
-    }
-    const generatedKeys = webpush.generateVAPIDKeys();
-    await pool.query(
-      `insert into application_settings(setting_key,setting_value)
-       values('web_push_vapid_keys',$1::jsonb)
-       on conflict(setting_key) do nothing`,
-      [JSON.stringify(generatedKeys)],
-    );
-    const stored = await pool.query("select setting_value from application_settings where setting_key='web_push_vapid_keys'");
-    keys = stored.rows[0]?.setting_value ?? generatedKeys;
-  }
-
-  try {
-    vapidKeyRing = loadVapidKeyRing(process.env, keys);
-    for (const pair of vapidKeyRing.all) {
-      webpush.setVapidDetails(pair.subject, pair.publicKey, pair.privateKey);
-    }
-    webpush.setVapidDetails(
-      vapidKeyRing.current.subject,
-      vapidKeyRing.current.publicKey,
-      vapidKeyRing.current.privateKey,
-    );
-    vapidPublicKey = vapidKeyRing.current.publicKey;
-    pushEnabled = true;
-  } catch (error) {
-    if (process.env.NODE_ENV === "production") throw error;
-    vapidKeyRing = null;
-    console.warn(`Notifications push désactivées : configuration VAPID invalide (${error.message}).`);
-  }
+  const state = await initializeWebPushNotifications({
+    enabled: productionFeatures.webPush,
+    webPushClient: webpush,
+    database: pool,
+  });
+  pushEnabled = state.pushEnabled;
+  vapidPublicKey = state.vapidPublicKey;
+  vapidKeyRing = state.vapidKeyRing;
 }
 
 app.disable("x-powered-by");
@@ -269,12 +177,20 @@ const makeContactId = () => {
   return contactId;
 };
 const nativeSessionClientHeader = "x-secret-clubhouse-client";
+const sessionDeviceIdHeader = "x-secret-clubhouse-device";
+const sessionDeviceLabelHeader = "x-secret-clubhouse-device-label";
 const isNativeSessionClient = (req) => String(req.get(nativeSessionClientHeader) || "").toLowerCase() === "native";
 
 async function createSessionForRequest(executor, req, accountId) {
+  const suppliedDeviceId = String(req.get(sessionDeviceIdHeader) || "").trim();
+  const deviceId = /^[A-Za-z0-9._:-]{8,160}$/u.test(suppliedDeviceId)
+    ? suppliedDeviceId
+    : null;
   return createAuthSession(executor, {
     accountId,
     clientType: isNativeSessionClient(req) ? "native" : "web",
+    deviceId,
+    deviceLabel: String(req.get(sessionDeviceLabelHeader) || "").trim(),
   });
 }
 
@@ -770,6 +686,8 @@ async function requireAuth(req, res, next) {
     const session = await authenticateSessionRequest(pool, req, {
       production: process.env.NODE_ENV === "production",
       expectedClientType: isNativeSessionClient(req) ? "native" : "web",
+      response: res,
+      renew: process.env.NODE_ENV === "production",
     });
     if (!session) return res.status(401).json({ error: "Session invalide ou expirée." });
     if (session.transport === "cookie" && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
@@ -1098,6 +1016,19 @@ app.post("/api/auth/login", async (req, res) => {
     if (newBlock) return sendLoginRateLimit(res, newBlock);
     return res.status(401).json({ error: "Identifiants incorrects." });
   }
+  if (account.admin_suspended_at) {
+    await writeSecurityEvent(pool, {
+      accountId: account.id,
+      eventType: "auth.login",
+      outcome: "blocked",
+      ...loginScopeKeys,
+      metadata: { reason: "administrative_suspension" },
+    });
+    return res.status(403).json({
+      error: "Ce compte est temporairement suspendu. Contactez l’assistance si vous pensez qu’il s’agit d’une erreur.",
+      accountSuspended: true,
+    });
+  }
   await clearSuccessfulLogin(pool, loginScopeKeys);
   await pool.query("update accounts set last_activity_at=now() where id=$1", [account.id]);
   await writeSecurityEvent(pool, {
@@ -1141,6 +1072,83 @@ app.get("/api/admin/analytics", requireAuth, requirePlatformAdministrator, async
   });
   res.set("Cache-Control", "private, no-store, max-age=0");
   res.json({ analytics });
+});
+
+app.get("/api/admin/families", requireAuth, requirePlatformAdministrator, async (req, res) => {
+  const result = await listAdminFamilies(pool, req.query);
+  await writeSecurityEvent(pool, {
+    accountId: req.auth.sub,
+    eventType: "admin.families.read",
+    outcome: "success",
+    metadata: {
+      requestId: req.requestId ?? null,
+      resultCount: result.families.length,
+      page: result.pagination.page,
+      filtered: Boolean(result.filters.search || result.filters.status !== "all"),
+      contentIncluded: false,
+    },
+  });
+  res.set("Cache-Control", "private, no-store, max-age=0");
+  res.json(result);
+});
+
+app.patch("/api/admin/accounts/:id/status", requireAuth, requirePlatformAdministrator, async (req, res) => {
+  const accountId = String(req.params.id ?? "");
+  if (!uuidPattern.test(accountId)) return res.status(400).json({ error: "Compte invalide." });
+  const normalized = normalizeAdminAccountStatusChange(req.body);
+  if (!normalized.valid) return res.status(400).json({ error: normalized.error });
+  const targetHash = crypto
+    .createHmac("sha256", jwtSecret)
+    .update(`admin-account:${accountId}`, "utf8")
+    .digest("hex");
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await updateAdminAccountStatus(client, {
+      administratorId: req.auth.sub,
+      accountId,
+      ...normalized.value,
+    });
+    if (!result.found || result.protected) {
+      await client.query("rollback");
+      await writeSecurityEvent(pool, {
+        accountId: req.auth.sub,
+        eventType: "admin.account.status",
+        outcome: "blocked",
+        identityHash: targetHash,
+        metadata: {
+          requestId: req.requestId ?? null,
+          nextStatus: normalized.value.status,
+          reason: result.protected ? "protected_administrator" : "not_found",
+        },
+      });
+      return res.status(result.protected ? 409 : 404).json({
+        error: result.protected
+          ? "Un compte administrateur ne peut pas être suspendu depuis cet écran."
+          : "Compte introuvable.",
+      });
+    }
+    await client.query("commit");
+    await writeSecurityEvent(pool, {
+      accountId: req.auth.sub,
+      eventType: "admin.account.status",
+      outcome: "success",
+      identityHash: targetHash,
+      metadata: {
+        requestId: req.requestId ?? null,
+        targetRole: result.account.role,
+        nextStatus: result.account.accountStatus,
+        revokedSessions: result.revokedSessions,
+      },
+    });
+    res.set("Cache-Control", "private, no-store, max-age=0");
+    return res.json({ account: result.account });
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 });
 
 app.get("/api/privacy/requests", requireAuth, async (req, res) => {
@@ -1483,17 +1491,83 @@ app.patch("/api/account/password", requireAuth, async (req, res) => {
   if (currentPassword.length < 8 || newPassword.length < 8 || newPassword.length > 128) {
     return res.status(400).json({ error: "Le nouveau mot de passe doit contenir entre 8 et 128 caractères." });
   }
-  const result = await pool.query("select password_hash from accounts where id=$1 and role='parent'", [req.auth.sub]);
-  const account = result.rows[0];
-  if (!account || !await bcrypt.compare(currentPassword, account.password_hash)) {
-    return res.status(401).json({ error: "Le mot de passe actuel est incorrect." });
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await client.query(
+      "select password_hash from accounts where id=$1 and role='parent' for update",
+      [req.auth.sub],
+    );
+    const account = result.rows[0];
+    if (!account || !await bcrypt.compare(currentPassword, account.password_hash)) {
+      await client.query("rollback");
+      return res.status(401).json({ error: "Le mot de passe actuel est incorrect." });
+    }
+    if (await bcrypt.compare(newPassword, account.password_hash)) {
+      await client.query("rollback");
+      return res.status(400).json({ error: "Choisissez un nouveau mot de passe différent de l’ancien." });
+    }
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await client.query(
+      "update accounts set password_hash=$1 where id=$2 and role='parent'",
+      [passwordHash, req.auth.sub],
+    );
+    const revokedSessions = await revokeOtherAccountAuthSessions(client, {
+      accountId: req.auth.sub,
+      currentSessionId: req.auth.sessionId,
+      reason: "parent_password_change",
+    });
+    await client.query("commit");
+    return res.json({ revokedSessions });
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
   }
-  if (await bcrypt.compare(newPassword, account.password_hash)) {
-    return res.status(400).json({ error: "Choisissez un nouveau mot de passe différent de l’ancien." });
+});
+
+app.get("/api/account/sessions", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") {
+    return res.status(403).json({ error: "La gestion des appareils est réservée aux parents." });
   }
-  const passwordHash = await bcrypt.hash(newPassword, 12);
-  await pool.query("update accounts set password_hash=$1 where id=$2 and role='parent'", [passwordHash, req.auth.sub]);
+  const sessions = await listAccountAuthSessions(pool, {
+    accountId: req.auth.sub,
+    currentSessionId: req.auth.sessionId,
+  });
+  return res.json({ sessions });
+});
+
+app.delete("/api/account/sessions/:sessionId", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") {
+    return res.status(403).json({ error: "La gestion des appareils est réservée aux parents." });
+  }
+  if (!uuidPattern.test(req.params.sessionId)) {
+    return res.status(400).json({ error: "Session invalide." });
+  }
+  if (req.params.sessionId === req.auth.sessionId) {
+    return res.status(409).json({ error: "Utilisez « Se déconnecter » pour fermer l’appareil actuel." });
+  }
+  const revoked = await revokeAccountAuthSessionById(pool, {
+    accountId: req.auth.sub,
+    sessionId: req.params.sessionId,
+    currentSessionId: req.auth.sessionId,
+    reason: "parent_device_revocation",
+  });
+  if (!revoked) return res.status(404).json({ error: "Cette session n’est plus active." });
   return res.status(204).end();
+});
+
+app.post("/api/account/sessions/revoke-others", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") {
+    return res.status(403).json({ error: "La gestion des appareils est réservée aux parents." });
+  }
+  const revokedSessions = await revokeOtherAccountAuthSessions(pool, {
+    accountId: req.auth.sub,
+    currentSessionId: req.auth.sessionId,
+    reason: "parent_other_devices_revocation",
+  });
+  return res.json({ revokedSessions });
 });
 
 app.get("/api/family", requireAuth, async (req, res) => {
@@ -1784,8 +1858,9 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
   const { profile } = normalized;
   const passwordHash = profile.password ? await bcrypt.hash(profile.password, 12) : existing.password_hash;
   const client = await pool.connect();
-  let updatedChild = null;
+  let updatedChild;
   let terminatedCalls = [];
+  let revokedSessions = 0;
   try {
     await client.query("begin");
     const result = await client.query(
@@ -1811,6 +1886,12 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
     );
     updatedChild = result.rows[0];
     if (!updatedChild) throw httpError(404, "Profil enfant introuvable dans votre famille.");
+    if (profile.password) {
+      revokedSessions = await revokeAllAccountAuthSessions(client, {
+        accountId: req.params.id,
+        reason: "child_password_change_by_parent",
+      });
+    }
     if (profile.status === "paused") {
       const callsResult = await client.query(
         `update call_sessions
@@ -1843,7 +1924,10 @@ app.patch("/api/children/:id", requireAuth, async (req, res) => {
     client.release();
   }
   await Promise.allSettled(terminatedCalls.map((call) => notifyCallState(call)));
-  res.json({ child: await serializeAccount(updatedChild) });
+  res.json({
+    child: await serializeAccount(updatedChild),
+    ...(profile.password ? { revokedSessions } : {}),
+  });
 });
 
 app.patch("/api/account/avatar", requireAuth, requireActiveChild, async (req, res) => {
@@ -2405,6 +2489,7 @@ async function notifyAccounts(accountIds, payload) {
          join account_consent_preferences consent
            on consent.subject_account_id=account.id and consent.purpose='notifications'
          where subscription.account_id=any($1::uuid[]) and subscription.expires_at>now()
+           and account.admin_suspended_at is null
            and consent.subject_agreed_at is not null
            and (account.role<>'child' or account.age>=15 or consent.guardian_agreed_at is not null)`,
         [uniqueIds],
@@ -2427,6 +2512,7 @@ async function notifyConversation(conversationId, senderId, payload) {
          join account_consent_preferences consent
            on consent.subject_account_id=account.id and consent.purpose='notifications'
          where member.conversation_id=$1 and member.account_id<>$2 and subscription.expires_at>now()
+           and account.admin_suspended_at is null
            and consent.subject_agreed_at is not null
            and (account.role<>'child' or account.age>=15 or consent.guardian_agreed_at is not null)`,
         [conversationId, senderId],
@@ -3185,7 +3271,7 @@ app.patch("/api/contact-requests/:requestId", requireAuth, async (req, res) => {
 
   const client = await pool.connect();
   const notifications = [];
-  let responsePayload = null;
+  let responsePayload;
   try {
     await client.query("begin");
     await repairFamilyChildrenForAccount(req.auth.sub, client);
@@ -3669,7 +3755,7 @@ app.post("/api/games", requireAuth, requireActiveChild, async (req, res) => {
   const client = await pool.connect();
   let opponent;
   let game;
-  let inviterName = "Un ami";
+  let inviterName;
   try {
     await client.query("begin");
     const opponentResult = await client.query("select id,role from accounts where contact_id=$1", [contactId]);
@@ -3705,7 +3791,7 @@ app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
   const action = req.body?.action;
   if (!["accept", "decline", "stop"].includes(action)) return res.status(400).json({ error: "Action de partie invalide." });
   const client = await pool.connect();
-  let updatedGame = null;
+  let updatedGame;
   let stoppedOpponentId = null;
   try {
     await client.query("begin");
@@ -3771,9 +3857,9 @@ app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
 
 app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
   const client = await pool.connect();
-  let nextPlayerId = null;
-  let gameType = null;
-  let playerName = "Un ami";
+  let nextPlayerId;
+  let gameType;
+  let playerName;
   let committed = false;
   try {
     await client.query("begin");
@@ -4075,10 +4161,10 @@ app.post("/api/conversations/:id/calls", requireAuth, requireActiveChild, async 
   if (!await isConversationMember(req.auth.sub, req.params.id)) return res.status(403).json({ error: "Conversation non autorisée." });
 
   const client = await pool.connect();
-  let createdCall = null;
-  let callActionToken = "";
-  let actionUrls = null;
-  let expiredCalls = [];
+  let createdCall;
+  let callActionToken;
+  let actionUrls;
+  let expiredCalls;
   try {
     await client.query("begin");
     expiredCalls = await expireStaleCalls(client);
@@ -4235,7 +4321,7 @@ async function respondToNativeCall(req, res) {
 
   const client = await pool.connect();
   let committed = false;
-  let call = null;
+  let call;
   let idempotent = false;
   let stateChanged = false;
   let sendDeclineMessageNotification = false;

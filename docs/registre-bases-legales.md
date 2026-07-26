@@ -14,6 +14,7 @@ Ce registre complète la politique de confidentialité publique. Une finalité n
 | `family-safety` | Membres de la famille | Appliquer horaires, pauses, autorisations et contrôles de contacts | Intérêt légitime, article 6 § 1 f) |
 | `service-security` | Utilisateurs | Authentifier, limiter les tentatives et prévenir les abus | Intérêt légitime, article 6 § 1 f) |
 | `service-analytics` | Familles et utilisateurs | Calculer uniquement des agrégats d’adoption, d’activité et de retour à 30 jours pour piloter le service | Intérêt légitime, article 6 § 1 f), avec accès nominatif, exclusion des administrateurs et absence de détail individuel |
+| `account-administration-support` | Familles et utilisateurs | Identifier un compte pour le support et suspendre ou réactiver son accès lorsque nécessaire | Intérêt légitime, article 6 § 1 f), avec données de compte minimisées, contenus et secrets exclus, comptes administrateurs protégés, révocation des sessions et journalisation |
 | `optional-notifications` | Utilisateur de l’appareil et responsable légal d’un enfant | Conserver un jeton push et envoyer les alertes facultatives | Consentement, article 6 § 1 a), avec accord conjoint sous 15 ans |
 | `legal-requests` | Demandeurs et comptes concernés | Répondre aux demandes de droits ou d’autorités compétentes | Obligation légale, article 6 § 1 c) |
 
@@ -39,7 +40,8 @@ Garanties appliquées :
 - règles de médias, horaires et pause imposées aussi par l’API ;
 - contenu des conversations entre enfants absent du tableau de bord parent ;
 - statistiques d’exploitation limitées à des nombres agrégés, sans nom, identifiant, contact, message, média ou ligne individuelle ;
-- accès aux agrégats réservé à un administrateur parent nommé, journalisé et exclu des calculs avec sa famille ;
+- annuaire de support séparé, limité à l’identité familiale et aux états de compte nécessaires, sans contenu de communication, secret d’authentification, contact extérieur ni jeton push ;
+- accès réservé à un administrateur parent nommé ; lectures individuelles et suspensions journalisées, comptes administrateurs protégés et sessions révoquées lors d’une suspension ;
 - durées de conservation et purge automatique documentées ;
 - absence de publicité, profilage commercial et vente de données ;
 - droit d’opposition expliqué dans la politique ;

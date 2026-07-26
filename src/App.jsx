@@ -6,6 +6,7 @@ import { api, clearToken, hasNativeSession } from "./api";
 import { AuthScreen, rememberedParentEmailKey } from "./PublicAuth";
 import {
   appendUniqueMessages,
+  clearContactRequestFromUrl,
   cloneCommunicationSchedule,
   cloneSafetySettings,
   defaultCommunicationSchedule,
@@ -27,6 +28,12 @@ import {
 import { armIncomingCallAudio } from "./incoming-call-alerts";
 import { announceWebPushAvailability, synchronizeWebPushSubscription } from "./web-push-client";
 import { normalizePresenceAvailability } from "./presence";
+import {
+  clearFamilyInviteFromUrl,
+  normalizeFamilyInvitation,
+  readFamilyInviteToken,
+} from "./features/authentication/familyInvitation";
+import { normalizeFamily } from "./features/parent/normalizeFamily";
 import "./styles/authenticated.css";
 
 const lazyNamed = (loader, exportName) => lazy(() => loader().then((module) => ({ default: module[exportName] })));
@@ -49,6 +56,7 @@ const ParentDashboard = lazyNamed(loadParentSpace, "ParentDashboard");
 const NoChildScreen = lazyNamed(loadParentSpace, "NoChildScreen");
 const PausedChildScreen = lazyNamed(loadParentSpace, "PausedChildScreen");
 const ParentPasswordModal = lazyNamed(loadParentSpace, "ParentPasswordModal");
+const ParentSessionsModal = lazyNamed(loadParentSpace, "ParentSessionsModal");
 const FamilyInviteAcceptanceModal = lazyNamed(loadParentSpace, "FamilyInviteAcceptanceModal");
 const FamilyInviteErrorModal = lazyNamed(loadParentSpace, "FamilyInviteErrorModal");
 const FamilyParentsModal = lazyNamed(loadParentSpace, "FamilyParentsModal");
@@ -57,8 +65,6 @@ const ContactIdsModal = lazyNamed(loadParentSpace, "ContactIdsModal");
 const ScheduleModal = lazyNamed(loadParentSpace, "ScheduleModal");
 const QrModal = lazyNamed(() => import("./features/QrModal"), "QrModal");
 
-
-const familyInviteQueryKeys = ["familyInvite", "family-invite", "invite"];
 
 function FeatureLoading({ label = "Chargement de votre espace…" }) {
   return (
@@ -70,52 +76,6 @@ function FeatureLoading({ label = "Chargement de votre espace…" }) {
 }
 
 
-
-const readFamilyInviteToken = () => {
-  const params = new URLSearchParams(window.location.search);
-  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  return familyInviteQueryKeys
-    .flatMap((key) => [hashParams.get(key)?.trim(), params.get(key)?.trim()])
-    .find(Boolean) ?? "";
-};
-
-const clearFamilyInviteFromUrl = () => {
-  const params = new URLSearchParams(window.location.search);
-  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  familyInviteQueryKeys.forEach((key) => params.delete(key));
-  familyInviteQueryKeys.forEach((key) => hashParams.delete(key));
-  const query = params.toString();
-  const hash = hashParams.toString();
-  window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`);
-};
-
-
-const normalizeFamily = (payload, currentParent = {}) => {
-  const family = payload?.family ?? payload ?? {};
-  const currentRole = family.role ?? family.currentRole ?? family.current_role ?? "coparent";
-  const members = (family.members ?? []).map((member) => ({
-    ...member,
-    id: member.id ?? member.accountId ?? member.account_id,
-    name: member.name ?? member.displayName ?? member.display_name ?? "Parent",
-    contactId: member.contactId ?? member.contact_id ?? "",
-    role: member.role ?? member.membershipRole ?? member.membership_role ?? "coparent",
-    isCurrent: member.isCurrent ?? member.is_current ?? member.id === currentParent.id,
-  }));
-  const pendingInvitations = family.pendingInvitations ?? family.pending_invitations ?? family.invitations ?? [];
-  return { ...family, role: currentRole, members, pendingInvitations };
-};
-
-const normalizeFamilyInvitation = (payload) => {
-  const invitation = payload?.invitation ?? payload ?? {};
-  return {
-    ...invitation,
-    id: invitation.id,
-    email: invitation.email ?? "",
-    familyName: invitation.familyName ?? invitation.family_name ?? "cette famille",
-    invitedByName: invitation.invitedByName ?? invitation.inviterName ?? invitation.invited_by_name ?? invitation.invitedBy?.name ?? "un parent",
-    expiresAt: invitation.expiresAt ?? invitation.expires_at,
-  };
-};
 
 
 
@@ -342,6 +302,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   const [scheduleModalChildId, setScheduleModalChildId] = useState(null);
   const [isContactIdsOpen, setIsContactIdsOpen] = useState(false);
   const [isParentPasswordOpen, setIsParentPasswordOpen] = useState(false);
+  const [isParentSessionsOpen, setIsParentSessionsOpen] = useState(false);
   const [isDataRightsOpen, setIsDataRightsOpen] = useState(false);
   const [isAvatarPreferencesOpen, setIsAvatarPreferencesOpen] = useState(false);
   const [parentThreads, setParentThreads] = useState([]);
@@ -438,18 +399,45 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   }, [familyInviteToken]);
 
   useEffect(() => {
-    (initialAccount ? Promise.resolve({ account: initialAccount }) : api.me())
-      .then(({ account }) => {
+    let active = true;
+    let restoreInFlight = false;
+    const restoreSessionData = async () => {
+      if (!active || restoreInFlight) return;
+      restoreInFlight = true;
+      try {
+        const { account } = initialAccount ? { account: initialAccount } : await api.me();
+        if (!active) return;
         if (account.role === "child" && familyInviteToken) {
-          return api.logout().catch(() => clearToken());
+          await api.logout().catch(() => clearToken());
+          return;
         }
-        if (account.role === "child") return openChildSession(account);
-        return openAuthenticatedSession(account).then(() => {
+        if (account.role === "child") {
+          await openChildSession(account);
+        } else {
+          await openAuthenticatedSession(account);
           if (initialRegistration) setChildModal({ mode: "create" });
-        });
-      })
-      .catch(() => clearToken())
-      .finally(() => setIsRestoringSession(false));
+        }
+        if (active) setFamilyConversationSyncError("");
+      } catch (error) {
+        if (!active) return;
+        if (error?.status === 401 || error?.payload?.accountSuspended) {
+          setSession(null);
+          await clearToken();
+        } else {
+          setFamilyConversationSyncError("Votre session est conservée. Les données seront rechargées au retour d’Internet.");
+        }
+      } finally {
+        restoreInFlight = false;
+        if (active) setIsRestoringSession(false);
+      }
+    };
+    const retryWhenOnline = () => void restoreSessionData();
+    void restoreSessionData();
+    window.addEventListener("online", retryWhenOnline);
+    return () => {
+      active = false;
+      window.removeEventListener("online", retryWhenOnline);
+    };
   }, []);
 
   useEffect(() => {
@@ -780,12 +768,12 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   const openAuthenticatedSession = async (parent) => {
     const parentWithId = { ...parent, contactId: parent.contactId ?? "" };
     applyFamilyChildren([]);
+    setFamilyOwner(parentWithId);
+    setSession({ ...parentWithId, role: "parent" });
+    setParentView(parentWithId.processingRestrictedAt ? "management" : "dashboard");
+    setSelectedConversation(null);
     if (parentWithId.processingRestrictedAt) {
       setFamily(null);
-      setFamilyOwner(parentWithId);
-      setSession({ ...parentWithId, role: "parent" });
-      setParentView("management");
-      setSelectedConversation(null);
       setIsDataRightsOpen(true);
       return;
     }
@@ -811,14 +799,17 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       setContactRequestError(contactRequestOutcome.error?.message || "Les demandes de contact sont temporairement indisponibles.");
     }
     setFamily(normalizeFamily(familyData, parentWithId));
-    setFamilyOwner(parentWithId);
-    setSession({ ...parentWithId, role: "parent" });
-    setParentView("dashboard");
-    setSelectedConversation(null);
   };
 
   const openChildSession = async (child) => {
     applyFamilyChildren([child]);
+    setFamilyOwner({ name: "Compte parent", email: "", contactId: "" });
+    setSession({ ...child, role: "child", childId: child.id });
+    setActiveChildId(child.id);
+    setParentView(null);
+    setSelectedConversation(null);
+    setActiveTab(child.processingRestrictedAt ? "profile" : "conversations");
+    if (child.processingRestrictedAt) setIsDataRightsOpen(true);
     const conversationData = child.status === "paused" || child.processingRestrictedAt
       ? { conversations: [], syncCursor: "0" }
       : await api.conversations();
@@ -827,13 +818,6 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       conversationData.conversations,
       conversationData.syncCursor,
     );
-    setFamilyOwner({ name: "Compte parent", email: "", contactId: "" });
-    setSession({ ...child, role: "child", childId: child.id });
-    setActiveChildId(child.id);
-    setParentView(null);
-    setSelectedConversation(null);
-    setActiveTab(child.processingRestrictedAt ? "profile" : "conversations");
-    if (child.processingRestrictedAt) setIsDataRightsOpen(true);
   };
 
   const loginParent = async (credentials) => {
@@ -919,6 +903,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
     setScheduleModalChildId(null);
     setIsContactIdsOpen(false);
     setIsParentPasswordOpen(false);
+    setIsParentSessionsOpen(false);
     setIsDataRightsOpen(false);
     setIsFamilyParentsOpen(false);
     setIsAvatarPreferencesOpen(false);
@@ -980,7 +965,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   };
 
   const changeParentPassword = async ({ currentPassword, newPassword }) => {
-    await api.updateParentPassword({ currentPassword, newPassword });
+    return api.updateParentPassword({ currentPassword, newPassword });
   };
 
   const saveChild = async (childData) => {
@@ -1567,16 +1552,16 @@ export function App({ initialAccount = null, initialRegistration = false }) {
       return <AuthScreen onLogin={loginParent} onRegister={registerParent} onChildLogin={loginChild} hasFamilyInvite={Boolean(familyInviteToken)} familyInvitation={familyInvitation} familyInvitationError={familyInvitationError} isFamilyInvitationLoading={isFamilyInvitationLoading} onDismissFamilyInvite={dismissFamilyInvitation} />;
     }
     if (parentView === "messages") {
-      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onReactMessage={reactConversationMessage} onForwardMessage={forwardConversationMessage} onOpenGames={(game) => { setSelectedParentThreadId(null); setRequestedGame(game ?? null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
+      return <ParentMessagesScreen parentName={familyOwner.name} parentContactId={familyOwner.contactId} familyChildren={children} threads={parentThreadsWithAvailability} selectedThreadId={selectedParentThreadId} onSelectThread={openParentThread} onLoadOlderMessages={(conversationId) => loadConversationMessages(conversationId, { older: true })} onRetryMessages={(conversationId) => loadConversationMessages(conversationId)} onHome={() => { setSelectedParentThreadId(null); setParentView("dashboard"); }} onManagement={() => { setSelectedParentThreadId(null); setParentView("management"); }} onHelp={() => { setSelectedParentThreadId(null); setParentView("help"); }} onSend={sendParentMessage} onSendMedia={sendParentMedia} onReactMessage={reactConversationMessage} onForwardMessage={forwardConversationMessage} onOpenGames={(game) => { setSelectedParentThreadId(null); setRequestedGame(game ?? null); setParentView("games"); }} onOpenFamilyConversation={openFamilyConversation} onStartCall={session.features?.rtc === true ? openRealtimeCall : null} onContactRequestCreated={() => refreshContactRequests()} conversationSyncError={familyConversationSyncError} onRetryConversationSync={() => void retryFamilyConversationSync()} initialContactId={pendingContactId} initialRequesterContactId={pendingRequesterContactId} onContactHandled={() => { setPendingContactId(""); setPendingRequesterContactId(""); }} />;
     }
     if (parentView === "games") {
       return <ParentGamesScreen parent={familyOwner} initialGame={requestedGame} onBack={() => { setRequestedGame(null); setParentView("dashboard"); }} />;
     }
-    if (parentView === "dashboard" || parentView === "management") {
+    if (parentView === "dashboard" || parentView === "management" || parentView === "help") {
       return (
         <ParentDashboard
-          activeSection={parentView === "management" ? "management" : "home"}
-          onChangeSection={(section) => setParentView(section === "management" ? "management" : "dashboard")}
+          activeSection={parentView === "management" ? "management" : parentView === "help" ? "help" : "home"}
+          onChangeSection={(section) => setParentView(section === "management" ? "management" : section === "help" ? "help" : "dashboard")}
           parentName={familyOwner.name}
           family={family}
           children={children}
@@ -1603,6 +1588,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
           onOpenFamilyParents={() => setIsFamilyParentsOpen(true)}
           onOpenContactIds={() => setIsContactIdsOpen(true)}
           onOpenPassword={() => setIsParentPasswordOpen(true)}
+          onOpenSessions={() => setIsParentSessionsOpen(true)}
           onOpenDataRights={() => setIsDataRightsOpen(true)}
           onEditSchedule={() => activeChild && setScheduleModalChildId(activeChild.id)}
           onLogout={logoutParent}
@@ -1664,6 +1650,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
           {isQrOpen && activeChild && <QrModal child={activeChild} onClose={() => setIsQrOpen(false)} onRequestAdd={requestFriendWithParent} />}
           {session && isContactIdsOpen && <ContactIdsModal parent={familyOwner} family={family} children={children} onClose={() => setIsContactIdsOpen(false)} />}
           {session?.role === "parent" && isParentPasswordOpen && <ParentPasswordModal onClose={() => setIsParentPasswordOpen(false)} onSave={changeParentPassword} />}
+          {session?.role === "parent" && isParentSessionsOpen && <ParentSessionsModal onClose={() => setIsParentSessionsOpen(false)} onLoad={api.accountSessions} onRevoke={api.revokeAccountSession} onRevokeOthers={api.revokeOtherAccountSessions} />}
           {session && isDataRightsOpen && <DataRightsModal account={session.role === "child" ? activeChild : session} family={family} children={children} onClose={() => setIsDataRightsOpen(false)} onDeleted={logoutParent} />}
           {session?.role === "parent" && isFamilyParentsOpen && family && <FamilyParentsModal family={family} currentParent={session} onClose={() => setIsFamilyParentsOpen(false)} onInvite={inviteFamilyParent} onRevoke={revokeFamilyInvitation} onRemove={removeFamilyParent} />}
           {session && childModal && (

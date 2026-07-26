@@ -31,6 +31,9 @@ export async function initializeDatabase() {
       inactive_after timestamptz not null default now() + interval '730 days',
       processing_restricted_at timestamptz,
       processing_restriction_reason text,
+      admin_suspended_at timestamptz,
+      admin_suspension_reason text,
+      admin_suspended_by uuid references accounts(id) on delete set null,
       check ((role = 'parent' and email is not null and parent_id is null) or (role = 'child' and parent_id is not null))
     );
 
@@ -46,6 +49,9 @@ export async function initializeDatabase() {
     alter table accounts add column if not exists inactive_after timestamptz;
     alter table accounts add column if not exists processing_restricted_at timestamptz;
     alter table accounts add column if not exists processing_restriction_reason text;
+    alter table accounts add column if not exists admin_suspended_at timestamptz;
+    alter table accounts add column if not exists admin_suspension_reason text;
+    alter table accounts add column if not exists admin_suspended_by uuid references accounts(id) on delete set null;
     update accounts
       set last_activity_at=coalesce(last_activity_at,now()),
           inactive_after=coalesce(inactive_after,now()+interval '730 days')
@@ -87,6 +93,8 @@ export async function initializeDatabase() {
       on accounts(lower(username)) where role='child';
     create index if not exists accounts_parent_children_idx on accounts(parent_id, created_at) where role = 'child';
     create index if not exists accounts_inactive_after_idx on accounts(inactive_after);
+    create index if not exists accounts_admin_suspended_idx
+      on accounts(admin_suspended_at) where admin_suspended_at is not null;
 
     create table if not exists account_consent_preferences (
       subject_account_id uuid not null references accounts(id) on delete cascade,
