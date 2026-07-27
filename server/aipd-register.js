@@ -1,5 +1,5 @@
-export const aipdVersion = "1.23";
-export const aipdAssessmentDate = "2026-07-26";
+export const aipdVersion = "1.26";
+export const aipdAssessmentDate = "2026-07-27";
 
 export const aipdRiskScale = Object.freeze({
   severity: Object.freeze({
@@ -232,7 +232,7 @@ export const aipdRisks = Object.freeze([
     threats: ["Partage d’un identifiant privé", "Acceptation erronée d’une demande", "Compte autorisé devenu malveillant", "Usage abusif des messages, appels ou jeux"],
     impacts: ["Atteinte à la sécurité et au bien-être", "Harcèlement ou prédation", "Sollicitations répétées hors contexte familial"],
     initial: { severity: 4, likelihood: 3 },
-    existingMeasures: ["Aucun annuaire ni recherche publique", "Identifiant opaque exact", "Approbation parentale avant une relation externe", "Contrôles serveur pour messages, médias, appels et jeux", "Pause, horaires et réponse neutre hors horaires"],
+    existingMeasures: ["Aucun annuaire ni recherche publique", "Identifiant opaque exact", "Approbation parentale avant une relation externe", "Une invitation générique « Autre proche » — sœur, frère, cousine, cousin ou autre personne de confiance — exige une date de naissance validée par l’API et refuse les personnes de 13 ans ou moins ; cette date est abandonnée après le contrôle et seul l’horodatage du résultat positif est persisté, tandis que les relations familiales nommées n’ajoutent pas cette collecte", "Contrôles serveur pour messages, médias, appels et jeux", "Pause, horaires et réponse neutre hors horaires"],
     residual: { severity: 4, likelihood: 2 },
     actionIds: ["A02", "A05", "A07"],
   }),

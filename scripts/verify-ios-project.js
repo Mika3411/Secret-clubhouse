@@ -41,13 +41,13 @@ assert.match(
 );
 assert.match(
   project,
-  /MARKETING_VERSION = 1\.14;/,
-  "La version iOS doit correspondre à la version mobile 1.14.",
+  /MARKETING_VERSION = 1\.15;/,
+  "La version iOS doit correspondre à la version mobile 1.15.",
 );
 assert.match(
   project,
-  /CURRENT_PROJECT_VERSION = 15;/,
-  "Le build iOS doit correspondre au build mobile 15.",
+  /CURRENT_PROJECT_VERSION = 16;/,
+  "Le build iOS doit correspondre au build mobile 16.",
 );
 assert.match(
   project,

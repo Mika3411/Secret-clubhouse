@@ -19,6 +19,7 @@ export async function initializeDatabase() {
       display_name text not null,
       parent_id uuid references accounts(id) on delete cascade,
       age smallint,
+      trusted_age_verified_at timestamptz,
       username text,
       avatar_path text,
       avatar_color text,
@@ -46,6 +47,7 @@ export async function initializeDatabase() {
       add constraint accounts_check
       check ((role in ('parent', 'relative') and email is not null and parent_id is null) or (role = 'child' and parent_id is not null));
     alter table accounts add column if not exists age smallint;
+    alter table accounts add column if not exists trusted_age_verified_at timestamptz;
     alter table accounts add column if not exists username text;
     alter table accounts add column if not exists avatar_path text;
     alter table accounts add column if not exists avatar_color text;
@@ -96,6 +98,11 @@ export async function initializeDatabase() {
     alter table accounts
       add constraint accounts_child_username_required
       check (role<>'child' or (username is not null and char_length(btrim(username)) between 3 and 64));
+    alter table accounts drop constraint if exists accounts_trusted_adult_age_check;
+    alter table accounts drop column if exists date_of_birth;
+    alter table accounts
+      add constraint accounts_trusted_adult_age_check
+      check (role='relative' or trusted_age_verified_at is null);
     drop index if exists accounts_parent_username_unique;
     create unique index if not exists accounts_child_username_unique
       on accounts(lower(username)) where role='child';

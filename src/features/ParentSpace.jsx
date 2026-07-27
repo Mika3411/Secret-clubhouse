@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Bell } from "@phosphor-icons/react/Bell";
 import { CaretRight } from "@phosphor-icons/react/CaretRight";
@@ -29,6 +29,10 @@ import { VideoCamera } from "@phosphor-icons/react/VideoCamera";
 import { X } from "@phosphor-icons/react/X";
 import { defaultCommunicationSchedule } from "../app-core";
 import { childUsernameMaxLength, normalizeChildUsername } from "../child-username";
+import {
+  evaluateTrustedAdultBirthDate,
+  maximumTrustedAdultBirthDate,
+} from "../../shared/trusted-adult-age";
 import { Avatar, ParentModeNavigation, TrustedAdultNavigation, copyContactId } from "./AuthenticatedShared";
 import { ChildNotificationConsentSetting, PushNotificationButton } from "./NotificationSettings";
 import "../styles/parent.css";
@@ -233,14 +237,30 @@ export function ParentSessionsModal({ onClose, onLoad, onRevoke, onRevokeOthers 
 export function FamilyInviteAcceptanceModal({ invitation, parent, onAccept, onUseAnotherAccount, onDismiss }) {
   const [isAccepting, setIsAccepting] = useState(false);
   const [error, setError] = useState("");
+  const [birthDate, setBirthDate] = useState("");
+  const birthDateRef = useRef(null);
   const emailMatches = !invitation.email || invitation.email.toLowerCase() === String(parent.email ?? "").toLowerCase();
   const isRelative = invitation.role === "relative";
+  const requiresAgeVerification = isRelative
+    && invitation.relationshipType === "family_friend"
+    && parent.requiresTrustedAdultAgeVerification;
 
   const accept = async () => {
+    const submittedBirthDate = birthDateRef.current?.value || birthDate;
+    if (requiresAgeVerification) {
+      const ageCheck = evaluateTrustedAdultBirthDate(submittedBirthDate);
+      if (!ageCheck.valid) {
+        setError(ageCheck.reason === "underage"
+          ? "À 13 ans ou moins, cette personne doit utiliser un profil enfant géré par un parent."
+          : "Indiquez une date de naissance valide pour confirmer que vous avez au moins 14 ans.");
+        window.requestAnimationFrame(() => birthDateRef.current?.focus());
+        return;
+      }
+    }
     setIsAccepting(true);
     setError("");
     try {
-      await onAccept();
+      await onAccept({ birthDate: requiresAgeVerification ? submittedBirthDate : undefined });
     } catch (acceptError) {
       setError(acceptError.message || "Impossible d’accepter cette invitation.");
     } finally {
@@ -259,11 +279,24 @@ export function FamilyInviteAcceptanceModal({ invitation, parent, onAccept, onUs
           ? <><strong>{invitation.invitedByName}</strong> vous ouvre un accès personnel pour parler avec {(invitation.children ?? []).map((child) => child.name).join(" et ") || "les enfants choisis"}, sans gestion familiale.</>
           : <><strong>{invitation.invitedByName}</strong> souhaite vous donner accès aux mêmes profils enfant et réglages familiaux.</>}</p>
         <div className={`family-invite-account ${emailMatches ? "" : "has-error"}`}><UserCircle size={23} weight="fill" /><span><strong>{parent.name}</strong><small>{parent.email}</small></span>{emailMatches ? <CheckCircle size={19} weight="fill" /> : <X size={18} weight="bold" />}</div>
+        {requiresAgeVerification && <label className="family-invite-age-field">
+          <span>Date de naissance</span>
+          <input
+            ref={birthDateRef}
+            type="date"
+            value={birthDate}
+            max={maximumTrustedAdultBirthDate()}
+            onChange={(event) => { setBirthDate(event.target.value); setError(""); }}
+            autoComplete="bday"
+            aria-describedby="family-invite-age-help"
+          />
+          <small id="family-invite-age-help">Une seule vérification : ce compte doit appartenir à une personne de 14 ans ou plus. La date sert au contrôle immédiat puis n’est pas enregistrée.</small>
+        </label>}
         {!emailMatches && <p className="family-invite-error" role="alert">Cette invitation est destinée à {invitation.email}. Utilisez le compte correspondant.</p>}
         {error && <p className="family-invite-error" role="alert">{error}</p>}
         <div className="family-invite-acceptance__actions">
           <button type="button" onClick={onUseAnotherAccount} disabled={isAccepting}>Utiliser un autre compte</button>
-          <button type="button" onClick={accept} disabled={!emailMatches || isAccepting}><CheckCircle size={18} weight="fill" /> {isAccepting ? "Acceptation…" : "Accepter l’invitation"}</button>
+          <button type="button" onClick={accept} disabled={!emailMatches || isAccepting || (requiresAgeVerification && !birthDate)}><CheckCircle size={18} weight="fill" /> {isAccepting ? "Acceptation…" : "Accepter l’invitation"}</button>
         </div>
       </section>
     </div>
@@ -532,13 +565,14 @@ export function FamilyAdultsModal({ family, children = [], currentParent, onClos
           {inviteRole === "relative" && <>
             <label htmlFor="trusted-relationship">Lien avec les enfants</label>
             <select id="trusted-relationship" value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
-              <option value="grandparent">Grand-parent</option><option value="uncle_aunt">Oncle ou tante</option><option value="godparent">Parrain ou marraine</option><option value="family_friend">Proche de confiance</option>
+              <option value="grandparent">Grand-parent</option><option value="uncle_aunt">Oncle ou tante</option><option value="godparent">Parrain ou marraine</option><option value="family_friend">Autre proche (sœur, frère, cousin…)</option>
             </select>
             <fieldset className="trusted-child-picker"><legend>Peut parler avec</legend>{children.map((child) => <label key={child.id}><input type="checkbox" checked={selectedChildIds.includes(child.id)} onChange={(event) => setSelectedChildIds((current) => event.target.checked ? [...new Set([...current, child.id])] : current.filter((id) => id !== child.id))} /><span>{child.name}</span></label>)}</fieldset>
             <fieldset className="trusted-permission-picker"><legend>Autorisations</legend>{[
               ["messages", "Messages", ChatCircleDots], ["audioCalls", "Appels audio", Phone], ["videoCalls", "Appels vidéo", VideoCamera], ["games", "Jeux ensemble", GameController],
             ].map(([key, label, Icon]) => <label key={key}><input type="checkbox" checked={permissions[key]} onChange={(event) => setPermissions((current) => ({ ...current, [key]: event.target.checked }))} /><Icon size={17} weight="fill" /><span>{label}</span></label>)}</fieldset>
             <p className="trusted-access-note"><ShieldCheck size={17} weight="fill" /> Aucune gestion de famille, d’amis ou de protections.</p>
+            {relationshipType === "family_friend" && <p className="trusted-access-note trusted-access-note--age"><ShieldCheck size={17} weight="fill" /> Pour « Autre proche » — par exemple une grande sœur ou une cousine — la personne devra confirmer qu’elle a 14 ans ou plus.</p>}
           </>}
           <label htmlFor="adult-invite-email">Adresse e-mail</label>
           <div className="family-invite-field"><input id="adult-invite-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} placeholder={inviteRole === "relative" ? "proche@exemple.fr" : "coparent@exemple.fr"} autoComplete="email" /><button type="submit" disabled={busyAction === "invite"}><UserPlus size={17} weight="bold" /> {busyAction === "invite" ? "Création…" : "Inviter"}</button></div>
@@ -856,20 +890,35 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
           <div>
             <small>Repères essentiels</small>
             <h2 id="parent-help-title">Accompagner votre famille simplement</h2>
-            <p>Cette notice explique les contacts, les protections et les connexions sans afficher le contenu privé des conversations de votre enfant.</p>
+            <p>Cette notice suit le parcours réel, du premier profil enfant aux contacts approuvés, sans afficher le contenu privé de ses conversations.</p>
           </div>
+        </section>
+
+        <section className="parent-help-section" aria-labelledby="parent-help-start-title">
+          <div className="parent-help-section__heading">
+            <span><UserCircle size={22} weight="fill" /></span>
+            <div><small>Premiers pas</small><h2 id="parent-help-start-title">Du compte parent à l’espace enfant</h2></div>
+          </div>
+          <ol className="parent-help-steps">
+            <li><span>1</span><div><strong>Créez votre compte parent</strong><p>L’inscription annonce immédiatement l’étape suivante : ajouter le profil de votre premier enfant.</p></div></li>
+            <li><span>2</span><div><strong>Ajoutez le profil de votre enfant</strong><p>Choisissez son prénom, son âge, un pseudo privé de connexion et un mot de passe qu’il utilisera seul.</p></div></li>
+            <li><span>3</span><div><strong>Gardez les deux identifiants distincts</strong><p>Le pseudo et le mot de passe servent à se connecter. Le code SC- sert uniquement à partager un contact ou un QR.</p></div></li>
+            <li><span>4</span><div><strong>Passez à son espace quand vous êtes prêt</strong><p>Après la création, vous pouvez rester dans l’espace parent ou ouvrir directement la connexion de l’enfant avec son pseudo déjà rempli.</p></div></li>
+          </ol>
+          <div className="parent-help-callout"><LockKey size={18} weight="fill" /><p>Le mot de passe enfant n’est affiché qu’au moment de la création. Vous pourrez ensuite revoir son pseudo ou remplacer son mot de passe depuis « Gestion ».</p></div>
         </section>
 
         <section className="parent-help-section parent-help-section--contacts" aria-labelledby="parent-help-contacts-title">
           <div className="parent-help-section__heading">
             <span><UserPlus size={22} weight="fill" /></span>
-            <div><small>Ajouter un ami</small><h2 id="parent-help-contacts-title">Quand un enfant saisit un identifiant</h2></div>
+            <div><small>Ajouter un ami</small><h2 id="parent-help-contacts-title">Deux familles valident la demande</h2></div>
           </div>
           <ol className="parent-help-steps">
             <li><span>1</span><div><strong>L’enfant saisit l’identifiant privé</strong><p>Il utilise le code exact commençant par SC-. Il n’existe ni recherche publique ni ajout par numéro de téléphone.</p></div></li>
-            <li><span>2</span><div><strong>Son parent confirme l’envoi</strong><p>« Continuer avec mon parent » ferme uniquement la session enfant pour permettre l’authentification du parent sur cet appareil.</p></div></li>
-            <li><span>3</span><div><strong>L’autre famille répond</strong><p>Un parent ou coparent de l’enfant destinataire accepte ou refuse la demande depuis son espace protégé.</p></div></li>
-            <li><span>4</span><div><strong>Le contact devient disponible</strong><p>Après acceptation seulement, la relation et la conversation privée entre les deux enfants sont créées.</p></div></li>
+            <li><span>2</span><div><strong>Son parent retrouve directement la demande</strong><p>Après connexion, « Demande pour [prénom] » s’ouvre avec le bon profil déjà verrouillé. Il reste seulement à confirmer l’envoi.</p></div></li>
+            <li><span>3</span><div><strong>La demande apparaît dans « Envoyées »</strong><p>Elle reste visible avec la mention « En attente de l’autre famille » et ne demande plus d’action à votre famille.</p></div></li>
+            <li><span>4</span><div><strong>L’autre famille la retrouve dans « À valider »</strong><p>Un parent ou coparent de l’enfant destinataire accepte ou refuse depuis son espace protégé.</p></div></li>
+            <li><span>5</span><div><strong>Le contact devient disponible</strong><p>Après acceptation seulement, la relation et la conversation privée entre les deux enfants sont créées.</p></div></li>
           </ol>
           <div className="parent-help-callout"><LockKey size={18} weight="fill" /><p>Un identifiant personnel, invalide, déjà en attente, déjà approuvé ou appartenant à la même famille est refusé. Un enfant peut uniquement demander l’ajout d’un autre enfant.</p></div>
           <button type="button" className="parent-help-action" onClick={onOpenMessages}><ChatCircleDots size={19} weight="fill" /> Ouvrir les conversations</button>
@@ -899,6 +948,20 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
               <li><LockKey size={17} weight="fill" /><span><strong>Les mots de passe protègent les accès</strong><small>Changer le mot de passe parent révoque les autres sessions. Changer celui d’un enfant révoque toutes ses sessions.</small></span></li>
             </ul>
             <button type="button" className="parent-help-action parent-help-action--secondary" onClick={onOpenSessions}><DeviceMobile size={19} weight="fill" /> Gérer les appareils</button>
+          </section>
+
+          <section className="parent-help-section" aria-labelledby="parent-help-relatives-title">
+            <div className="parent-help-section__heading">
+              <span><UsersThree size={22} weight="fill" /></span>
+              <div><small>Grands-parents et proches</small><h2 id="parent-help-relatives-title">Un accès personnel et limité</h2></div>
+            </div>
+            <ul className="parent-help-list">
+              <li><CheckCircle size={17} weight="fill" /><span><strong>Vous choisissez les enfants concernés</strong><small>Le grand-parent, l’oncle ou la tante voit uniquement les enfants inclus dans son invitation.</small></span></li>
+              <li><LockKey size={17} weight="fill" /><span><strong>Chaque proche possède son propre compte</strong><small>Son accès reste séparé du compte parent et peut réunir plusieurs familles qui l’ont invité.</small></span></li>
+              <li><Shield size={17} weight="fill" /><span><strong>Il ne gère pas la famille</strong><small>Il peut parler et jouer selon vos autorisations, sans modifier les profils, contacts ou protections.</small></span></li>
+              <li><ShieldCheck size={17} weight="fill" /><span><strong>Le contrôle d’âge reste ciblé</strong><small>Seule la relation « Autre proche » — sœur, frère, cousine, cousin ou personne de confiance — demande de confirmer 14 ans ou plus. Les grands-parents, oncles, tantes, parrains et marraines n’ont pas ce contrôle.</small></span></li>
+            </ul>
+            <button type="button" className="parent-help-action parent-help-action--secondary" onClick={() => onChangeSection("management")}><UsersThree size={19} weight="fill" /> Gérer les adultes</button>
           </section>
         </div>
 

@@ -19,6 +19,19 @@ test("un parent et un enfant se connectent avec leurs identifiants privés", asy
   await childContext.close();
 });
 
+test("la notice parent suit le parcours réel de la famille", async ({ page }) => {
+  await loginParent(page);
+  await page.getByRole("button", { name: "Aide et notice parent" }).click();
+
+  await expect(page.getByRole("heading", { name: "Du compte parent à l’espace enfant" })).toBeVisible();
+  await expect(page.getByText("Le code SC- sert uniquement à partager un contact ou un QR.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Deux familles valident la demande" })).toBeVisible();
+  await expect(page.getByText("Demande pour [prénom]")).toBeVisible();
+  await expect(page.getByText("En attente de l’autre famille")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Un accès personnel et limité" })).toBeVisible();
+  await expect(page.getByText(/Seule la relation « Autre proche ».*demande de confirmer 14 ans ou plus/)).toBeVisible();
+});
+
 test("l’inscription parent enregistre les preuves légales versionnées", async ({ page }) => {
   await openPublicEntry(page);
   await page.getByRole("tab", { name: "Inscription" }).click();
@@ -85,6 +98,7 @@ test("un grand-parent rejoint seulement les enfants et communications choisis", 
   await relativePage.goto(invitationLink);
   await expect(relativePage.getByText(/vous invite comme grand-parent/i)).toBeVisible();
   await relativePage.getByRole("tab", { name: "Inscription" }).click();
+  await expect(relativePage.getByLabel("Date de naissance")).toHaveCount(0);
   await relativePage.getByLabel("Votre prénom").fill("Rose");
   await relativePage.getByLabel("Mot de passe", { exact: true }).fill("MamieRose!42");
   await relativePage.getByLabel(/J’accepte les conditions d’utilisation/).check();
@@ -132,6 +146,7 @@ test("un grand-parent rejoint seulement les enfants et communications choisis", 
   await relativePage.goto(secondInvitationLink);
   const acceptanceDialog = relativePage.getByRole("dialog", { name: "Rejoindre Famille Chloé" });
   await expect(acceptanceDialog).toContainText("Invitation · Oncle ou tante");
+  await expect(acceptanceDialog.getByLabel("Date de naissance")).toHaveCount(0);
   await acceptanceDialog.getByRole("button", { name: "Accepter l’invitation" }).click();
 
   await expect(relativePage.getByText("Proche autorisé · 2 familles")).toBeVisible();
@@ -207,6 +222,58 @@ test("un grand-parent rejoint seulement les enfants et communications choisis", 
   await expectNoHorizontalOverflow(relativePage);
 
   await secondParentContext.close();
+  await relativeContext.close();
+  await parentContext.close();
+});
+
+test("un autre proche doit avoir au moins 14 ans", async ({ browser }) => {
+  const parentContext = await browser.newContext();
+  const parentPage = await parentContext.newPage();
+  await loginParent(parentPage);
+  await parentPage.getByRole("button", { name: "Gestion" }).click();
+  await parentPage.getByRole("button", { name: /Adultes de la famille/ }).click();
+
+  const adultsDialog = parentPage.getByRole("dialog", { name: "Adultes de la famille" });
+  await adultsDialog.getByLabel("Lien avec les enfants").selectOption("family_friend");
+  await expect(adultsDialog).toContainText("la personne devra confirmer qu’elle a 14 ans ou plus");
+  await adultsDialog.getByLabel("Adresse e-mail").fill("proche.confiance@e2e.test");
+  await adultsDialog.getByRole("button", { name: "Inviter", exact: true }).click();
+  const invitationLink = await adultsDialog.locator(".family-created-invite code").textContent();
+
+  const relativeContext = await browser.newContext();
+  const relativePage = await relativeContext.newPage();
+  await relativePage.goto(invitationLink);
+  await relativePage.getByRole("tab", { name: "Inscription" }).click();
+  await relativePage.getByLabel("Votre prénom").fill("Sam");
+  await relativePage.getByLabel("Date de naissance").fill("2015-01-01");
+  await relativePage.getByLabel("Mot de passe", { exact: true }).fill("ProcheSam!42");
+  await relativePage.getByLabel(/J’accepte les conditions d’utilisation/).check();
+  await relativePage.getByRole("button", { name: "Créer et rejoindre la famille" }).click();
+
+  await expect(relativePage.getByRole("alert")).toContainText("profil enfant géré par un parent");
+  const rejectedAccount = await queryE2eDatabase(
+    "select id from accounts where email='proche.confiance@e2e.test'",
+  );
+  expect(rejectedAccount.rowCount).toBe(0);
+
+  await relativePage.getByLabel("Date de naissance").fill("2000-01-01");
+  await relativePage.getByRole("button", { name: "Créer et rejoindre la famille" }).click();
+  await expect(relativePage.getByRole("navigation", { name: "Navigation du proche autorisé" })).toBeVisible();
+
+  const verifiedAccount = await queryE2eDatabase(
+    `select trusted_age_verified_at is not null as age_verified,
+            exists(
+              select 1
+              from information_schema.columns
+              where table_schema='public'
+                and table_name='accounts'
+                and column_name='date_of_birth'
+            ) as birth_date_column_exists
+     from accounts
+     where email='proche.confiance@e2e.test'`,
+  );
+  expect(verifiedAccount.rows).toEqual([{ age_verified: true, birth_date_column_exists: false }]);
+
   await relativeContext.close();
   await parentContext.close();
 });

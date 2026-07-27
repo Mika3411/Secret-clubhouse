@@ -27,6 +27,10 @@ export const parentPrivacyPolicy = Object.freeze({
       text: "Prénom ou nom d’usage, adresse e-mail, mot de passe sous forme de hash, identifiant privé, rôle dans la famille, invitations et dates de création ou d’action.",
     },
     {
+      title: "Proches autorisés",
+      text: "Prénom ou nom d’usage, adresse e-mail, mot de passe sous forme de hash, identifiant privé, lien choisi par chaque famille, enfants et fonctions autorisés. Pour la seule catégorie générique « Autre proche » — par exemple une sœur, un frère, une cousine ou un cousin plus âgé — la date de naissance sert à confirmer immédiatement un âge de 14 ans minimum puis n’est pas enregistrée. Seuls le résultat positif « âge vérifié » et sa date de vérification sont conservés. Aucun contrôle d’âge n’est demandé aux grands-parents, oncles, tantes, parrains ou marraines.",
+    },
+    {
       title: "Enfants",
       text: "Prénom ou pseudonyme, âge, nom d’utilisateur privé utilisé uniquement pour la connexion, mot de passe sous forme de hash, identifiant de contact opaque distinct utilisé pour le QR et les demandes approuvées, avatar, état actif ou en pause, réglages de sécurité et horaires définis par le parent.",
     },
@@ -65,7 +69,7 @@ export const parentPrivacyPolicy = Object.freeze({
   ],
   recipients: [
     "Chaque message, média ou appel est accessible uniquement à son auteur, aux participants autorisés de la conversation et aux systèmes techniques nécessaires à son acheminement.",
-    "Les parents et co-parents autorisés accèdent aux profils, contacts, réglages et alertes de sécurité de leur famille. Ils ne voient pas dans le tableau de bord le contenu des conversations de leurs enfants avec leurs amis.",
+    "Les parents et co-parents autorisés accèdent aux profils, contacts, réglages et alertes de sécurité de leur famille. Ils ne voient pas dans le tableau de bord le contenu des conversations de leurs enfants avec leurs amis. Un proche autorisé accède seulement aux enfants et fonctions expressément choisis par chaque famille.",
     "L’éditeur et les personnes strictement habilitées peuvent intervenir lorsque cela est nécessaire à la sécurité, au support ou à l’exercice d’un droit.",
     "Un administrateur nominativement autorisé peut consulter des nombres agrégés et, pour la sécurité ou le support, les informations de compte strictement listées ci-dessus. Les consultations individuelles et les suspensions sont journalisées, les comptes administrateurs y sont protégés et les contenus de communication restent exclus. Son propre compte et sa famille sont exclus des calculs statistiques.",
     "Les autorités administratives ou judiciaires reçoivent uniquement les données dont la communication est légalement exigée.",
@@ -117,8 +121,8 @@ export const parentPrivacyPolicy = Object.freeze({
   ],
   retention: [
     {
-      data: "Comptes parent, famille, profils enfants et réglages",
-      duration: "Pendant l’utilisation du service, puis au maximum 2 ans après la dernière activité de l’ensemble de la famille. Les petits noms privés choisis par un enfant suivent la durée de vie de son profil. Une connexion ou un heartbeat renouvelle ce délai. Un profil enfant supprimé par le parent est effacé immédiatement avec ses données associées.",
+      data: "Comptes adultes, famille, profils enfants et réglages",
+      duration: "Pendant l’utilisation du service, puis au maximum 2 ans après la dernière activité du compte ou de l’ensemble de la famille selon son rattachement. La date de naissance utilisée pour contrôler un « Autre proche » n’est pas conservée ; seuls le résultat positif « âge vérifié » et sa date de vérification suivent la durée de vie de ce compte. Les petits noms privés choisis par un enfant suivent la durée de vie de son profil. Une connexion ou un heartbeat renouvelle ce délai. Un profil enfant supprimé par le parent est effacé immédiatement avec ses données associées.",
     },
     {
       data: "Messages et médias",
@@ -130,7 +134,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       data: "Invitations et demandes de contact",
-      duration: "Une invitation de co-parent est utilisable 7 jours, puis sa trace est supprimée 90 jours après son acceptation, sa révocation ou son expiration. Une demande de contact expire après 30 jours et sa trace est supprimée après 180 jours.",
+      duration: "Une invitation d’adulte — co-parent ou proche autorisé — est utilisable 7 jours, puis sa trace est supprimée 90 jours après son acceptation, sa révocation ou son expiration. Une demande de contact expire après 30 jours et sa trace est supprimée après 180 jours.",
     },
     {
       data: "Jeux multijoueurs",
@@ -186,6 +190,11 @@ export const childPrivacyCards = Object.freeze([
     icon: "backpack",
     title: "Ce que l’application garde",
     text: "Ton prénom ou pseudo, ton âge, ton avatar, ton pseudo secret, l’ID de ton QR, tes contacts, messages, médias, jeux et récompenses. Elle garde aussi les petits noms choisis pour ta famille, les réglages de ton parent et un signal disant si l’app est ouverte ou en veille.",
+  },
+  {
+    icon: "person",
+    title: "Les autres personnes",
+    text: "Un grand-parent, un oncle, une tante, un parrain ou une marraine peut être invité directement. Pour « Autre proche » — par exemple une grande sœur ou une cousine — l’app vérifie les 14 ans sans garder la date de naissance. À 13 ans ou moins, un parent doit gérer le profil.",
   },
   {
     icon: "sparkle",

@@ -130,8 +130,8 @@ test("le dossier AIPD couvre les éléments minimaux et les preuves du dépôt",
   assert.match(dossier, /consultation préalable de la CNIL/i);
 });
 
-test("la réévaluation 1.23 conserve A07 ouverte et tient compte de la révocation parentale", () => {
-  assert.equal(aipdVersion, "1.23");
+test("la réévaluation 1.26 conserve A07 ouverte et tient compte de la révocation parentale", () => {
+  assert.equal(aipdVersion, "1.26");
 
   const statusByAction = Object.fromEntries(aipdActions.map(({ id, status }) => [id, status]));
   assert.deepEqual(
@@ -170,6 +170,19 @@ test("la réévaluation 1.23 conserve A07 ouverte et tient compte de la révocat
   assert.match(aipdDecision.reason, /A02, A03, A04, A07 et A08 restent ouvertes/i);
 });
 
+test("l’AIPD 1.26 documente la suppression de la date de naissance après le contrôle 14+", () => {
+  const dossier = fs.readFileSync(dossierPath, "utf8");
+  const contactRisk = aipdRisks.find(({ id }) => id === "R03");
+
+  assert.match(dossier, /date complète n’est pas enregistrée/i);
+  assert.match(dossier, /sans colonne PostgreSQL, journalisation, export ni conservation/i);
+  assert.match(dossier, /colonne PostgreSQL qui la contenait est supprimée par la migration/i);
+  assert.ok(contactRisk?.existingMeasures.some((measure) => (
+    /date est abandonnée après le contrôle/i.test(measure)
+    && /horodatage du résultat positif est persisté/i.test(measure)
+  )));
+});
+
 test("A07 est rouverte par les fournisseurs actifs et l’APK public", () => {
   const action = aipdActions.find(({ id }) => id === "A07");
   assert.equal(action?.status, "open");
@@ -189,7 +202,7 @@ test("A07 est rouverte par les fournisseurs actifs et l’APK public", () => {
   assert.match(action?.scopeRestriction ?? "", /coffre de session natif persistant/i);
 });
 
-test("l’AIPD 1.23 décrit sans surpromesse les sauvegardes et la révocation du jeton mobile", () => {
+test("l’AIPD 1.26 décrit sans surpromesse les sauvegardes et la révocation du jeton mobile", () => {
   const dossier = fs.readFileSync(dossierPath, "utf8");
   const risk = aipdRisks.find(({ id }) => id === "R02");
 

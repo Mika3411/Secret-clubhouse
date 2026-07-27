@@ -11,6 +11,7 @@ process.env.CONTENT_ENCRYPTION_KEY = "privacy-rights-unit-test-content-key-with-
 const parentId = "11111111-1111-4111-8111-111111111111";
 const childId = "22222222-2222-4222-8222-222222222222";
 const familyId = "33333333-3333-4333-8333-333333333333";
+const relativeId = "77777777-7777-4777-8777-777777777777";
 
 function subjectRow(requesterId = parentId) {
   return {
@@ -36,11 +37,11 @@ function subjectRow(requesterId = parentId) {
   };
 }
 
-function exportExecutor(requesterId) {
+function exportExecutor(requesterId, exportedSubject = subjectRow(requesterId)) {
   return {
     async query(sql) {
       const statement = String(sql);
-      if (statement.includes("from accounts requester")) return { rows: [subjectRow(requesterId)], rowCount: 1 };
+      if (statement.includes("from accounts requester")) return { rows: [exportedSubject], rowCount: 1 };
       if (statement.includes("from families family")) return { rows: [{ id: familyId, name: "Famille test", parent_role: requesterId === parentId ? "primary" : null }] };
       if (statement.includes("from contact_relationships")) return { rows: [] };
       if (statement.includes("from account_contact_aliases")) {
@@ -121,6 +122,41 @@ test("l’enfant retrouve le contenu de ses propres messages dans son export", a
   assert.equal(exported.authoredMessages[0].contentWithheld, false);
   assert.equal(exported.messageReactions[0].messageId, "44444444-4444-4444-8444-444444444444");
   assert.equal(exported.privateContactNames[0].original_name, "Mickael");
+});
+
+test("l’export d’un autre proche contient seulement le résultat et la date de vérification 14+", async () => {
+  const verifiedAt = "2026-07-27T15:30:00.000Z";
+  const relativeSubject = {
+    ...subjectRow(relativeId),
+    id: relativeId,
+    role: "relative",
+    display_name: "Sam",
+    email: "sam@example.test",
+    contact_id: "SC-777-777-777",
+    username: null,
+    age: null,
+    trusted_age_verified_at: verifiedAt,
+    requester_role: "relative",
+    requester_email: "sam@example.test",
+    requester_contact_id: "SC-777-777-777",
+  };
+  const exported = await createReadablePrivacyExport(
+    exportExecutor(relativeId, relativeSubject),
+    {
+      requesterId: relativeId,
+      subjectId: relativeId,
+      controllerEmail: "contact@example.test",
+      decryptContent: (message) => ({
+        body: message.body,
+        mediaName: message.media_name,
+        mediaType: message.media_type,
+      }),
+    },
+  );
+
+  assert.equal(exported.account.trustedAgeVerified, true);
+  assert.equal(exported.account.trustedAgeVerifiedAt, verifiedAt);
+  assert.equal(Object.hasOwn(exported.account, "birthDate"), false);
 });
 
 test("une demande déposée par l’enfant est accusée et tracée", async () => {

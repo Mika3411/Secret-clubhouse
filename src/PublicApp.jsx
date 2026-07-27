@@ -136,9 +136,7 @@ function FamilyPublicApp() {
   const loginParent = async (credentials) => {
     const { account: authenticatedAccount } = await api.login(credentials);
     try {
-      if (familyInviteToken) await api.acceptFamilyInvitation(familyInviteToken);
       localStorage.setItem(rememberedParentEmailKey, credentials.email.trim().toLowerCase());
-      if (familyInviteToken) dismissFamilyInvitation();
       setAccount(authenticatedAccount);
     } catch (error) {
       await api.logout().catch(() => clearToken());
@@ -153,6 +151,7 @@ function FamilyPublicApp() {
           token: familyInviteToken,
           name: parent.name,
           password: parent.password,
+          birthDate: parent.birthDate,
           legal: parent.legal,
         })
       : await api.register(parent);

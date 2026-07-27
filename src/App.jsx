@@ -832,15 +832,9 @@ export function App({ initialAccount = null, initialRegistration = false }) {
   const loginParent = async (credentials) => {
     const { account } = await api.login(credentials);
     try {
-      if (familyInviteToken) await api.acceptFamilyInvitation(familyInviteToken);
       localStorage.setItem(rememberedParentEmailKey, credentials.email.trim().toLowerCase());
       await openAuthenticatedSession(account);
       setChildLoginHandoff(null);
-      if (familyInviteToken) {
-        clearFamilyInviteFromUrl();
-        setFamilyInviteToken("");
-        setFamilyInvitation(null);
-      }
     } catch (error) {
       await api.logout().catch(() => clearToken());
       throw error;
@@ -853,6 +847,7 @@ export function App({ initialAccount = null, initialRegistration = false }) {
           token: familyInviteToken,
           name: parent.name,
           password: parent.password,
+          birthDate: parent.birthDate,
           legal: parent.legal,
         })
       : await api.register(parent);
@@ -944,9 +939,9 @@ export function App({ initialAccount = null, initialRegistration = false }) {
     setFamilyInvitationError("");
   };
 
-  const acceptCurrentFamilyInvitation = async () => {
+  const acceptCurrentFamilyInvitation = async ({ birthDate } = {}) => {
     if (!familyInviteToken || !["parent", "relative"].includes(session?.role)) throw new Error("Aucune invitation familiale à accepter.");
-    await api.acceptFamilyInvitation(familyInviteToken);
+    await api.acceptFamilyInvitation(familyInviteToken, { birthDate });
     clearFamilyInviteFromUrl();
     setFamilyInviteToken("");
     setFamilyInvitation(null);

@@ -54,7 +54,7 @@ function ParentPrivacyPolicy() {
 
       <section aria-labelledby="privacy-data-title">
         <div className="privacy-section-title"><Database size={22} weight="fill" /><div><span>Données traitées</span><h3 id="privacy-data-title">Quelles informations utilisons-nous ?</h3></div></div>
-        <p>Les données viennent du parent ou du co-parent, de l’enfant lorsqu’il utilise son profil, des autres participants lorsqu’ils communiquent, et du terminal pour les informations techniques nécessaires.</p>
+        <p>Les données viennent du parent, du co-parent ou du proche invité, de l’enfant lorsqu’il utilise son profil, des autres participants lorsqu’ils communiquent, et du terminal pour les informations techniques nécessaires.</p>
         <div className="privacy-data-grid">
           {parentPrivacyPolicy.dataCategories.map((category) => <article key={category.title}><h4>{category.title}</h4><p>{category.text}</p></article>)}
         </div>
@@ -78,7 +78,7 @@ function ParentPrivacyPolicy() {
 
       <section aria-labelledby="privacy-required-title">
         <div className="privacy-section-title"><ShieldCheck size={22} weight="fill" /><div><span>Obligatoire ou facultatif</span><h3 id="privacy-required-title">Que se passe-t-il si une donnée manque ?</h3></div></div>
-        <p>L’e-mail du parent, son mot de passe et les informations minimales d’un profil enfant sont nécessaires pour créer et sécuriser la famille. Sans eux, le compte ou la fonction demandée ne peut pas fonctionner. Les notifications, l’accès au microphone, la caméra, l’envoi de médias, l’avatar détaillé et les invitations de co-parent sont facultatifs. Les refuser désactive seulement la fonction concernée.</p>
+        <p>L’e-mail et le mot de passe de l’adulte, ainsi que les informations minimales d’un profil enfant, sont nécessaires pour créer et sécuriser les accès. La date de naissance est nécessaire uniquement au moment d’accepter une invitation générique comme « Autre proche » afin de vérifier immédiatement que la personne a au moins 14 ans. Elle n’est pas enregistrée : seuls le résultat positif « âge vérifié » et sa date de vérification sont conservés. Sans ces données, le compte ou la fonction demandée ne peut pas fonctionner. Les notifications, l’accès au microphone, la caméra, l’envoi de médias, l’avatar détaillé et les invitations d’un autre adulte sont facultatifs. Les refuser désactive seulement la fonction concernée.</p>
       </section>
 
       <section aria-labelledby="privacy-recipient-title">

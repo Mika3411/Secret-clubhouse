@@ -335,6 +335,8 @@ export async function createReadablePrivacyExport(executor, {
       contactId: subject.contact_id,
       username: subject.username,
       age: subject.age === null ? null : Number(subject.age),
+      trustedAgeVerified: subject.role === "relative" ? Boolean(subject.trusted_age_verified_at) : null,
+      trustedAgeVerifiedAt: subject.role === "relative" ? safeDate(subject.trusted_age_verified_at) : null,
       avatar: subject.avatar_config,
       status: subject.status,
       safetySettings: subject.safety_settings,

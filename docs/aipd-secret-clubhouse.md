@@ -1,8 +1,8 @@
 # Analyse d’impact relative à la protection des données (AIPD)
 
 **Traitement :** Secret Clubhouse — service familial privé de communication et d’activités pour enfants de 6 à 13 ans
-**Version :** 1.23<br>
-**Date d’évaluation :** 26 juillet 2026
+**Version :** 1.26<br>
+**Date d’évaluation :** 27 juillet 2026
 **Responsable du traitement :** Mickael Thorez, éditeur individuel non professionnel
 **Contact RGPD :** `contact@secret-clubhouse.fr`
 **État :** réévaluation fondée sur les preuves disponibles, non validée par le responsable du traitement
@@ -43,6 +43,7 @@ L’échelle, les critères, les risques et les actions sont également consign�
 ### Périmètre inclus
 
 - inscription et authentification des parents et co-parents ;
+- invitation et authentification des proches autorisés, avec vérification 14+ limitée à la catégorie générique « Autre proche » — sœur, frère, cousine, cousin ou autre personne de confiance ;
 - maintien de la session web et persistance locale du jeton d’authentification dans les clients Android/iOS ;
 - création, gestion, pause et suppression des profils enfants ;
 - identifiants privés, QR et approbation des contacts ;
@@ -96,6 +97,7 @@ Les contrôles indiqués comme existants sont des contrôles présents dans le d
 |---|---|---|
 | Mickael Thorez | Responsable du traitement | Détermine les finalités et moyens, valide l’AIPD et traite les droits. |
 | Parents et co-parents | Utilisateurs adultes | Gèrent la famille, les protections et les contacts ; ne voient pas les conversations enfant-ami auxquelles ils ne participent pas. |
+| Proches autorisés | Utilisateurs à accès limité | Communiquent uniquement avec les enfants et par les fonctions choisis par chaque famille, sans gestion familiale. La catégorie « Autre proche » est réservée aux personnes de 14 ans ou plus. |
 | Enfants de 6 à 13 ans | Personnes concernées et utilisateurs | Communiquent avec des membres autorisés et utilisent les activités privées. |
 | Administrateur de plateforme nommé | Personne habilitée | Consulte les agrégats et, pour la sécurité ou le support, l’identité familiale, les identifiants privés, états et dates de compte ; peut suspendre ou réactiver un compte non administrateur. Aucun compte par défaut, contenu de communication, mot de passe, jeton ou secret ; chaque lecture et action est journalisée. |
 | Render Services, Inc. | Sous-traitant d’hébergement | Service Node.js, offre PostgreSQL managée, sauvegardes et journaux techniques. Le Blueprint cible Francfort pour les nouvelles ressources ; une ressource existante reste supposée en Oregon jusqu’à vérification ou migration. |
@@ -110,7 +112,7 @@ Le dossier contractuel et de transfert de chacun doit être vérifié et archiv�
 
 ### 5.1 Parcours et flux
 
-1. Un adulte reçoit l’information de confidentialité, crée un compte parent et une famille, puis crée un profil enfant.
+1. Un adulte reçoit l’information de confidentialité, crée un compte parent et une famille, puis crée un profil enfant. Le parent principal peut ensuite inviter un co-parent ou un proche autorisé. Un grand-parent, un oncle, une tante, un parrain ou une marraine ne fournit pas de date de naissance. Pour la seule catégorie générique « Autre proche » — par exemple une grande sœur ou une cousine — l’invité fournit sa date de naissance ; l’API l’évalue uniquement pendant la requête, refuse l’accès sous 14 ans et oriente la personne vers un profil enfant géré par un parent. La date complète n’est pas enregistrée : PostgreSQL conserve uniquement le résultat positif par l’horodatage de vérification. Une vérification déjà attachée au compte n’est pas répétée lors d’une invitation par une autre famille.
 2. L’API Render authentifie le parent par e-mail ou l’enfant par son nom d’utilisateur privé globalement unique. L’identifiant de contact n’est jamais accepté pour la connexion. Une session opaque est remise au client ; PostgreSQL n’en conserve que l’empreinte SHA-256 révocable, un identifiant d’installation opaque non affiché, un libellé général d’appareil, la date de création, la dernière activité et l’échéance. Sur le web, le secret reste dans un cookie `__Host-` HttpOnly. Sur mobile, il est conservé localement dans un élément Keychain iOS non synchronisable et non migrable vers un autre appareil, ou dans des préférences Android chiffrées par AES-GCM avec une clé non exportable de l’Android Keystore ; la sauvegarde de l’application Android est désactivée. Le jeton iOS `ThisDeviceOnly` peut toutefois être restauré sur le même appareil depuis sa propre sauvegarde. Le parent voit uniquement le libellé et les dates de ses sessions : jamais le hash, le jeton ou l’identifiant d’installation.
 3. Les profils possèdent un identifiant de contact opaque distinct du nom d’utilisateur. Il sert uniquement au QR et au routage d’une demande exacte, qui ne crée une relation externe qu’après approbation parentale.
 4. Pour un message, l’API contrôle la session, la participation, le statut du profil, l’horaire dans le fuseau parental IANA configuré et, pour un média visuel, l’autorisation de partage. Ce même fuseau est joint au planning renvoyé au client afin que l’interface n’utilise jamais implicitement l’heure locale du téléphone. Avant persistance, chaque fichier temporaire est identifié par ses octets ; le MIME déclaré doit correspondre au format détecté et un message vocal est refusé si sa durée mesurée dépasse deux minutes ou ne peut pas être établie.
@@ -125,6 +127,7 @@ Le dossier contractuel et de transfert de chacun doit être vérifié et archiv�
 | Catégorie | Données nécessaires |
 |---|---|
 | Parents/co-parents | E-mail, nom affiché, hash du mot de passe, identifiant opaque, rôle familial, sessions, préférences et preuves légales. |
+| Proches autorisés | E-mail, nom affiché, hash du mot de passe, identifiant opaque, relation déclarée par chaque famille, enfants et fonctions autorisés ; résultat positif « âge vérifié » et date de vérification uniquement pour la catégorie « Autre proche ». La date de naissance utilisée pendant le contrôle n’est pas enregistrée. |
 | Enfants | Nom d’usage, âge, identifiant opaque, nom d’utilisateur privé, hash du mot de passe, avatar, famille, état du profil et préférences. |
 | Relations | Demandes et approbations de contact, participants aux conversations, invitations et état des jeux. |
 | Communications | Texte, médias, message vocal, type et nom de fichier, expéditeur, conversation, horodatages, reçu/vu, référence de réponse, indicateur de transfert, codes et compteurs de réaction, saisie temporaire. |
@@ -149,6 +152,7 @@ La matrice complète et ses points de départ figurent dans `docs/data-retention
 - médias et métadonnées d’appel : 90 jours ;
 - jetons push : 180 jours depuis leur dernier enregistrement ;
 - comptes/familles inactifs : 730 jours ;
+- résultat positif « âge vérifié » et date de vérification d’un « Autre proche » : durée de vie de son compte, puis suppression avec celui-ci au plus tard après 730 jours d’inactivité ; la date de naissance n’est jamais persistée ;
 - sauvegardes PostgreSQL : 3 à 7 jours selon le plan Render ;
 - demandes de droits et preuves légales : 5 ans lorsque cette preuve est nécessaire.
 
@@ -200,6 +204,7 @@ Le point de vue de parents et d’enfants n’a pas encore été recueilli et au
 - pas de message ni nom dans les notifications ;
 - pas de contenu des conversations enfant-ami dans le tableau parent ;
 - annuaire de support limité aux informations de compte nécessaires, séparé des conversations, médias, relations extérieures, jetons et secrets ;
+- date de naissance d’un « Autre proche » évaluée uniquement en mémoire pendant la requête, sans colonne PostgreSQL, journalisation, export ni conservation après le contrôle ;
 - présence visible uniquement par la personne elle-même, sa famille ou ses contacts approuvés, sans heure exacte ni historique individuel ;
 - permission caméra et microphone seulement au moment de l’usage ;
 - données temps réel rapidement expirées ;
@@ -365,6 +370,12 @@ La version 1.22 ajoute dans l’espace parent la liste minimisée des sessions a
 
 La version 1.23 ajoute une notice parent accessible par l’onglet utilitaire « ? » et reconstruit l’APK Android public en version 1.14 (`versionCode 15`) avec le même client vérifié. La notice explique l’approbation des contacts, les protections, la révocation des appareils, les effets des changements de mot de passe et l’accès aux informations de confidentialité ; elle n’ajoute aucune collecte, finalité, durée, catégorie de destinataire ou transfert. Le code de version Android supérieur permet l’installation comme mise à jour du prototype. L’identité de signature de test reste inchangée : le constat A07 correspondant demeure élevé et ouvert, sans autorisation d’usage par des enfants réels.
 
+La version 1.24 formalise les proches autorisés. Les grands-parents, oncles, tantes, parrains et marraines conservent un parcours direct sans date de naissance. La catégorie générique « Autre proche » couvre notamment une sœur, un frère, une cousine ou un cousin plus âgé et exige une date de naissance validée côté serveur afin de bloquer tout compte de personne âgée de 13 ans ou moins, laquelle doit rester dans un profil enfant sous contrôle parental. La date et l’horodatage de vérification suivent la durée de vie du seul compte concerné, figurent dans son export de droits et ne sont pas exposés dans l’annuaire administrateur. Cette mesure réduit le risque qu’un enfant contourne le contrôle parental sans modifier les scores résiduels existants ni fermer les actions encore ouvertes.
+
+La version 1.25 applique une minimisation supplémentaire à ce contrôle. La date de naissance est évaluée uniquement en mémoire dans la requête d’acceptation, puis immédiatement abandonnée ; la colonne PostgreSQL qui la contenait est supprimée par la migration, ce qui efface aussi les éventuelles valeurs antérieures. Le compte conserve seulement le résultat positif « âge vérifié », représenté par son horodatage de vérification et exposé comme tel dans l’export de droits. Cette réduction de données n’ajoute ni finalité, ni destinataire, ni transfert, ni durée et ne modifie pas les scores résiduels.
+
+La version 1.26 synchronise le même client web vérifié dans Android et iOS, porte les deux projets à la version mobile 1.15 (`versionCode` et build local 16), reconstruit l’APK public et déclenche sur `main` l’archive iOS signée par le workflow macOS/TestFlight. Cette reconstruction ne modifie ni les finalités, ni les données, ni les destinataires, ni les transferts, ni les durées. L’APK conserve l’identité de signature de prototype déjà documentée et l’IPA dépend toujours des éléments de signature Apple isolés dans l’environnement GitHub `testflight` ; A07 reste donc ouverte et aucune autorisation d’usage par des enfants réels n’en découle.
+
 ### 10.4 Consultation préalable de la CNIL
 
 L’[article 36 du RGPD](https://www.cnil.fr/fr/reglement-europeen-protection-donnees/chapitre4) et la [procédure de soumission de la CNIL](https://www.cnil.fr/fr/services-en-ligne/soumettre-une-analyse-dimpact-relative-la-protection-des-donnees-aipd-la-cnil) imposent une consultation préalable lorsque l’AIPD conclut à un risque résiduel élevé après prise en compte des mesures destinées à l’atténuer.
@@ -421,7 +432,7 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 | Élément | Décision préparée |
 |---|---|
 | Responsable appelé à décider | Mickael Thorez, responsable du traitement |
-| Date de préparation | 26 juillet 2026 |
+| Date de préparation | 27 juillet 2026 |
 | Date d’effet | Aucune tant que Mickael Thorez n’a pas daté et signé la décision |
 | Périmètre | Ensemble des traitements listés au § 3 : comptes familiaux et enfants, contacts, communications et médias, présence, WebRTC, notifications, sessions web et coffres mobiles, règles parentales, Clubhouse et jeux, sécurité, conservation, droits, Render/PostgreSQL et fournisseurs réseau/push |
 | Décision proposée | **Ne pas valider l’AIPD et ne pas autoriser la production** |
@@ -432,7 +443,7 @@ Le rapport daté `docs/a06-validation-postgresql-2026-07-23.md` consigne l’env
 
 ### Déclaration réservée à Mickael Thorez
 
-> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.23, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
+> Je soussigné **Mickael Thorez**, responsable du traitement, confirme avoir examiné le périmètre, les preuves, les scores résiduels, les réserves et la conclusion relative à la consultation préalable. Dans l’état documenté par la version 1.26, je maintiens l’interdiction de mise en production de Secret Clubhouse auprès d’enfants réels.
 
 | Champ à compléter personnellement | Valeur |
 |---|---|

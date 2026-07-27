@@ -2912,6 +2912,10 @@
 .family-invite-account > svg:last-child { color: #1ead86; }
 .family-invite-account.has-error { color: #8f2445; border-color: #efc3d0; background: #fff0f4; }
 .family-invite-account.has-error > svg:last-child { color: #a72c50; }
+.family-invite-age-field { display: grid; width: 100%; gap: 5px; margin-top: 12px; text-align: left; color: #51486a; font-size: 9px; font-weight: 900; }
+.family-invite-age-field input { width: 100%; min-height: 44px; padding: 0 11px; color: #38314e; border: 1px solid #dcd5ea; border-radius: 12px; outline: 0; background: #faf9fd; font: inherit; }
+.family-invite-age-field input:focus { border-color: #7559db; box-shadow: 0 0 0 3px rgba(117, 89, 219, .11); }
+.family-invite-age-field small { color: #777183; font-size: 8.5px; font-weight: 700; line-height: 1.4; }
 .family-invite-acceptance .family-invite-error { width: 100%; }
 .family-invite-acceptance__actions { display: grid; width: 100%; grid-template-columns: .9fr 1.35fr; gap: 7px; margin-top: 14px; }
 .family-invite-acceptance__actions button { display: flex; min-height: 44px; align-items: center; justify-content: center; gap: 4px; padding: 0 8px; color: #6c627e; border: 1px solid #ddd7e8; border-radius: 13px; background: #fff; font-size: 8.5px; font-weight: 900; }
@@ -3464,6 +3468,13 @@
   margin: 0;
   color: #4e4773;
   font-size: 0.76rem;
+}
+
+.trusted-access-note--age {
+  color: #735123;
+  border-radius: 10px;
+  background: #fff5dd;
+  padding: 8px 10px;
 }
 
 .trusted-adult-dashboard {

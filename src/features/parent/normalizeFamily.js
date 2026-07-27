@@ -15,7 +15,7 @@ export function normalizeFamily(payload, currentParent = {}) {
     name: adult.name ?? adult.displayName ?? adult.display_name ?? "Proche",
     contactId: adult.contactId ?? adult.contact_id ?? "",
     relationshipType: adult.relationshipType ?? adult.relationship_type ?? "family_friend",
-    relationshipLabel: adult.relationshipLabel ?? adult.relationship_label ?? "Proche de confiance",
+    relationshipLabel: adult.relationshipLabel ?? adult.relationship_label ?? "Autre proche",
     children: (adult.children ?? []).map((child) => ({
       ...child,
       id: child.id ?? child.childId ?? child.child_id,
@@ -36,7 +36,7 @@ export function normalizeFamily(payload, currentParent = {}) {
     id: item.id ?? item.familyId ?? item.family_id,
     name: item.name ?? item.familyName ?? item.family_name ?? "Famille",
     relationshipType: item.relationshipType ?? item.relationship_type ?? "family_friend",
-    relationshipLabel: item.relationshipLabel ?? item.relationship_label ?? "Proche de confiance",
+    relationshipLabel: item.relationshipLabel ?? item.relationship_label ?? "Autre proche",
     children: (item.children ?? []).map((child) => ({
       ...child,
       id: child.id ?? child.childId ?? child.child_id,

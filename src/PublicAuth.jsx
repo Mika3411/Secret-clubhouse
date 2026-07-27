@@ -16,6 +16,10 @@ import { childLoginFeedback } from "./auth-feedback";
 import { childUsernameMaxLength, isPrivateContactId, isValidChildUsername, normalizeChildUsername } from "./child-username";
 import { isLegalNoticePath, legalNoticeRoute, privacyAudienceFromPath, privacyRoutes } from "./legal-routes";
 import { legalDocumentVersions, registrationLegalEvidence } from "./legal-versions";
+import {
+  evaluateTrustedAdultBirthDate,
+  maximumTrustedAdultBirthDate,
+} from "../shared/trusted-adult-age";
 
 export const rememberedParentEmailKey = "secret-clubhouse-parent-email";
 
@@ -40,9 +44,12 @@ export function AuthScreen({
   onDismissFamilyInvite,
 }) {
   const isRelativeInvite = familyInvitation?.role === "relative";
+  const requiresTrustedAdultAgeVerification = isRelativeInvite
+    && familyInvitation?.relationshipType === "family_friend";
   const [audience, setAudience] = useState(initialAudience === "child" ? "child" : "parent");
   const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
+  const [birthDate, setBirthDate] = useState("");
   const [email, setEmail] = useState(() => localStorage.getItem(rememberedParentEmailKey) ?? "");
   const [childUsername, setChildUsername] = useState(initialChildUsername);
   const [password, setPassword] = useState("");
@@ -55,6 +62,7 @@ export function AuthScreen({
   const [error, setError] = useState("");
   const [invalidFields, setInvalidFields] = useState([]);
   const nameRef = useRef(null);
+  const birthDateRef = useRef(null);
   const emailRef = useRef(null);
   const childUsernameRef = useRef(null);
   const passwordRef = useRef(null);
@@ -73,6 +81,7 @@ export function AuthScreen({
     setInvalidFields(fields);
     const firstInvalidRef = fieldToFocus ?? {
       name: nameRef,
+      birthDate: birthDateRef,
       email: emailRef,
       username: childUsernameRef,
       password: passwordRef,
@@ -186,8 +195,21 @@ export function AuthScreen({
       return;
     }
     const cleanEmail = email.trim().toLowerCase();
+    const submittedBirthDate = birthDateRef.current?.value || birthDate;
+    const trustedAdultAge = mode === "register" && requiresTrustedAdultAgeVerification
+      ? evaluateTrustedAdultBirthDate(submittedBirthDate)
+      : { valid: true };
+    if (!trustedAdultAge.valid && trustedAdultAge.reason === "underage") {
+      showAuthError(
+        "À 13 ans ou moins, cette personne doit utiliser un profil enfant géré par un parent.",
+        ["birthDate"],
+        birthDateRef,
+      );
+      return;
+    }
     const invalidParentFields = [
       ...(mode === "register" && name.trim().length < 2 ? ["name"] : []),
+      ...(mode === "register" && requiresTrustedAdultAgeVerification && !trustedAdultAge.valid ? ["birthDate"] : []),
       ...(!cleanEmail.includes("@") ? ["email"] : []),
       ...(password.length < 8 ? ["password"] : []),
       ...(mode === "register" && !termsAccepted ? ["terms"] : []),
@@ -196,7 +218,7 @@ export function AuthScreen({
     if (invalidParentFields.length) {
       showAuthError(
         mode === "register"
-          ? `Vérifiez les champs signalés : votre prénom, une adresse e-mail valide, un mot de passe de 8 caractères minimum et ${isRelativeInvite ? "la confirmation demandée" : "les deux confirmations demandées"}.`
+          ? `Vérifiez les champs signalés : votre prénom, ${requiresTrustedAdultAgeVerification ? "une date de naissance confirmant vos 14 ans, " : ""}une adresse e-mail valide, un mot de passe de 8 caractères minimum et ${isRelativeInvite ? "la confirmation demandée" : "les deux confirmations demandées"}.`
           : "Saisissez une adresse e-mail valide et un mot de passe de 8 caractères minimum.",
         invalidParentFields,
       );
@@ -208,6 +230,7 @@ export function AuthScreen({
           name: name.trim(),
           email: cleanEmail,
           password,
+          birthDate: submittedBirthDate || undefined,
           legal: isRelativeInvite
             ? registrationLegalEvidence({ parentalAuthority: false })
             : registrationLegalEvidence(),
@@ -284,6 +307,22 @@ export function AuthScreen({
                 />
               </label>
             )}
+            {audience === "parent" && mode === "register" && requiresTrustedAdultAgeVerification && (
+              <label className="auth-field">
+                <span>Date de naissance</span>
+                <input
+                  ref={birthDateRef}
+                  type="date"
+                  value={birthDate}
+                  max={maximumTrustedAdultBirthDate()}
+                  onChange={(event) => { setBirthDate(event.target.value); clearAuthError(); }}
+                  autoComplete="bday"
+                  aria-invalid={invalidFields.includes("birthDate")}
+                  aria-describedby={describedBy("trusted-adult-age-help", invalidFields.includes("birthDate") && error ? "auth-error" : null)}
+                />
+                <small id="trusted-adult-age-help">Cet accès est réservé aux personnes de 14 ans ou plus. La date sert uniquement à ce contrôle immédiat et n’est pas enregistrée. À 13 ans ou moins, un parent doit créer et gérer le profil enfant.</small>
+              </label>
+            )}
             {audience === "parent" ? (
               <label className="auth-field">
                 <span>Adresse e-mail</span>
@@ -333,7 +372,7 @@ export function AuthScreen({
                 <button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button>
               </span>
             </label>
-            {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> {isRelativeInvite ? "Votre e-mail sert à sécuriser votre accès personnel aux conversations autorisées par la famille." : "Votre e-mail et les profils créés servent à fournir et sécuriser le service familial."} L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
+            {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> {requiresTrustedAdultAgeVerification ? "Votre e-mail sécurise votre accès personnel. Votre date de naissance sert uniquement à vérifier immédiatement que vous avez au moins 14 ans : elle n’est pas enregistrée." : isRelativeInvite ? "Votre e-mail sert à sécuriser votre accès personnel aux conversations autorisées par la famille." : "Votre e-mail et les profils créés servent à fournir et sécuriser le service familial."} L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
             {audience === "parent" && mode === "register" && (
               <div className="auth-legal-confirmations">
                 <label className="auth-consent">
@@ -347,7 +386,7 @@ export function AuthScreen({
               </div>
             )}
             {error && <p className="auth-error" id="auth-error" role="alert">{error}</p>}
-            <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter et accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte et ajouter mon enfant"}</button>
+            <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter pour accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte et ajouter mon enfant"}</button>
           </form>
 
           <div className="auth-legal"><LockKey size={14} weight="fill" /><span>Informations :</span><button type="button" onClick={() => openPrivacy("parent")}>confidentialité parents</button><button type="button" onClick={() => openPrivacy("child")}>confidentialité enfants</button><span aria-hidden="true">•</span><button type="button" onClick={() => setIsTermsOpen(true)}>Conditions d’utilisation</button><span aria-hidden="true">•</span><button type="button" onClick={openLegalNotice}>Mentions légales</button></div>

@@ -29,7 +29,7 @@ test("les politiques parent et enfant sont publiques avant inscription", async (
   await page.goto("/confidentialite");
   const parentPolicy = page.getByRole("dialog", { name: "Politique de confidentialité" });
   await expect(parentPolicy).toBeVisible();
-  await expect(parentPolicy.getByText(/Version du 27 juillet 2026 — version 8/)).toBeVisible();
+  await expect(parentPolicy.getByText(/Version du 27 juillet 2026 — version 10/)).toBeVisible();
   await expect(parentPolicy.getByRole("heading", { name: "Pourquoi et sur quel fondement ?" })).toBeVisible();
 
   await page.goto("/confidentialite-enfants");

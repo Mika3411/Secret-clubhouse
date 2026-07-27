@@ -1,14 +1,14 @@
 # Registre des bases légales — Secret Clubhouse
 
-Version du 24 juillet 2026.
+Version du 27 juillet 2026.
 
 Ce registre complète la politique de confidentialité publique. Une finalité ne change pas de base légale selon qu’un utilisateur a coché ou non une case : la base est déterminée avant le traitement et réévaluée si la finalité, les données ou les garanties changent.
 
 | Identifiant | Personnes | Finalité | Base légale |
 | --- | --- | --- | --- |
-| `parent-account-contract` | Parents et co-parents | Créer le compte adulte, administrer la famille et fournir les fonctions demandées | Exécution du contrat, article 6 § 1 b) |
+| `parent-account-contract` | Parents, co-parents et proches autorisés | Créer le compte adulte, administrer la famille selon le rôle et fournir les fonctions demandées ; pour un « Autre proche », vérifier une seule fois l’âge minimal de 14 ans sans enregistrer la date de naissance | Exécution du contrat, article 6 § 1 b) |
 | `child-family-service` | Enfants de 6 à 13 ans | Créer un profil privé et appliquer les protections familiales | Intérêt légitime, article 6 § 1 f) |
-| `adult-communications-contract` | Parents et co-parents | Acheminer les communications et parties demandées par l’adulte | Exécution du contrat, article 6 § 1 b) |
+| `adult-communications-contract` | Parents, co-parents et proches autorisés | Acheminer les communications et parties demandées par l’adulte | Exécution du contrat, article 6 § 1 b) |
 | `child-communications-legitimate-interest` | Enfants | Acheminer leurs échanges avec des contacts préalablement approuvés | Intérêt légitime, article 6 § 1 f) |
 | `realtime-media` | Participants aux appels | Utiliser temporairement caméra et microphone pendant un appel demandé | Contrat pour l’adulte ; intérêt légitime pour l’enfant |
 | `family-safety` | Membres de la famille | Appliquer horaires, pauses, autorisations et contrôles de contacts | Intérêt légitime, article 6 § 1 f) |
@@ -27,6 +27,8 @@ Fournir aux familles un espace privé de communication adapté aux enfants, sans
 ### 2. Nécessité
 
 Un identifiant privé, le rattachement à une famille, la liste des contacts approuvés, les règles de sécurité et les données strictement nécessaires à l’acheminement des échanges sont indispensables au fonctionnement fermé du service. Une architecture sans compte enfant ou sans contrôle des relations ne permettrait pas d’offrir la même protection. Les permissions caméra et microphone ne sont demandées qu’au moment d’un appel et les flux ne sont pas enregistrés par Secret Clubhouse.
+
+Pour la catégorie « Autre proche », la date de naissance est évaluée uniquement dans la requête d’acceptation afin d’établir que la personne a au moins 14 ans. PostgreSQL ne reçoit que l’horodatage du résultat positif ; la date complète n’est ni insérée dans le compte, ni journalisée, ni renvoyée dans l’export de droits.
 
 ### 3. Mise en balance avec les droits des enfants
 

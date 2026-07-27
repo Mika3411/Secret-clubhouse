@@ -1,6 +1,6 @@
 # Politique de conservation et de purge
 
-Version applicable : 26 juillet 2026.
+Version applicable : 27 juillet 2026.
 
 Cette politique applique le principe de limitation de la conservation. PostgreSQL porte les échéances utiles dans les colonnes `expires_at`, `retention_until` ou `inactive_after`. Le Cron Job Render `secret-clubhouse-retention` exécute `npm run retention:purge` chaque jour à 03:17 UTC. La purge est transactionnelle, protégée par un verrou PostgreSQL et consignée dans `retention_runs`.
 
@@ -10,6 +10,7 @@ Cette politique applique le principe de limitation de la conservation. PostgreSQ
 |---|---:|---|---|
 | Compte ou famille active | Pendant l’utilisation du service | Dernière activité d’un membre | Aucune purge du compte tant qu’au moins un membre de la famille reste actif ; les autres limites ci-dessous continuent de s’appliquer |
 | Compte ou famille inactive | 730 jours | Dernière connexion ou heartbeat du dernier membre actif | Suppression des comptes de la famille et suppression en cascade de leurs données |
+| Résultat positif « âge vérifié » et date de vérification 14+ d’un « Autre proche » | Durée de vie du compte de ce proche, puis 730 jours maximum sans activité | Acceptation de la première invitation générique, puis dernière activité du compte | Suppression avec le compte ; la date de naissance utilisée pour le contrôle immédiat n’est jamais enregistrée, et aucun contrôle d’âge n’est demandé aux grands-parents, oncles, tantes, parrains ou marraines |
 | Session d’authentification et métadonnées minimales d’appareil | Fenêtre glissante de 30 jours sans activité authentifiée ; renouvellement au plus une fois par jour | Création, dernière activité, expiration ou révocation | Aucune coupure fixe après 12 heures ; une panne réseau ne révoque pas la session ; le jeton mobile chiffré lié à l’appareil survit à la fermeture de l’application jusqu’à expiration, révocation ou déconnexion ; PostgreSQL conserve le hash SHA-256, un identifiant d’installation opaque non affiché, un libellé général d’appareil et les dates nécessaires à la liste parentale, puis supprime la ligne expirée ou rend la ligne révoquée éligible à la purge après 24 heures |
 | Message texte ou automatique sans binaire en base | 365 jours | Création | Suppression du message et de ses accusés de réception |
 | Photo, image, vidéo, message vocal ou autre média binaire | 90 jours | Création | Suppression du message, du binaire PostgreSQL et de ses accusés de réception |
@@ -19,7 +20,7 @@ Cette politique applique le principe de limitation de la conservation. PostgreSQ
 | Présence technique | 24 heures | Dernier heartbeat | Suppression ; l’interface considère déjà le compte hors ligne après 75 secondes |
 | Indicateur de saisie | 6 secondes | Dernière frappe signalée | Suppression dès expiration |
 | Abonnement Web Push ou jeton natif APNs/FCM | 180 jours | Dernier enregistrement du jeton | Suppression ; une réactivation renouvelle le délai |
-| Invitation de co-parent | 7 jours d’utilisation, puis 90 jours de trace | Création, puis acceptation, révocation ou expiration | Expiration du lien puis suppression de la trace |
+| Invitation d’adulte — co-parent ou proche autorisé | 7 jours d’utilisation, puis 90 jours de trace | Création, puis acceptation, révocation ou expiration | Expiration du lien puis suppression de la trace |
 | Demande de contact | 30 jours en attente, puis 180 jours de trace | Création, puis résolution ou expiration | Passage à `expired`, puis suppression |
 | Invitation de jeu | 30 jours en attente | Création | Suppression |
 | Partie acceptée, refusée ou terminée | 180 jours | Dernière action | Suppression |

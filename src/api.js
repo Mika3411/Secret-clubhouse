@@ -158,7 +158,10 @@ export const api = {
     method: "POST",
     body: JSON.stringify(typeof data === "string" ? { email: data } : data),
   }),
-  acceptFamilyInvitation: (token) => request("/family/invitations/accept", { method: "POST", body: JSON.stringify({ token }) }),
+  acceptFamilyInvitation: (token, data = {}) => request("/family/invitations/accept", {
+    method: "POST",
+    body: JSON.stringify({ token, birthDate: data.birthDate }),
+  }),
   revokeFamilyInvitation: (invitationId) => request(`/family/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" }),
   removeFamilyParent: (accountId) => request(`/family/members/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
   removeTrustedAdult: (accountId) => request(`/family/trusted-adults/${encodeURIComponent(accountId)}`, { method: "DELETE" }),

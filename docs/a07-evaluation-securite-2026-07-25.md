@@ -110,3 +110,20 @@ Les contrôles exécutés sur cette reconstruction donnent :
 - `npm audit --audit-level=high` : aucune vulnérabilité.
 
 Le binaire Gradle, `Secret-Clubhouse-debug.apk`, `public/downloads/Secret-Clubhouse.apk` et la copie finale `dist/downloads/Secret-Clubhouse.apk` ont tous le SHA-256 `35df054d2c4800f7bb10d80c3c8c66087648216dc9003e78546113dfd16b5188` et une taille de 15 060 776 octets. L’identité Android reste volontairement celle de test pour la continuité du prototype : cette vérification ne ferme donc pas le constat `A07-2026-07-25-05` et ne constitue pas une signature de distribution.
+
+## 6. Reconstruction mobile du 27 juillet 2026
+
+Le client web incluant les comptes de proches autorisés et la minimisation de la vérification 14+ a été synchronisé dans les deux projets Capacitor. Android et iOS déclarent la version 1.15 ; Android utilise `versionCode 16` et le projet Xcode le build local 16. Le workflow TestFlight impose également `MARKETING_VERSION=1.15` et génère un numéro de build App Store unique au moment de son exécution sur macOS 26.
+
+Les contrôles locaux donnent :
+
+- `npm run mobile:sync` : build de production puis synchronisation Android et iOS réussis ;
+- `android/gradlew testDebugUnitTest lint assembleDebug` : `BUILD SUCCESSFUL`, 190 tâches, sans erreur lint ;
+- manifeste vérifié par `aapt` : paquet `fr.secretclubhouse.app`, `minSdkVersion 24`, `targetSdkVersion 36`, version 1.15 (`versionCode 16`) ;
+- signature vérifiée par `apksigner` avec le schéma v2 et le certificat de prototype SHA-256 `2cf599c5481c9f20235999e9fcd45c6f4b8261ce234d4c50ee6e8216300cd302` ;
+- `npm run mobile:verify:ios` : projet Capacitor, APNs/VoIP, manifeste de confidentialité, identité, versions et bundle web vérifiés ;
+- `npm test` : 246 tests, 241 réussis, 0 échec et 5 intégrations optionnelles ignorées sans `TEST_DATABASE_URL` dans cette commande ;
+- `npm run typecheck`, `npm run build` et les scénarios PostgreSQL/Playwright ciblés réussis ;
+- `npm audit --audit-level=high` : aucune vulnérabilité.
+
+Le binaire Gradle, `public/downloads/Secret-Clubhouse.apk` et `dist/downloads/Secret-Clubhouse.apk` ont tous le SHA-256 `6246cd236630fbba7f221db4876d6bf18995fe187e26cc35eb2d5a4dfa3ddaf2` et une taille de 15 082 091 octets. L’archive IPA signée ne peut pas être produite sur Windows : elle doit être reconstruite et envoyée à App Store Connect par le workflow manuel `Publier sur TestFlight`, limité à `main` et à l’environnement GitHub protégé `testflight`. Les restrictions A07 sur les essais réels et l’identité Android de prototype restent inchangées.

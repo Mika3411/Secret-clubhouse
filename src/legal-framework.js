@@ -18,11 +18,11 @@ export const notificationConsentCopy = Object.freeze({
 export const legalBasisRegister = Object.freeze([
   Object.freeze({
     id: "parent-account-contract",
-    subjects: "Parents et co-parents",
-    purpose: "Créer le compte adulte, gérer la famille et fournir les fonctions expressément demandées.",
+    subjects: "Parents, co-parents et proches autorisés",
+    purpose: "Créer le compte adulte, gérer la famille selon le rôle, vérifier une seule fois les 14 ans d’un « Autre proche » et fournir les fonctions expressément demandées.",
     basisCode: "RGPD, article 6 § 1 b)",
     basisLabel: "Exécution du contrat",
-    justification: "Ces données sont objectivement nécessaires pour ouvrir, authentifier et administrer le service familial convenu avec l’adulte.",
+    justification: "Ces données sont objectivement nécessaires pour ouvrir, authentifier et administrer le service familial convenu avec l’adulte. La date de naissance utilisée pour le contrôle immédiat n’est pas enregistrée.",
     optional: false,
   }),
   Object.freeze({
@@ -36,7 +36,7 @@ export const legalBasisRegister = Object.freeze([
   }),
   Object.freeze({
     id: "adult-communications-contract",
-    subjects: "Parents et co-parents",
+    subjects: "Parents, co-parents et proches autorisés",
     purpose: "Acheminer les messages, médias, appels privés et parties multijoueurs demandés par un adulte.",
     basisCode: "RGPD, article 6 § 1 b)",
     basisLabel: "Exécution du contrat",

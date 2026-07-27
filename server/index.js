@@ -92,6 +92,7 @@ import {
   normalizeMessagePageLimit,
 } from "./conversation-sync.js";
 import { normalizeConversationContactAlias } from "./conversation-contact-alias.js";
+import { evaluateTrustedAdultBirthDate } from "../shared/trusted-adult-age.js";
 import {
   isValidChildUsername,
   normalizeChildUsername,
@@ -271,7 +272,7 @@ const trustedRelationshipLabels = {
   grandparent: "Grand-parent",
   uncle_aunt: "Oncle ou tante",
   godparent: "Parrain ou marraine",
-  family_friend: "Proche de confiance",
+  family_friend: "Autre proche",
 };
 const defaultTrustedPermissions = {
   messages: true,
@@ -283,6 +284,15 @@ const normalizeEmail = (value) => String(value ?? "").trim().toLowerCase();
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 254;
 const hashInvitationToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
 const makeInvitationToken = () => crypto.randomBytes(32).toString("base64url");
+
+function requireTrustedAdultMinimumAge(value) {
+  const result = evaluateTrustedAdultBirthDate(value);
+  if (result.valid) return true;
+  if (result.reason === "underage") {
+    throw httpError(400, "À 13 ans ou moins, cette personne doit utiliser un profil enfant géré par un parent.");
+  }
+  throw httpError(400, "Indiquez une date de naissance valide pour confirmer que le proche a au moins 14 ans.");
+}
 
 function normalizeTrustedPermissions(value = {}) {
   return Object.fromEntries(Object.entries(defaultTrustedPermissions).map(([key, fallback]) => [
@@ -615,13 +625,16 @@ function invitationLink(req, token) {
   return `${base.replace(/\/$/, "")}/#familyInvite=${encodeURIComponent(token)}`;
 }
 
-async function acceptFamilyInvitation(token, parentId) {
+async function acceptFamilyInvitation(token, parentId, { birthDate } = {}) {
   const client = await pool.connect();
   let familyId;
   let acceptedRole;
   try {
     await client.query("begin");
-    const accountResult = await client.query("select id,role,email from accounts where id=$1 for update", [parentId]);
+    const accountResult = await client.query(
+      "select id,role,email,trusted_age_verified_at from accounts where id=$1 for update",
+      [parentId],
+    );
     const account = accountResult.rows[0];
     if (!account || !["parent", "relative"].includes(account.role)) throw httpError(403, "Cette invitation est réservée à un compte adulte.");
 
@@ -648,6 +661,15 @@ async function acceptFamilyInvitation(token, parentId) {
     if (invitation.invitation_role === "relative") {
       if (!trustedRelationshipTypes.has(invitation.relationship_type) || !invitation.children?.length) {
         throw httpError(409, "Cette invitation de proche est incomplète.");
+      }
+      if (invitation.relationship_type === "family_friend" && !account.trusted_age_verified_at) {
+        requireTrustedAdultMinimumAge(birthDate);
+        await client.query(
+          `update accounts
+           set trusted_age_verified_at=now()
+           where id=$1`,
+          [parentId],
+        );
       }
       await client.query(
         `insert into family_trusted_adults(family_id,account_id,relationship_type,invited_by)
@@ -984,6 +1006,12 @@ async function serializeAccount(account) {
       nativePush: productionFeatures.nativePush,
     },
   };
+  if (account.role === "relative") {
+    return {
+      ...serialized,
+      requiresTrustedAdultAgeVerification: !account.trusted_age_verified_at,
+    };
+  }
   if (account.role !== "child") return serialized;
   return {
     ...serialized,
@@ -1144,6 +1172,10 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
 
   const invitationPreview = await getInvitationByToken(token);
   validateAvailableRegistrationInvitation(invitationPreview, requestedEmail);
+  const trustedAdultAgeVerified = invitationPreview.invitation_role === "relative"
+    && invitationPreview.relationship_type === "family_friend"
+    ? requireTrustedAdultMinimumAge(req.body?.birthDate)
+    : false;
   const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal, {
     requireParentalAuthority: invitationPreview.invitation_role !== "relative",
   });
@@ -1159,8 +1191,11 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
       const accountRole = invitationRole === "relative" ? "relative" : "parent";
 
       const accountResult = await client.query(
-        "insert into accounts(role,email,contact_id,password_hash,display_name) values($1,$2,$3,$4,$5) returning *",
-        [accountRole, invitationEmail, makeContactId(), passwordHash, displayName],
+        `insert into accounts(
+           role,email,contact_id,password_hash,display_name,trusted_age_verified_at
+         ) values($1,$2,$3,$4,$5,case when $6::boolean then now() else null end)
+         returning *`,
+        [accountRole, invitationEmail, makeContactId(), passwordHash, displayName, trustedAdultAgeVerified],
       );
       const account = accountResult.rows[0];
       if (invitationRole === "relative") {
@@ -2016,7 +2051,9 @@ app.post("/api/family/invitations/accept", requireAuth, async (req, res) => {
   if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Cette invitation est réservée à un compte adulte." });
   const token = String(req.body?.token ?? "").trim();
   if (!invitationTokenPattern.test(token)) return res.status(400).json({ error: "Lien d’invitation invalide." });
-  const family = await acceptFamilyInvitation(token, req.auth.sub);
+  const family = await acceptFamilyInvitation(token, req.auth.sub, {
+    birthDate: req.body?.birthDate,
+  });
   return res.json({ family });
 });
 
