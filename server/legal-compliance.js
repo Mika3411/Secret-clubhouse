@@ -7,24 +7,29 @@ import { publicHttpError } from "./http-errors.js";
 
 const registrationError = "Vous devez accepter les conditions d’utilisation et confirmer votre autorité parentale.";
 
-export function validateRegistrationLegalEvidence(input) {
+export function validateRegistrationLegalEvidence(input, { requireParentalAuthority = true } = {}) {
   const evidence = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   const valid = evidence.termsAccepted === true
-    && evidence.parentalAuthorityConfirmed === true
+    && (!requireParentalAuthority || evidence.parentalAuthorityConfirmed === true)
     && evidence.privacyNoticeProvided === true
     && evidence.termsVersion === legalDocumentVersions.terms.id
-    && evidence.parentalAuthorityVersion === legalDocumentVersions.parentalAuthority.id
+    && (!requireParentalAuthority || evidence.parentalAuthorityVersion === legalDocumentVersions.parentalAuthority.id)
     && evidence.privacyVersion === legalDocumentVersions.privacy.id;
   return valid
     ? {
         valid: true,
         value: {
           termsVersion: evidence.termsVersion,
-          parentalAuthorityVersion: evidence.parentalAuthorityVersion,
+          parentalAuthorityVersion: requireParentalAuthority ? evidence.parentalAuthorityVersion : null,
           privacyVersion: evidence.privacyVersion,
         },
       }
-    : { valid: false, error: registrationError };
+    : {
+        valid: false,
+        error: requireParentalAuthority
+          ? registrationError
+          : "Vous devez accepter les conditions d’utilisation et confirmer avoir reçu la politique de confidentialité.",
+      };
 }
 
 export async function writeLegalEvent(executor, {
@@ -63,14 +68,16 @@ export async function recordRegistrationLegalEvents(executor, accountId, version
     documentVersion: versions.termsVersion,
     evidence: { channel: "registration_form", statement: registrationLegalStatements.terms },
   });
-  await writeLegalEvent(executor, {
-    subjectAccountId: accountId,
-    eventType: "parental_authority_declared",
-    purpose: "child_profile_management",
-    legalBasis: "legitimate_interest",
-    documentVersion: versions.parentalAuthorityVersion,
-    evidence: { channel: "registration_form", statement: registrationLegalStatements.parentalAuthority },
-  });
+  if (versions.parentalAuthorityVersion) {
+    await writeLegalEvent(executor, {
+      subjectAccountId: accountId,
+      eventType: "parental_authority_declared",
+      purpose: "child_profile_management",
+      legalBasis: "legitimate_interest",
+      documentVersion: versions.parentalAuthorityVersion,
+      evidence: { channel: "registration_form", statement: registrationLegalStatements.parentalAuthority },
+    });
+  }
   await writeLegalEvent(executor, {
     subjectAccountId: accountId,
     eventType: "privacy_notice_provided",

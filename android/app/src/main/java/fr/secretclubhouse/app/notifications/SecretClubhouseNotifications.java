@@ -249,9 +249,11 @@ public final class SecretClubhouseNotifications {
 
         Intent openIntent = new Intent(context, MainActivity.class)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra("google.message_id", payload.messageId.isEmpty() ? "native-" + System.currentTimeMillis() : payload.messageId)
-            .putExtra("notificationType", payload.notificationType)
-            .putExtra("conversationId", payload.conversationId);
+             .putExtra("google.message_id", payload.messageId.isEmpty() ? "native-" + System.currentTimeMillis() : payload.messageId)
+             .putExtra("notificationType", payload.notificationType)
+             .putExtra("conversationId", payload.conversationId)
+             .putExtra("gameId", payload.gameId)
+             .putExtra("gameEvent", payload.gameEvent);
         PendingIntent contentIntent = PendingIntent.getActivity(
             context,
             stableId(payload.tag + payload.messageId),

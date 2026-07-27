@@ -26,12 +26,25 @@ const PrivacyPolicyModal = lazyNamed(loadLegalModals, "PrivacyPolicyModal");
 const LegalNoticeModal = lazyNamed(loadLegalModals, "LegalNoticeModal");
 const describedBy = (...ids) => ids.filter(Boolean).join(" ") || undefined;
 
-export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite = false, familyInvitation, familyInvitationError, isFamilyInvitationLoading = false, onDismissFamilyInvite }) {
-  const [audience, setAudience] = useState("parent");
+export function AuthScreen({
+  onLogin,
+  onRegister,
+  onChildLogin,
+  initialAudience = "parent",
+  initialChildUsername = "",
+  initialChildName = "",
+  hasFamilyInvite = false,
+  familyInvitation,
+  familyInvitationError,
+  isFamilyInvitationLoading = false,
+  onDismissFamilyInvite,
+}) {
+  const isRelativeInvite = familyInvitation?.role === "relative";
+  const [audience, setAudience] = useState(initialAudience === "child" ? "child" : "parent");
   const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState(() => localStorage.getItem(rememberedParentEmailKey) ?? "");
-  const [childUsername, setChildUsername] = useState("");
+  const [childUsername, setChildUsername] = useState(initialChildUsername);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isTermsOpen, setIsTermsOpen] = useState(false);
@@ -178,12 +191,12 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
       ...(!cleanEmail.includes("@") ? ["email"] : []),
       ...(password.length < 8 ? ["password"] : []),
       ...(mode === "register" && !termsAccepted ? ["terms"] : []),
-      ...(mode === "register" && !parentalAuthorityConfirmed ? ["parentalAuthority"] : []),
+      ...(mode === "register" && !isRelativeInvite && !parentalAuthorityConfirmed ? ["parentalAuthority"] : []),
     ];
     if (invalidParentFields.length) {
       showAuthError(
         mode === "register"
-          ? "Vérifiez les champs signalés : votre prénom, une adresse e-mail valide, un mot de passe de 8 caractères minimum et les deux confirmations demandées."
+          ? `Vérifiez les champs signalés : votre prénom, une adresse e-mail valide, un mot de passe de 8 caractères minimum et ${isRelativeInvite ? "la confirmation demandée" : "les deux confirmations demandées"}.`
           : "Saisissez une adresse e-mail valide et un mot de passe de 8 caractères minimum.",
         invalidParentFields,
       );
@@ -195,7 +208,9 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
           name: name.trim(),
           email: cleanEmail,
           password,
-          legal: registrationLegalEvidence(),
+          legal: isRelativeInvite
+            ? registrationLegalEvidence({ parentalAuthority: false })
+            : registrationLegalEvidence(),
         });
       } catch (authError) {
         showAuthError(
@@ -231,8 +246,8 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
           {hasFamilyInvite && <div className={`family-invite-auth-note ${familyInvitationError ? "has-error" : ""}`} role="status">
             <span><UsersThree size={22} weight="fill" /></span>
             <div>
-              <strong>{isFamilyInvitationLoading ? "Vérification de l’invitation…" : familyInvitationError ? "Cette invitation n’est plus disponible" : `${familyInvitation.invitedByName} vous invite comme co-parent`}</strong>
-              <small>{isFamilyInvitationLoading ? "Un instant, nous vérifions le lien sécurisé." : familyInvitationError || `Connectez-vous ou créez votre compte ${familyInvitation.email ? `avec ${familyInvitation.email}` : "parent"}.`}</small>
+              <strong>{isFamilyInvitationLoading ? "Vérification de l’invitation…" : familyInvitationError ? "Cette invitation n’est plus disponible" : isRelativeInvite ? `${familyInvitation.invitedByName} vous invite comme ${familyInvitation.relationshipLabel?.toLowerCase() || "proche autorisé"}` : `${familyInvitation.invitedByName} vous invite comme co-parent`}</strong>
+              <small>{isFamilyInvitationLoading ? "Un instant, nous vérifions le lien sécurisé." : familyInvitationError || (isRelativeInvite ? `Un accès personnel, limité à ${(familyInvitation.children ?? []).map((child) => child.name).join(" et ") || "l’enfant choisi par la famille"}.` : `Connectez-vous ou créez votre compte ${familyInvitation.email ? `avec ${familyInvitation.email}` : "parent"}.`)}</small>
             </div>
             {familyInvitationError && <button type="button" onClick={onDismissFamilyInvite}>Continuer sans invitation</button>}
           </div>}
@@ -248,10 +263,16 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
           </div>}
 
           <form className="auth-form" onSubmit={submitAuth} noValidate>
-            <div className="auth-form__heading"><span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span><div><h2>{audience === "child" ? "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2><p>{audience === "child" ? "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Commencez par les informations de l’adulte."}</p></div></div>
+            <div className="auth-form__heading">
+              <span className="auth-lock">{audience === "child" ? <Smiley size={23} weight="fill" /> : <LockKey size={22} weight="fill" />}</span>
+              <div>
+                <h2>{audience === "child" ? initialChildName ? `Salut, ${initialChildName} !` : "Salut !" : hasFamilyInvite ? mode === "login" ? "Accepter avec mon compte" : isRelativeInvite ? "Créer mon accès proche" : "Créer mon accès co-parent" : mode === "login" ? "Ravi de vous revoir" : "Créer le compte parent"}</h2>
+                <p>{audience === "child" ? initialChildUsername ? "Ton pseudo est déjà rempli. Saisis maintenant ton mot de passe." : "Entre dans ton Clubhouse." : hasFamilyInvite ? "Chaque adulte garde ses propres identifiants." : mode === "login" ? "Accédez à votre espace familial." : "Créez votre accès parent. Juste après, vous ajouterez le profil de votre premier enfant."}</p>
+              </div>
+            </div>
             {audience === "parent" && mode === "register" && (
               <label className="auth-field">
-                <span>Prénom du parent</span>
+                <span>{isRelativeInvite ? "Votre prénom" : "Prénom du parent"}</span>
                 <input
                   ref={nameRef}
                   value={name}
@@ -312,21 +333,21 @@ export function AuthScreen({ onLogin, onRegister, onChildLogin, hasFamilyInvite 
                 <button type="button" onClick={() => setShowPassword((current) => !current)} aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"} aria-pressed={showPassword}>{showPassword ? <EyeSlash size={21} weight="bold" /> : <Eye size={21} weight="bold" />}</button>
               </span>
             </label>
-            {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> Votre e-mail et les profils créés servent à fournir et sécuriser le service familial. L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
+            {audience === "parent" && mode === "register" && <aside className="auth-data-notice"><ShieldCheck size={20} weight="fill" /><span><strong>Avant l’inscription</strong> {isRelativeInvite ? "Votre e-mail sert à sécuriser votre accès personnel aux conversations autorisées par la famille." : "Votre e-mail et les profils créés servent à fournir et sécuriser le service familial."} L’hébergement Render est situé par défaut aux États-Unis. <button type="button" onClick={() => openPrivacy("parent")}>Lire la politique complète</button></span></aside>}
             {audience === "parent" && mode === "register" && (
               <div className="auth-legal-confirmations">
                 <label className="auth-consent">
                   <input ref={termsRef} type="checkbox" checked={termsAccepted} onChange={(event) => { setTermsAccepted(event.target.checked); clearAuthError(); }} aria-invalid={invalidFields.includes("terms")} aria-describedby={invalidFields.includes("terms") && error ? "auth-error" : undefined} />
                   <span>J’accepte les <button type="button" onClick={(event) => { event.preventDefault(); setIsTermsOpen(true); }}>conditions d’utilisation</button> (version du {legalDocumentVersions.terms.label}). Cette acceptation conclut le contrat de service ; ce n’est pas un consentement RGPD.</span>
                 </label>
-                <label className="auth-consent">
+                {!isRelativeInvite && <label className="auth-consent">
                   <input ref={parentalAuthorityRef} type="checkbox" checked={parentalAuthorityConfirmed} onChange={(event) => { setParentalAuthorityConfirmed(event.target.checked); clearAuthError(); }} aria-invalid={invalidFields.includes("parentalAuthority")} aria-describedby={invalidFields.includes("parentalAuthority") && error ? "auth-error" : undefined} />
                   <span>Je confirme être le parent ou le responsable légal des enfants que j’ajouterai.</span>
-                </label>
+                </label>}
               </div>
             )}
             {error && <p className="auth-error" id="auth-error" role="alert">{error}</p>}
-            <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter et accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte"}</button>
+            <button className="primary-button auth-submit" type="submit" disabled={isFamilyInvitationLoading || Boolean(familyInvitationError)}>{audience === "child" || mode === "login" ? <LockKeyOpen size={19} weight="fill" /> : <UserPlus size={19} weight="fill" />}{audience === "child" ? "Entrer dans mon espace" : hasFamilyInvite ? mode === "login" ? "Se connecter et accepter" : "Créer et rejoindre la famille" : mode === "login" ? "Se connecter" : "Créer mon compte et ajouter mon enfant"}</button>
           </form>
 
           <div className="auth-legal"><LockKey size={14} weight="fill" /><span>Informations :</span><button type="button" onClick={() => openPrivacy("parent")}>confidentialité parents</button><button type="button" onClick={() => openPrivacy("child")}>confidentialité enfants</button><span aria-hidden="true">•</span><button type="button" onClick={() => setIsTermsOpen(true)}>Conditions d’utilisation</button><span aria-hidden="true">•</span><button type="button" onClick={openLegalNotice}>Mentions légales</button></div>

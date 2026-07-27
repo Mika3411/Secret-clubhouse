@@ -143,6 +143,7 @@ export async function createReadablePrivacyExport(executor, {
   const [
     familyResult,
     relationshipsResult,
+    contactAliasesResult,
     contactRequestsResult,
     messagesResult,
     reactionsResult,
@@ -170,6 +171,15 @@ export async function createReadablePrivacyExport(executor, {
        end
        where relationship.account_one_id=$1 or relationship.account_two_id=$1
        order by relationship.created_at`,
+      [subject.id],
+    ),
+    executor.query(
+      `select contact_alias.alias,contact_alias.created_at,contact_alias.updated_at,
+        target.display_name as original_name,target.contact_id,target.role as contact_role
+       from account_contact_aliases contact_alias
+       join accounts target on target.id=contact_alias.target_account_id
+       where contact_alias.owner_account_id=$1
+       order by contact_alias.updated_at,target.display_name`,
       [subject.id],
     ),
     executor.query(
@@ -335,6 +345,7 @@ export async function createReadablePrivacyExport(executor, {
     },
     family: familyResult.rows[0] ?? null,
     approvedContacts: relationshipsResult.rows,
+    privateContactNames: contactAliasesResult.rows,
     contactRequests: contactRequestsResult.rows,
     authoredMessages: messages,
     messageReactions: reactionsResult.rows.map((reaction) => ({

@@ -90,3 +90,20 @@ export function ParentModeNavigation({ active, unreadMessages = 0, onHome, onMan
     </nav>
   );
 }
+
+export function TrustedAdultNavigation({ active, unreadMessages = 0, onHome, onConversations }) {
+  const items = [
+    { id: "home", label: "Mes proches", Icon: House, onClick: onHome },
+    { id: "conversations", label: "Conversations", Icon: ChatCircleDots, onClick: onConversations, badge: unreadMessages },
+  ];
+  return (
+    <nav className="parent-mode-navigation trusted-adult-navigation" aria-label="Navigation du proche autorisé">
+      {items.map(({ id, label, Icon, onClick, badge }) => (
+        <button type="button" key={id} className={active === id ? "is-active" : ""} onClick={onClick} aria-current={active === id ? "page" : undefined}>
+          <span><Icon size={20} weight={active === id ? "fill" : "bold"} />{badge > 0 && <em>{badge}</em>}</span>
+          <strong>{label}</strong>
+        </button>
+      ))}
+    </nav>
+  );
+}

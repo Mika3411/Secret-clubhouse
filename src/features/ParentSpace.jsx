@@ -29,7 +29,7 @@ import { VideoCamera } from "@phosphor-icons/react/VideoCamera";
 import { X } from "@phosphor-icons/react/X";
 import { defaultCommunicationSchedule } from "../app-core";
 import { childUsernameMaxLength, normalizeChildUsername } from "../child-username";
-import { Avatar, ParentModeNavigation, copyContactId } from "./AuthenticatedShared";
+import { Avatar, ParentModeNavigation, TrustedAdultNavigation, copyContactId } from "./AuthenticatedShared";
 import { ChildNotificationConsentSetting, PushNotificationButton } from "./NotificationSettings";
 import "../styles/parent.css";
 
@@ -234,6 +234,7 @@ export function FamilyInviteAcceptanceModal({ invitation, parent, onAccept, onUs
   const [isAccepting, setIsAccepting] = useState(false);
   const [error, setError] = useState("");
   const emailMatches = !invitation.email || invitation.email.toLowerCase() === String(parent.email ?? "").toLowerCase();
+  const isRelative = invitation.role === "relative";
 
   const accept = async () => {
     setIsAccepting(true);
@@ -252,9 +253,11 @@ export function FamilyInviteAcceptanceModal({ invitation, parent, onAccept, onUs
       <section className="family-invite-acceptance" role="dialog" aria-modal="true" aria-labelledby="family-invite-acceptance-title">
         <button type="button" className="modal-close" onClick={onDismiss} aria-label="Fermer" disabled={isAccepting}><X size={21} weight="bold" /></button>
         <span className="family-invite-acceptance__icon"><UsersThree size={34} weight="fill" /></span>
-        <small>Invitation de co-parent</small>
+        <small>{isRelative ? `Invitation · ${invitation.relationshipLabel || "Proche autorisé"}` : "Invitation de co-parent"}</small>
         <h2 id="family-invite-acceptance-title">Rejoindre {invitation.familyName}</h2>
-        <p><strong>{invitation.invitedByName}</strong> souhaite vous donner accès aux mêmes profils enfant et réglages familiaux.</p>
+        <p>{isRelative
+          ? <><strong>{invitation.invitedByName}</strong> vous ouvre un accès personnel pour parler avec {(invitation.children ?? []).map((child) => child.name).join(" et ") || "les enfants choisis"}, sans gestion familiale.</>
+          : <><strong>{invitation.invitedByName}</strong> souhaite vous donner accès aux mêmes profils enfant et réglages familiaux.</>}</p>
         <div className={`family-invite-account ${emailMatches ? "" : "has-error"}`}><UserCircle size={23} weight="fill" /><span><strong>{parent.name}</strong><small>{parent.email}</small></span>{emailMatches ? <CheckCircle size={19} weight="fill" /> : <X size={18} weight="bold" />}</div>
         {!emailMatches && <p className="family-invite-error" role="alert">Cette invitation est destinée à {invitation.email}. Utilisez le compte correspondant.</p>}
         {error && <p className="family-invite-error" role="alert">{error}</p>}
@@ -395,6 +398,161 @@ export function FamilyParentsModal({ family, currentParent, onClose, onInvite, o
   );
 }
 
+export function FamilyAdultsModal({ family, children = [], currentParent, onClose, onInvite, onRevoke, onRemove, onRemoveTrusted }) {
+  const [inviteRole, setInviteRole] = useState("relative");
+  const [email, setEmail] = useState("");
+  const [relationshipType, setRelationshipType] = useState("grandparent");
+  const [selectedChildIds, setSelectedChildIds] = useState(() => children[0]?.id ? [children[0].id] : []);
+  const [permissions, setPermissions] = useState({ messages: true, audioCalls: true, videoCalls: false, games: true });
+  const [createdInvitation, setCreatedInvitation] = useState(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const isPrimary = family?.role === "primary";
+
+  const submitInvite = async (event) => {
+    event.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setError("Saisissez une adresse e-mail valide.");
+      return;
+    }
+    if (inviteRole === "relative" && !selectedChildIds.length) {
+      setError("Choisissez au moins un enfant pour ce proche.");
+      return;
+    }
+    setBusyAction("invite");
+    setError("");
+    try {
+      const result = await onInvite({
+        email: cleanEmail,
+        role: inviteRole,
+        relationshipType: inviteRole === "relative" ? relationshipType : undefined,
+        childIds: inviteRole === "relative" ? selectedChildIds : undefined,
+        permissions: inviteRole === "relative" ? permissions : undefined,
+      });
+      setCreatedInvitation(result?.invitation ?? result);
+      setEmail("");
+      setCopied(false);
+    } catch (inviteError) {
+      setError(inviteError.message || "Impossible de créer l’invitation.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const removeAdult = async (adult, trusted = false) => {
+    if (confirmRemoveId !== adult.id) {
+      setConfirmRemoveId(adult.id);
+      return;
+    }
+    setBusyAction(`remove-${adult.id}`);
+    setError("");
+    try {
+      await (trusted ? onRemoveTrusted(adult.id) : onRemove(adult.id));
+      setConfirmRemoveId("");
+    } catch (removeError) {
+      setError(removeError.message || "Impossible de retirer cet accès.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const revokeInvitation = async (id) => {
+    setBusyAction(`revoke-${id}`);
+    setError("");
+    try {
+      await onRevoke(id);
+      if (createdInvitation?.id === id) setCreatedInvitation(null);
+    } catch (revokeError) {
+      setError(revokeError.message || "Impossible de révoquer cette invitation.");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(createdInvitation.link);
+      setCopied(true);
+    } catch {
+      setError("Le presse-papiers est indisponible. Sélectionnez le lien et copiez-le manuellement.");
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={busyAction ? undefined : onClose}>
+      <section className="family-parents-modal family-adults-modal" role="dialog" aria-modal="true" aria-labelledby="family-adults-title" onMouseDown={(event) => event.stopPropagation()}>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer" disabled={Boolean(busyAction)}><X size={21} weight="bold" /></button>
+        <div className="family-parents-heading"><span><UsersThree size={29} weight="fill" /></span><div><small>Accès adultes protégés</small><h2 id="family-adults-title">Adultes de la famille</h2><p>Les co-parents gèrent. Les proches communiquent seulement avec les enfants choisis.</p></div></div>
+        <div className="family-role-note"><ShieldCheck size={18} weight="fill" /><span><strong>{isPrimary ? "Vous contrôlez tous les accès" : "Vous êtes co-parent"}</strong><small>Un proche autorisé ne voit jamais la gestion, les demandes d’amis ou les conversations entre enfants.</small></span></div>
+
+        <section className="adult-access-section" aria-labelledby="coparents-title">
+          <h3 id="coparents-title">Parents gestionnaires</h3>
+          <div className="family-parent-list">
+            {(family?.members ?? []).map((member) => {
+              const isCurrent = member.isCurrent || member.id === currentParent.id;
+              const removable = isPrimary && member.role === "coparent" && !isCurrent;
+              return <article className="family-parent-card" key={member.id}>
+                <span className={`family-parent-avatar ${member.role === "primary" ? "is-primary" : ""}`}><UserCircle size={27} weight="fill" /></span>
+                <div><strong>{member.name}{isCurrent ? " · vous" : ""}</strong><small>{member.email}</small><span>{member.role === "primary" ? "Parent principal" : "Co-parent · gestion complète"}</span></div>
+                {removable ? <button type="button" className={confirmRemoveId === member.id ? "is-confirming" : ""} onClick={() => removeAdult(member)} disabled={busyAction === `remove-${member.id}`}><Trash size={16} weight="bold" /><span>{confirmRemoveId === member.id ? "Confirmer" : "Retirer"}</span></button> : <ShieldCheck size={19} weight="fill" />}
+              </article>;
+            })}
+          </div>
+        </section>
+
+        <section className="adult-access-section trusted-adult-list" aria-labelledby="trusted-adults-title">
+          <h3 id="trusted-adults-title">Proches autorisés</h3>
+          {(family?.trustedAdults ?? []).map((adult) => <article className="trusted-adult-card" key={adult.id}>
+            <span className="family-parent-avatar"><UserCircle size={27} weight="fill" /></span>
+            <div className="trusted-adult-card__copy">
+              <strong>{adult.name}</strong>
+              <small>{adult.relationshipLabel} · {adult.email}</small>
+              <span>{adult.children.map((child) => child.name).join(", ")}</span>
+              <div className="trusted-permission-chips">
+                {adult.children.some((child) => child.permissions?.messages) && <em><ChatCircleDots size={14} weight="fill" /> Messages</em>}
+                {adult.children.some((child) => child.permissions?.audioCalls) && <em><Phone size={14} weight="fill" /> Audio</em>}
+                {adult.children.some((child) => child.permissions?.videoCalls) && <em><VideoCamera size={14} weight="fill" /> Vidéo</em>}
+                {adult.children.some((child) => child.permissions?.games) && <em><GameController size={14} weight="fill" /> Jeux</em>}
+              </div>
+            </div>
+            {isPrimary && <button type="button" className={confirmRemoveId === adult.id ? "is-confirming" : ""} onClick={() => removeAdult(adult, true)} disabled={busyAction === `remove-${adult.id}`}><Trash size={16} weight="bold" /><span>{confirmRemoveId === adult.id ? "Confirmer" : "Retirer"}</span></button>}
+          </article>)}
+          {!(family?.trustedAdults ?? []).length && <p className="trusted-adult-empty">Aucun proche n’a encore un accès personnel.</p>}
+        </section>
+
+        {isPrimary && <form className="family-invite-form trusted-invite-form" onSubmit={submitInvite}>
+          <div><span><UserPlus size={20} weight="fill" /></span><div><strong>Inviter un adulte</strong><small>Le lien est personnel, expire après sept jours et ne fonctionne qu’avec cette adresse.</small></div></div>
+          <div className="adult-invite-role-tabs" role="tablist" aria-label="Type d’accès adulte">
+            <button type="button" role="tab" aria-selected={inviteRole === "relative"} className={inviteRole === "relative" ? "is-active" : ""} onClick={() => setInviteRole("relative")}>Proche autorisé</button>
+            <button type="button" role="tab" aria-selected={inviteRole === "coparent"} className={inviteRole === "coparent" ? "is-active" : ""} onClick={() => setInviteRole("coparent")}>Co-parent</button>
+          </div>
+          {inviteRole === "relative" && <>
+            <label htmlFor="trusted-relationship">Lien avec les enfants</label>
+            <select id="trusted-relationship" value={relationshipType} onChange={(event) => setRelationshipType(event.target.value)}>
+              <option value="grandparent">Grand-parent</option><option value="uncle_aunt">Oncle ou tante</option><option value="godparent">Parrain ou marraine</option><option value="family_friend">Proche de confiance</option>
+            </select>
+            <fieldset className="trusted-child-picker"><legend>Peut parler avec</legend>{children.map((child) => <label key={child.id}><input type="checkbox" checked={selectedChildIds.includes(child.id)} onChange={(event) => setSelectedChildIds((current) => event.target.checked ? [...new Set([...current, child.id])] : current.filter((id) => id !== child.id))} /><span>{child.name}</span></label>)}</fieldset>
+            <fieldset className="trusted-permission-picker"><legend>Autorisations</legend>{[
+              ["messages", "Messages", ChatCircleDots], ["audioCalls", "Appels audio", Phone], ["videoCalls", "Appels vidéo", VideoCamera], ["games", "Jeux ensemble", GameController],
+            ].map(([key, label, Icon]) => <label key={key}><input type="checkbox" checked={permissions[key]} onChange={(event) => setPermissions((current) => ({ ...current, [key]: event.target.checked }))} /><Icon size={17} weight="fill" /><span>{label}</span></label>)}</fieldset>
+            <p className="trusted-access-note"><ShieldCheck size={17} weight="fill" /> Aucune gestion de famille, d’amis ou de protections.</p>
+          </>}
+          <label htmlFor="adult-invite-email">Adresse e-mail</label>
+          <div className="family-invite-field"><input id="adult-invite-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} placeholder={inviteRole === "relative" ? "proche@exemple.fr" : "coparent@exemple.fr"} autoComplete="email" /><button type="submit" disabled={busyAction === "invite"}><UserPlus size={17} weight="bold" /> {busyAction === "invite" ? "Création…" : "Inviter"}</button></div>
+        </form>}
+
+        {createdInvitation?.link && <div className="family-created-invite" role="status"><CheckCircle size={19} weight="fill" /><span><strong>Invitation prête pour {createdInvitation.email}</strong><small>Copiez ce lien maintenant : le secret ne sera plus affiché ensuite.</small><code>{createdInvitation.link}</code></span><button type="button" onClick={copyLink}>{copied ? <CheckCircle size={17} weight="fill" /> : <Copy size={17} weight="bold" />}{copied ? "Copié" : "Copier"}</button></div>}
+        {(family?.pendingInvitations ?? []).length > 0 && <section className="family-pending-invites" aria-labelledby="pending-family-invites-title"><h3 id="pending-family-invites-title">Invitations en attente</h3>{family.pendingInvitations.map((invitation) => <article key={invitation.id}><span><strong>{invitation.email}</strong><small>{invitation.role === "relative" ? `${invitation.relationshipLabel || "Proche"} · ${(invitation.children ?? []).map((child) => child.name).join(", ")}` : "Co-parent"}</small></span>{isPrimary && <button type="button" onClick={() => revokeInvitation(invitation.id)} disabled={busyAction === `revoke-${invitation.id}`}><X size={15} weight="bold" /> Révoquer</button>}</article>)}</section>}
+        {error && <p className="family-invite-error" role="alert">{error}</p>}
+        <button type="button" className="primary-button family-parents-close" onClick={onClose} disabled={Boolean(busyAction)}>Terminer</button>
+      </section>
+    </div>
+  );
+}
+
 export function PausedChildScreen({ child, onParentLogin }) {
   return (
     <section className="feature-screen paused-child-screen" aria-labelledby="paused-child-title">
@@ -460,6 +618,96 @@ export function formatScheduleTime(value) {
   return `${Number(hours)} h ${minutes}`;
 }
 
+export function TrustedAdultDashboard({ adult, family, children = [], unreadMessages = 0, onMessageChild, onOpenMessages, onOpenPassword, onOpenSessions, onOpenDataRights, onLogout }) {
+  const configuredFamilies = family?.families?.length
+    ? family.families
+    : family?.id
+      ? [{
+          id: family.id,
+          name: family.name,
+          relationshipType: family.relationshipType,
+          relationshipLabel: family.relationshipLabel,
+        }]
+      : [];
+  const familyGroups = configuredFamilies.map((item) => ({
+    ...item,
+    children: children.filter((child) => (child.trustedFamily?.id ?? family?.id) === item.id),
+  }));
+  const groupedChildIds = new Set(familyGroups.flatMap((item) => item.children.map((child) => child.id)));
+  const ungroupedChildren = children.filter((child) => !groupedChildIds.has(child.id));
+  if (ungroupedChildren.length) {
+    familyGroups.push({
+      id: "trusted-family-other",
+      name: "Autre famille",
+      relationshipLabel: "Proche autorisé",
+      children: ungroupedChildren,
+    });
+  }
+  const relationshipLabel = familyGroups.length === 1
+    ? familyGroups[0].relationshipLabel || "Proche autorisé"
+    : `Proche autorisé · ${familyGroups.length} familles`;
+  return (
+    <section className="parent-dashboard trusted-adult-dashboard" aria-labelledby="trusted-dashboard-title">
+      <header className="parent-topbar trusted-adult-topbar">
+        <div><span className="parent-topbar__eyebrow"><ShieldCheck size={15} weight="fill" /> Cercle familial</span><h1>Secret Clubhouse</h1></div>
+        <div className="parent-topbar__actions">
+          <span className="parent-avatar" aria-label={`Profil de ${adult.name}`} role="img"><UserCircle size={30} weight="fill" /></span>
+          <button type="button" className="parent-logout-button" onClick={onLogout}><SignOut size={18} weight="bold" /><span>Se déconnecter</span></button>
+        </div>
+      </header>
+      <div className="parent-content trusted-adult-content">
+        <section className="trusted-adult-hero">
+          <span className="trusted-adult-hero__icon"><UsersThree size={30} weight="fill" /></span>
+          <div><small>{relationshipLabel}</small><h1 id="trusted-dashboard-title">Bonjour, {adult.name}</h1><p>{familyGroups.length > 1 ? "Vos familles ont réuni ici les enfants avec qui vous pouvez rester en contact, sans mélanger leurs accès." : "La famille vous a ouvert un espace simple pour rester proche, sans vous confier la gestion des enfants."}</p></div>
+          <span className="trusted-approved-badge"><ShieldCheck size={17} weight="fill" /> Accès approuvé</span>
+        </section>
+
+        <section className="trusted-children-section" aria-labelledby="trusted-children-title">
+          <div className="trusted-section-heading"><div><small>Votre cercle</small><h2 id="trusted-children-title">Avec qui voulez-vous parler ?</h2></div><button type="button" onClick={onOpenMessages}><ChatCircleDots size={18} weight="fill" /> Toutes les conversations{unreadMessages > 0 ? ` · ${unreadMessages}` : ""}</button></div>
+          {children.length > 0
+            ? <div className="trusted-family-list">
+                {familyGroups.map((item) => item.children.length > 0 && <section className="trusted-family-group" key={item.id} aria-label={`${item.name}, ${item.relationshipLabel || "proche autorisé"}`}>
+                  <header className="trusted-family-group__heading">
+                    <span><UsersThree size={18} weight="fill" /></span>
+                    <div><strong>{item.name}</strong><small>{item.relationshipLabel || "Proche autorisé"} · {item.children.length} {item.children.length > 1 ? "enfants autorisés" : "enfant autorisé"}</small></div>
+                  </header>
+                  <div className="trusted-child-grid">
+                    {item.children.map((child) => <article className="trusted-child-card" key={child.id}>
+                      <Avatar person={child} size="medium" />
+                      <div className="trusted-child-card__copy"><strong>{child.name}</strong><small>{child.age} ans · {item.name}</small></div>
+                      <div className="trusted-permission-chips" aria-label={`Autorisations avec ${child.name}`}>
+                        {child.trustedAccess?.messages && <em><ChatCircleDots size={14} weight="fill" /> Messages</em>}
+                        {child.trustedAccess?.audioCalls && <em><Phone size={14} weight="fill" /> Audio</em>}
+                        {child.trustedAccess?.videoCalls && <em><VideoCamera size={14} weight="fill" /> Vidéo</em>}
+                        {child.trustedAccess?.games && <em><GameController size={14} weight="fill" /> Jeux</em>}
+                      </div>
+                      <button type="button" className="primary-button trusted-message-button" onClick={() => onMessageChild(child)} disabled={!child.trustedAccess?.messages}><ChatCircleDots size={18} weight="fill" /> {child.trustedAccess?.messages ? `Écrire à ${child.name}` : "Messages non autorisés"}</button>
+                    </article>)}
+                  </div>
+                </section>)}
+              </div>
+            : <div className="trusted-adult-empty-state"><Shield size={28} weight="fill" /><strong>Aucun enfant n’est encore associé</strong><p>Le parent principal peut choisir les enfants depuis son espace de gestion.</p></div>}
+        </section>
+
+        <section className="trusted-boundaries-card">
+          <span><LockKey size={23} weight="fill" /></span>
+          <div><strong>Un accès volontairement limité</strong><p>Vous ne pouvez pas ajouter d’amis, changer les protections, voir les conversations entre enfants ou gérer la famille.</p></div>
+        </section>
+
+        <details className="trusted-account-card">
+          <summary><span><UserCircle size={22} weight="fill" /></span><span><strong>Mon compte</strong><small>Mot de passe, appareils et droits sur vos données</small></span><CaretRight size={18} weight="bold" /></summary>
+          <div>
+            <button type="button" onClick={onOpenPassword}><LockKey size={18} weight="fill" /> Modifier mon mot de passe</button>
+            <button type="button" onClick={onOpenSessions}><DeviceMobile size={18} weight="fill" /> Mes appareils connectés</button>
+            <button type="button" onClick={onOpenDataRights}><ShieldCheck size={18} weight="fill" /> Mes données et mes droits</button>
+          </div>
+        </details>
+      </div>
+      <TrustedAdultNavigation active="home" unreadMessages={unreadMessages} onHome={() => {}} onConversations={onOpenMessages} />
+    </section>
+  );
+}
+
 export function ParentDashboard({ activeSection, onChangeSection, parentName, family, children, child, features, onSelectChild, onAddChild, onEditChild, onMessageChild, settings, onToggleSetting, schedule, contactRequests = [], contactRelationships = [], contactRequestBusyId = "", contactRequestError = "", onRespondToContactRequest, onRetryContactRequests, unreadMessages, onOpenMessages, onOpenGames, onOpenFamilyParents, onOpenContactIds, onOpenPassword, onOpenSessions, onOpenDataRights, onEditSchedule, onLogout }) {
   const notificationsEnabled = Capacitor.isNativePlatform()
     ? features?.nativePush === true
@@ -468,12 +716,36 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
   const isHome = activeSection === "home";
   const isHelp = activeSection === "help";
   const pendingRequests = contactRequests.filter((request) => request.status === "pending");
+  const incomingRequests = pendingRequests.filter((request) => request.direction === "incoming");
+  const outgoingRequests = pendingRequests.filter((request) => request.direction === "outgoing");
   const selectedChildRequests = child
-    ? pendingRequests.filter((request) => request.requester.id === child.id || request.target.id === child.id)
+    ? incomingRequests.filter((request) => request.requester.id === child.id || request.target.id === child.id)
     : [];
   const selectedChildContacts = child
     ? contactRelationships.filter((relationship) => relationship.account.id === child.id)
     : [];
+  const renderContactRequest = (request) => {
+    const isIncoming = request.direction === "incoming";
+    const displayedContact = isIncoming ? request.requester : request.target;
+    const familyProfile = isIncoming ? request.target : request.requester;
+    const isBusy = contactRequestBusyId === request.id;
+    return (
+      <article className={`friend-request ${isIncoming ? "friend-request--incoming" : "friend-request--outgoing"}`} key={request.id}>
+        <span className="request-avatar" aria-hidden="true">{displayedContact.name?.trim().charAt(0).toUpperCase() || "?"}</span>
+        <div className="request-copy">
+          <strong>{displayedContact.name}</strong>
+          <span>{displayedContact.contactId}</span>
+          <small>{isIncoming ? `Demande pour ${familyProfile.name}` : `Envoyée par ${familyProfile.name}`}</small>
+        </div>
+        {isIncoming && request.canRespond
+          ? <div className="request-actions">
+              <button type="button" className="decline-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "decline")}><X size={16} weight="bold" /> Refuser</button>
+              <button type="button" className="approve-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "accept")}><Check size={16} weight="bold" /> {isBusy ? "Traitement…" : "Accepter"}</button>
+            </div>
+          : <div className="request-pending-note"><Clock size={15} weight="fill" /> En attente de l’autre famille</div>}
+      </article>
+    );
+  };
 
   return (
     <section className="parent-dashboard" aria-labelledby="parent-dashboard-title">
@@ -497,19 +769,19 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
           </section>
         )}
 
-        {child && pendingRequests.length > 0 && (
+        {child && incomingRequests.length > 0 && (
           <section className="parent-attention-card" aria-labelledby="parent-attention-title">
             <span className="parent-attention-card__icon"><Bell size={24} weight="fill" /></span>
             <div>
               <small>Votre attention</small>
-              <h2 id="parent-attention-title">{pendingRequests.length} demande{pendingRequests.length > 1 ? "s" : ""} à vérifier</h2>
+              <h2 id="parent-attention-title">{incomingRequests.length} demande{incomingRequests.length > 1 ? "s" : ""} à vérifier</h2>
               <p>{selectedChildRequests.length > 0 ? `${selectedChildRequests.length} concerne${selectedChildRequests.length > 1 ? "nt" : ""} ${child.name}.` : "Une autre personne de la famille est concernée."}</p>
             </div>
             <button type="button" onClick={() => onChangeSection("management")}>Examiner <CaretRight size={17} weight="bold" /></button>
           </section>
         )}
 
-        {child && pendingRequests.length === 0 && (
+        {child && incomingRequests.length === 0 && (
           <section className="parent-all-clear" aria-label="État de la famille">
             <span><CheckCircle size={22} weight="fill" /></span>
             <div><strong>Tout va bien</strong><small>Aucune demande ni alerte n’attend votre réponse.</small></div>
@@ -651,6 +923,14 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
 
         <ChildProfilesPanel children={children} activeChildId={child?.id} onSelectChild={onSelectChild} onAddChild={onAddChild} />
 
+        {child && (
+          <button type="button" className="child-login-access-card" onClick={onEditChild} aria-label={`Revoir les accès de connexion de ${child.name}`}>
+            <span className="child-login-access-card__icon"><LockKey size={21} weight="fill" /></span>
+            <span className="child-login-access-card__copy"><small>Connexion enfant</small><strong>{child.name} peut se connecter</strong><span>Pseudo privé : @{child.username}</span></span>
+            <span className="child-login-access-card__action">Revoir ses accès <CaretRight size={16} weight="bold" /></span>
+          </button>
+        )}
+
         {!child && (
           <section className="empty-family-card" aria-labelledby="empty-family-management-title">
             <span><UserPlus size={34} weight="fill" /></span>
@@ -663,33 +943,31 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
           <div className="parent-management-column">
             <section className="parent-section" aria-labelledby="requests-title">
               <div className="parent-section__title">
-                <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Approuvez les contacts de votre famille.</p></div></div>
-                {pendingRequests.length > 0 && <span className="status-pill">{pendingRequests.length}</span>}
+                <div><span className="section-icon section-icon--mint"><UserPlus size={19} weight="fill" /></span><div><h2 id="requests-title">Demandes d’amis</h2><p>Validez les demandes reçues et suivez celles déjà envoyées.</p></div></div>
+                {incomingRequests.length > 0 && <span className="status-pill">{incomingRequests.length}</span>}
               </div>
               {contactRequestError && <div className="request-sync-error" role="alert"><Shield size={17} weight="fill" /><span>{contactRequestError}</span><button type="button" onClick={onRetryContactRequests}>Réessayer</button></div>}
-              {pendingRequests.map((request) => {
-                const isIncoming = request.direction === "incoming";
-                const displayedContact = isIncoming ? request.requester : request.target;
-                const familyProfile = isIncoming ? request.target : request.requester;
-                const isBusy = contactRequestBusyId === request.id;
-                return (
-                  <article className="friend-request" key={request.id}>
-                    <span className="request-avatar" aria-hidden="true">{displayedContact.name?.trim().charAt(0).toUpperCase() || "?"}</span>
-                    <div className="request-copy">
-                      <strong>{displayedContact.name}</strong>
-                      <span>{displayedContact.contactId}</span>
-                      <small>{isIncoming ? `Demande pour ${familyProfile.name}` : `Envoyée pour ${familyProfile.name}`}</small>
-                    </div>
-                    {isIncoming && request.canRespond
-                      ? <div className="request-actions">
-                          <button type="button" className="decline-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "decline")}><X size={16} weight="bold" /> Refuser</button>
-                          <button type="button" className="approve-button" disabled={isBusy} onClick={() => onRespondToContactRequest(request.id, "accept")}><Check size={16} weight="bold" /> {isBusy ? "Traitement…" : "Accepter"}</button>
-                        </div>
-                      : <div className="request-pending-note"><Clock size={15} weight="fill" /> En attente de l’autre famille</div>}
-                  </article>
-                );
-              })}
-              {pendingRequests.length === 0 && !contactRequestError && <div className="request-empty"><CheckCircle size={20} weight="fill" /><div><strong>Aucune demande en attente</strong><span>Les nouvelles invitations apparaîtront ici.</span></div></div>}
+              <div className="request-groups">
+                <section className="request-group request-group--incoming" aria-labelledby="requests-incoming-title">
+                  <div className="request-group__heading">
+                    <div><strong id="requests-incoming-title">À valider</strong><small>Une réponse de votre famille est nécessaire.</small></div>
+                    <span>{incomingRequests.length}</span>
+                  </div>
+                  {incomingRequests.length > 0
+                    ? <div className="request-group__list">{incomingRequests.map(renderContactRequest)}</div>
+                    : <div className="request-group__empty"><CheckCircle size={17} weight="fill" /> Aucune demande à valider</div>}
+                </section>
+
+                <section className="request-group request-group--outgoing" aria-labelledby="requests-outgoing-title">
+                  <div className="request-group__heading">
+                    <div><strong id="requests-outgoing-title">Envoyées</strong><small>Le parent de l’ami doit encore accepter.</small></div>
+                    <span>{outgoingRequests.length}</span>
+                  </div>
+                  {outgoingRequests.length > 0
+                    ? <div className="request-group__list">{outgoingRequests.map(renderContactRequest)}</div>
+                    : <div className="request-group__empty"><Clock size={17} weight="fill" /> Aucune demande envoyée en attente</div>}
+                </section>
+              </div>
             </section>
 
             {child && <section className="parent-section" aria-labelledby="safety-title">
@@ -726,8 +1004,8 @@ export function ParentDashboard({ activeSection, onChangeSection, parentName, fa
           <div className="parent-management-column">
             <button type="button" className="family-parents-entry" onClick={onOpenFamilyParents}>
               <span><UsersThree size={23} weight="fill" /></span>
-              <span><strong>Parents de la famille</strong><small>{family?.role === "primary" ? "Invitez et gérez les co-parents autorisés." : "Consultez les adultes autorisés de la famille."}</small></span>
-              <span className="family-parents-count">{family?.members?.length ?? 1}{family?.pendingInvitations?.length ? <small>+{family.pendingInvitations.length}</small> : null}</span>
+              <span><strong>Adultes de la famille</strong><small>{family?.role === "primary" ? "Gérez les co-parents et les proches autorisés." : "Consultez les accès adultes de la famille."}</small></span>
+              <span className="family-parents-count">{(family?.members?.length ?? 1) + (family?.trustedAdults?.length ?? 0)}{family?.pendingInvitations?.length ? <small>+{family.pendingInvitations.length}</small> : null}</span>
               <CaretRight size={18} weight="bold" aria-hidden="true" />
             </button>
 
@@ -793,7 +1071,7 @@ export function toUsername(value) {
   return normalizeChildUsername(value);
 }
 
-export function ChildAccountModal({ child, canDelete = true, onClose, onSave, onDelete }) {
+export function ChildAccountModal({ child, canDelete = true, onClose, onSave, onDelete, onSwitchToChild }) {
   const isEditing = Boolean(child);
   const [name, setName] = useState(child?.name ?? "");
   const [age, setAge] = useState(child?.age ?? 8);
@@ -801,6 +1079,10 @@ export function ChildAccountModal({ child, canDelete = true, onClose, onSave, on
   const [usernameEdited, setUsernameEdited] = useState(isEditing);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [createdAccount, setCreatedAccount] = useState(null);
+  const [showCreatedPassword, setShowCreatedPassword] = useState(false);
+  const [copiedCredential, setCopiedCredential] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const [color, setColor] = useState(child?.color ?? "mint");
   const [isActive, setIsActive] = useState(child?.status !== "paused");
   const [error, setError] = useState("");
@@ -828,8 +1110,10 @@ export function ChildAccountModal({ child, canDelete = true, onClose, onSave, on
       setError("Le mot de passe enfant doit contenir au moins 6 caractères.");
       return;
     }
+    setIsSaving(true);
+    setError("");
     try {
-      await onSave({
+      const savedChild = await onSave({
         ...child,
         name: cleanName,
         age: numericAge,
@@ -839,8 +1123,31 @@ export function ChildAccountModal({ child, canDelete = true, onClose, onSave, on
         color,
         status: isActive ? "active" : "paused",
       });
+      if (isEditing) {
+        onClose();
+        return;
+      }
+      setCreatedAccount({
+        ...savedChild,
+        name: savedChild?.name ?? cleanName,
+        username: savedChild?.username ?? cleanUsername,
+        password,
+        color: savedChild?.color ?? color,
+      });
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const copyCredential = async (value, credential) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedCredential(credential);
+      setError("");
+    } catch {
+      setError("La copie automatique est indisponible. Maintenez le texte appuyé pour le copier.");
     }
   };
 
@@ -858,6 +1165,51 @@ export function ChildAccountModal({ child, canDelete = true, onClose, onSave, on
       setIsDeleting(false);
     }
   };
+
+  if (createdAccount) {
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <section className="child-account-modal child-account-success" role="dialog" aria-modal="true" aria-labelledby="child-account-success-title">
+          <div className="child-account-success__heading">
+            <Avatar person={createdAccount} size="child-form" />
+            <div><span>Compte enfant créé</span><h2 id="child-account-success-title">Le compte de {createdAccount.name} est prêt !</h2><p>Voici ce qu’il faut lui donner pour se connecter.</p></div>
+          </div>
+
+          <section className="child-account-success__section" aria-labelledby="child-login-credentials-title">
+            <div className="child-account-success__section-title"><LockKey size={19} weight="fill" /><strong id="child-login-credentials-title">Pour se connecter</strong></div>
+            <div className="child-credential-row">
+              <span><small>Pseudo privé</small><code>@{createdAccount.username}</code></span>
+              <button type="button" onClick={() => copyCredential(createdAccount.username, "username")} aria-label={`Copier le pseudo de ${createdAccount.name}`}>{copiedCredential === "username" ? <CheckCircle size={17} weight="fill" /> : <Copy size={17} weight="bold" />}{copiedCredential === "username" ? "Copié" : "Copier"}</button>
+            </div>
+            <div className="child-credential-row">
+              <span><small>Mot de passe</small><code>{showCreatedPassword ? createdAccount.password : "••••••••"}</code></span>
+              <div className="child-credential-row__actions">
+                <button type="button" onClick={() => setShowCreatedPassword((current) => !current)} aria-label={showCreatedPassword ? "Masquer le mot de passe enfant" : "Afficher le mot de passe enfant"}>{showCreatedPassword ? <EyeSlash size={17} weight="bold" /> : <Eye size={17} weight="bold" />}<span>{showCreatedPassword ? "Masquer" : "Afficher"}</span></button>
+                <button type="button" onClick={() => copyCredential(createdAccount.password, "password")} aria-label={`Copier le mot de passe de ${createdAccount.name}`}>{copiedCredential === "password" ? <CheckCircle size={17} weight="fill" /> : <Copy size={17} weight="bold" />}<span>{copiedCredential === "password" ? "Copié" : "Copier"}</span></button>
+              </div>
+            </div>
+            <p className="child-account-success__privacy"><ShieldCheck size={16} weight="fill" /> Le mot de passe ne sera plus affiché après la fermeture de cet écran.</p>
+          </section>
+
+          <section className="child-account-success__section child-account-success__section--contact" aria-labelledby="child-contact-credentials-title">
+            <div className="child-account-success__section-title"><IdentificationCard size={19} weight="fill" /><strong id="child-contact-credentials-title">Pour ajouter des amis</strong></div>
+            <div className="child-credential-row">
+              <span><small>Code de contact</small><code>{createdAccount.contactId}</code></span>
+              <button type="button" onClick={() => copyCredential(createdAccount.contactId, "contact")} aria-label={`Copier le code de contact de ${createdAccount.name}`}>{copiedCredential === "contact" ? <CheckCircle size={17} weight="fill" /> : <Copy size={17} weight="bold" />}{copiedCredential === "contact" ? "Copié" : "Copier"}</button>
+            </div>
+            <p className="child-account-success__warning"><LockKey size={16} weight="fill" /> Ce code ne permet pas de se connecter.</p>
+          </section>
+
+          {error && <p className="child-form-error" role="alert">{error}</p>}
+          <div className="child-account-success__next"><strong>Que voulez-vous faire maintenant ?</strong><small>Vous pourrez retrouver le pseudo et changer le mot de passe depuis « Mes enfants ».</small></div>
+          <div className="child-account-success__actions">
+            <button type="button" onClick={onClose}><ShieldCheck size={18} weight="fill" /> Continuer dans mon espace parent</button>
+            <button type="button" onClick={() => onSwitchToChild?.(createdAccount)}><UserCircle size={18} weight="fill" /> Passer à l’espace de {createdAccount.name}</button>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -901,7 +1253,7 @@ export function ChildAccountModal({ child, canDelete = true, onClose, onSave, on
         {error && <p className="child-form-error" role="alert">{error}</p>}
         <div className="child-modal-actions">
           <button type="button" className="decline-button" onClick={onClose}>Annuler</button>
-          <button type="submit" className="primary-button" disabled={isDeleting}><CheckCircle size={18} weight="fill" /> {isEditing ? "Enregistrer" : "Créer le compte"}</button>
+          <button type="submit" className="primary-button" disabled={isDeleting || isSaving}><CheckCircle size={18} weight="fill" /> {isSaving ? "Enregistrement…" : isEditing ? "Enregistrer" : "Créer le compte"}</button>
         </div>
       </form>
     </div>

@@ -12,7 +12,7 @@ export async function initializeDatabase() {
 
     create table if not exists accounts (
       id uuid primary key default gen_random_uuid(),
-      role text not null check (role in ('parent', 'child')),
+      role text not null check (role in ('parent', 'child', 'relative')),
       email text unique,
       contact_id text not null unique,
       password_hash text not null,
@@ -34,9 +34,17 @@ export async function initializeDatabase() {
       admin_suspended_at timestamptz,
       admin_suspension_reason text,
       admin_suspended_by uuid references accounts(id) on delete set null,
-      check ((role = 'parent' and email is not null and parent_id is null) or (role = 'child' and parent_id is not null))
+      check ((role in ('parent', 'relative') and email is not null and parent_id is null) or (role = 'child' and parent_id is not null))
     );
 
+    alter table accounts drop constraint if exists accounts_role_check;
+    alter table accounts
+      add constraint accounts_role_check
+      check (role in ('parent', 'child', 'relative'));
+    alter table accounts drop constraint if exists accounts_check;
+    alter table accounts
+      add constraint accounts_check
+      check ((role in ('parent', 'relative') and email is not null and parent_id is null) or (role = 'child' and parent_id is not null));
     alter table accounts add column if not exists age smallint;
     alter table accounts add column if not exists username text;
     alter table accounts add column if not exists avatar_path text;
@@ -188,6 +196,33 @@ export async function initializeDatabase() {
     );
     create index if not exists family_children_family_idx on family_children(family_id, added_at);
 
+    create table if not exists family_trusted_adults (
+      family_id uuid not null references families(id) on delete cascade,
+      account_id uuid not null references accounts(id) on delete cascade,
+      relationship_type text not null check (relationship_type in ('grandparent','uncle_aunt','godparent','family_friend')),
+      invited_by uuid references accounts(id) on delete set null,
+      joined_at timestamptz not null default now(),
+      primary key (family_id, account_id)
+    );
+    create index if not exists family_trusted_adults_account_idx
+      on family_trusted_adults(account_id, joined_at);
+
+    create table if not exists family_trusted_adult_children (
+      family_id uuid not null,
+      adult_id uuid not null,
+      child_id uuid not null,
+      messages_enabled boolean not null default true,
+      audio_calls_enabled boolean not null default true,
+      video_calls_enabled boolean not null default false,
+      games_enabled boolean not null default true,
+      granted_at timestamptz not null default now(),
+      primary key (family_id, adult_id, child_id),
+      foreign key (family_id, adult_id) references family_trusted_adults(family_id, account_id) on delete cascade,
+      foreign key (family_id, child_id) references family_children(family_id, child_id) on delete cascade
+    );
+    create index if not exists family_trusted_adult_children_child_idx
+      on family_trusted_adult_children(child_id, adult_id);
+
     create table if not exists family_parent_invitations (
       id uuid primary key default gen_random_uuid(),
       family_id uuid not null references families(id) on delete cascade,
@@ -200,6 +235,30 @@ export async function initializeDatabase() {
       created_at timestamptz not null default now(),
       accepted_at timestamptz,
       revoked_at timestamptz
+    );
+    alter table family_parent_invitations
+      add column if not exists invitation_role text not null default 'coparent';
+    alter table family_parent_invitations
+      add column if not exists relationship_type text;
+    alter table family_parent_invitations
+      add column if not exists permissions jsonb not null default '{"messages":true,"audioCalls":true,"videoCalls":false,"games":true}'::jsonb;
+    alter table family_parent_invitations drop constraint if exists family_parent_invitations_invitation_role_check;
+    alter table family_parent_invitations
+      add constraint family_parent_invitations_invitation_role_check
+      check (invitation_role in ('coparent','relative'));
+    alter table family_parent_invitations drop constraint if exists family_parent_invitations_relationship_type_check;
+    alter table family_parent_invitations
+      add constraint family_parent_invitations_relationship_type_check
+      check (
+        (invitation_role='coparent' and relationship_type is null)
+        or
+        (invitation_role='relative' and relationship_type in ('grandparent','uncle_aunt','godparent','family_friend'))
+      );
+
+    create table if not exists family_invitation_children (
+      invitation_id uuid not null references family_parent_invitations(id) on delete cascade,
+      child_id uuid not null references accounts(id) on delete cascade,
+      primary key (invitation_id, child_id)
     );
     create unique index if not exists family_parent_invitations_pending_email_idx
       on family_parent_invitations(family_id, lower(email)) where status = 'pending';
@@ -261,6 +320,16 @@ export async function initializeDatabase() {
       conversation_id uuid not null references conversations(id) on delete cascade,
       account_id uuid not null references accounts(id) on delete cascade,
       primary key (conversation_id, account_id)
+    );
+
+    create table if not exists account_contact_aliases (
+      owner_account_id uuid not null references accounts(id) on delete cascade,
+      target_account_id uuid not null references accounts(id) on delete cascade,
+      alias text not null check (char_length(btrim(alias)) between 1 and 32),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (owner_account_id, target_account_id),
+      check (owner_account_id <> target_account_id)
     );
 
     create table if not exists conversation_removals (
@@ -405,6 +474,7 @@ export async function initializeDatabase() {
       player_one_id uuid not null references accounts(id) on delete cascade,
       player_two_id uuid not null references accounts(id) on delete cascade,
       invited_by uuid not null references accounts(id) on delete cascade,
+      conversation_id uuid references conversations(id) on delete set null,
       status text not null default 'pending' check (status in ('pending','active','declined','completed')),
       board jsonb not null default '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]'::jsonb,
       current_player_id uuid references accounts(id) on delete set null,
@@ -417,6 +487,47 @@ export async function initializeDatabase() {
     alter table game_sessions drop constraint if exists game_sessions_status_check;
     alter table game_sessions add constraint game_sessions_status_check
       check (status in ('pending','active','declined','completed','cancelled'));
+    alter table game_sessions add column if not exists conversation_id uuid references conversations(id) on delete set null;
+    update game_sessions game
+      set conversation_id=relationship.conversation_id
+      from contact_relationships relationship
+      where game.conversation_id is null
+        and relationship.account_one_id=least(game.player_one_id,game.player_two_id)
+        and relationship.account_two_id=greatest(game.player_one_id,game.player_two_id);
+    update game_sessions game
+      set conversation_id=family_conversation.conversation_id
+      from family_conversations family_conversation
+      where game.conversation_id is null
+        and (
+          (family_conversation.parent_id=game.player_one_id and family_conversation.child_id=game.player_two_id)
+          or (family_conversation.parent_id=game.player_two_id and family_conversation.child_id=game.player_one_id)
+        );
+    update game_sessions game
+      set conversation_id=family_parent.conversation_id
+      from family_parent_conversations family_parent
+      where game.conversation_id is null
+        and family_parent.parent_one_id=least(game.player_one_id,game.player_two_id)
+        and family_parent.parent_two_id=greatest(game.player_one_id,game.player_two_id);
+    with exact_pair_conversations as (
+      select game.id as game_id,conversation.id as conversation_id,
+        row_number() over(partition by game.id order by conversation.created_at,conversation.id) as position
+      from game_sessions game
+      join conversation_members first_member on first_member.account_id=game.player_one_id
+      join conversation_members second_member
+        on second_member.conversation_id=first_member.conversation_id
+       and second_member.account_id=game.player_two_id
+      join conversations conversation on conversation.id=first_member.conversation_id
+      where game.conversation_id is null
+        and (
+          select count(*)
+          from conversation_members member
+          where member.conversation_id=conversation.id
+        )=2
+    )
+    update game_sessions game
+      set conversation_id=pair.conversation_id
+      from exact_pair_conversations pair
+      where game.id=pair.game_id and pair.position=1;
     alter table game_sessions add column if not exists expires_at timestamptz;
     update game_sessions
       set expires_at=case
@@ -444,6 +555,7 @@ export async function initializeDatabase() {
     alter table game_sessions add constraint game_sessions_game_type_check
       check (game_type in ('connect_four','tic_tac_toe','naval_battle'));
     create index if not exists game_sessions_players_idx on game_sessions(player_one_id, player_two_id, updated_at desc);
+    create index if not exists game_sessions_conversation_idx on game_sessions(conversation_id, updated_at desc);
     create index if not exists game_sessions_expiry_idx on game_sessions(status, expires_at);
 
     create table if not exists call_sessions (

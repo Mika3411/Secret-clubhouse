@@ -26,6 +26,11 @@ export function normalizeFamilyInvitation(payload) {
     email: invitation.email ?? "",
     familyName: invitation.familyName ?? invitation.family_name ?? "cette famille",
     invitedByName: invitation.invitedByName ?? invitation.inviterName ?? invitation.invited_by_name ?? invitation.invitedBy?.name ?? "un parent",
+    role: invitation.role ?? invitation.invitationRole ?? invitation.invitation_role ?? "coparent",
+    relationshipType: invitation.relationshipType ?? invitation.relationship_type ?? null,
+    relationshipLabel: invitation.relationshipLabel ?? invitation.relationship_label ?? "Proche autorisé",
+    children: invitation.children ?? [],
+    permissions: invitation.permissions ?? {},
     expiresAt: invitation.expiresAt ?? invitation.expires_at,
   };
 }

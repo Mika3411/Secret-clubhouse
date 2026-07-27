@@ -83,12 +83,81 @@
   box-shadow: 0 0 0 3px rgba(115, 88, 212, .14);
 }
 
-.child-add-friend-form .approval-steps {
-  margin: 2px 0 5px;
-}
-
 .child-add-friend-form .primary-button {
   width: 100%;
+}
+
+.friend-approval-flow {
+  display: grid;
+  gap: 9px;
+  margin: 2px 0 5px;
+  padding: 11px;
+  color: #48435d;
+  border: 1px solid #dcd4f4;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #f8f6ff, #f0ecff);
+}
+
+.friend-approval-flow__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #5c44b7;
+  font-size: 10.5px;
+}
+
+.friend-approval-flow__title svg {
+  flex: none;
+  color: #20aa81;
+}
+
+.friend-approval-flow ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.friend-approval-flow li {
+  display: grid;
+  grid-template-columns: 27px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.friend-approval-flow li > span {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: 50%;
+  color: #120966;
+  background: var(--mint);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.friend-approval-flow li + li > span {
+  color: #fff;
+  background: #785ed9;
+}
+
+.friend-approval-flow li > div {
+  display: grid;
+  min-width: 0;
+}
+
+.friend-approval-flow li strong {
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+
+.friend-approval-flow li small {
+  color: #716b7e;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1.3;
 }
 
 .child-add-friend-error {

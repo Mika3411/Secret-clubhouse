@@ -63,4 +63,22 @@ public class NativePushPayloadTest {
         assertEquals("Nouvelle demande", payload.title);
         assertEquals("À approuver", payload.body);
     }
+
+    @Test
+    public void gameTurnKeepsOpaqueGameRouting() {
+        Map<String, String> data = new HashMap<>();
+        data.put("notificationType", "game");
+        data.put("gameId", "33333333-3333-4333-8333-333333333333");
+        data.put("gameEvent", "turn");
+
+        NativePushPayload payload = NativePushPayload.fromData(
+            data,
+            "message-4",
+            "Secret Clubhouse",
+            "C’est à votre tour de jouer."
+        );
+
+        assertEquals("33333333-3333-4333-8333-333333333333", payload.gameId);
+        assertEquals("turn", payload.gameEvent);
+    }
 }

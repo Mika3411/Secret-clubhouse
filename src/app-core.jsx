@@ -122,23 +122,35 @@ export const mapServerConversation = (conversation, account) => {
     ? mapServerMessage(summaryLatest, account.id)
     : messages[messages.length - 1];
   const latestPreview = latest?.type === "video" ? "Vidéo" : latest?.type === "image" ? "Photo" : latest?.type === "audio" ? "Message vocal" : latest?.text;
-  const initials = String(conversation.name ?? "?").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+  const contactName = conversation.name ?? "?";
+  const initials = String(contactName).split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
   const isFamily = conversation.kind === "child" && (
-    (account.role === "parent" && conversation.contact_role === "child")
-    || (account.role === "child" && conversation.contact_role === "parent")
+    (["parent", "relative"].includes(account.role) && conversation.contact_role === "child")
+    || (account.role === "child" && ["parent", "relative"].includes(conversation.contact_role))
   );
   const isHouseholdParent = conversation.kind === "parent" && conversation.contact_role === "parent" && Boolean(conversation.is_family_member);
   return {
     id: conversation.id,
-    name: conversation.name,
+    name: contactName,
+    canonicalName: conversation.canonical_name ?? conversation.canonicalName ?? contactName,
+    contactAlias: conversation.contact_alias ?? conversation.contactAlias ?? null,
     contactId: conversation.contact_id,
     contactRole: conversation.contact_role,
     contactStatus: conversation.contact_status ?? "active",
     schedule: cloneCommunicationSchedule(conversation.communication_schedule ?? defaultCommunicationSchedule),
+    trustedAccess: conversation.trusted_access ?? conversation.trustedAccess ?? null,
     isFamily,
     isHouseholdParent,
     serverBacked: true,
-    relation: isFamily ? (account.role === "parent" ? "Mon enfant" : "Mon parent") : isHouseholdParent ? "Parent de ma famille" : "Parent d’un contact",
+    relation: isFamily
+      ? account.role === "relative"
+        ? "Mon jeune proche"
+        : account.role === "parent"
+          ? "Mon enfant"
+          : conversation.contact_role === "relative"
+            ? "Proche autorisé"
+            : "Mon parent"
+      : isHouseholdParent ? "Parent de ma famille" : "Parent d’un contact",
     initials,
     preview: latestPreview ?? (isFamily || isHouseholdParent ? "Commencez votre conversation familiale." : "Nouvelle conversation"),
     time: latest?.time ?? "Maintenant",

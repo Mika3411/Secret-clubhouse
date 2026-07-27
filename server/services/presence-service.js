@@ -119,6 +119,14 @@ export async function listAuthorizedContactAvailability(executor, {
        select child.child_id
        from family_children child
        join requester_families using(family_id)
+       union
+       select access.child_id
+       from family_trusted_adult_children access
+       where access.adult_id=$2
+       union
+       select access.adult_id
+       from family_trusted_adult_children access
+       where access.child_id=$2
      )
      select
        account.contact_id,

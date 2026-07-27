@@ -28,6 +28,7 @@ self.addEventListener("push", (event) => {
       data: {
         callId: data.callId,
         conversationId: data.conversationId,
+        gameId: data.gameId,
         expiresAt: data.expiresAt,
         notificationType: data.notificationType,
         url: data.url || "/",

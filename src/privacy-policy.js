@@ -32,7 +32,7 @@ export const parentPrivacyPolicy = Object.freeze({
     },
     {
       title: "Communications et activités",
-      text: "Relations et demandes de contact, participants aux conversations, messages, photos, vidéos, messages vocaux, réponses, transferts, réactions, états de réception, invitations et parties multijoueurs, métadonnées et signaux techniques des appels. Le contenu, les métadonnées descriptives des messages et médias, ainsi que les offres, réponses et candidats ICE WebRTC sont chiffrés par l’API avant leur stockage PostgreSQL.",
+      text: "Relations et demandes de contact, participants aux conversations, petits noms privés choisis par l’enfant pour ses parents ou proches, messages, photos, vidéos, messages vocaux, réponses, transferts, réactions, états de réception, invitations et parties multijoueurs, métadonnées et signaux techniques des appels. Le contenu, les métadonnées descriptives des messages et médias, ainsi que les offres, réponses et candidats ICE WebRTC sont chiffrés par l’API avant leur stockage PostgreSQL.",
     },
     {
       title: "Données techniques et de sécurité",
@@ -118,7 +118,7 @@ export const parentPrivacyPolicy = Object.freeze({
   retention: [
     {
       data: "Comptes parent, famille, profils enfants et réglages",
-      duration: "Pendant l’utilisation du service, puis au maximum 2 ans après la dernière activité de l’ensemble de la famille. Une connexion ou un heartbeat renouvelle ce délai. Un profil enfant supprimé par le parent est effacé immédiatement avec ses données associées.",
+      duration: "Pendant l’utilisation du service, puis au maximum 2 ans après la dernière activité de l’ensemble de la famille. Les petits noms privés choisis par un enfant suivent la durée de vie de son profil. Une connexion ou un heartbeat renouvelle ce délai. Un profil enfant supprimé par le parent est effacé immédiatement avec ses données associées.",
     },
     {
       data: "Messages et médias",
@@ -185,7 +185,7 @@ export const childPrivacyCards = Object.freeze([
   {
     icon: "backpack",
     title: "Ce que l’application garde",
-    text: "Ton prénom ou pseudo, ton âge, ton avatar, ton pseudo secret et l’ID de ton QR. Elle garde aussi tes contacts approuvés, tes messages et médias, tes jeux et récompenses, les réglages de ton parent, et un petit signal pour dire si l’application est ouverte ou en veille.",
+    text: "Ton prénom ou pseudo, ton âge, ton avatar, ton pseudo secret, l’ID de ton QR, tes contacts, messages, médias, jeux et récompenses. Elle garde aussi les petits noms choisis pour ta famille, les réglages de ton parent et un signal disant si l’app est ouverte ou en veille.",
   },
   {
     icon: "sparkle",

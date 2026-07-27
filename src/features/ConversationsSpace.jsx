@@ -16,6 +16,7 @@ import { LockKey } from "@phosphor-icons/react/LockKey";
 import { Microphone } from "@phosphor-icons/react/Microphone";
 import { MicrophoneSlash } from "@phosphor-icons/react/MicrophoneSlash";
 import { PaperPlaneTilt } from "@phosphor-icons/react/PaperPlaneTilt";
+import { PencilSimple } from "@phosphor-icons/react/PencilSimple";
 import { Phone } from "@phosphor-icons/react/Phone";
 import { PhoneDisconnect } from "@phosphor-icons/react/PhoneDisconnect";
 import { Plus } from "@phosphor-icons/react/Plus";
@@ -46,7 +47,7 @@ import {
 import "../styles/conversations.css";
 import { Capacitor, endNativeSystemCall } from "../native-notifications";
 import { beginIncomingCallAlert } from "../incoming-call-alerts";
-import { Avatar, ParentModeNavigation } from "./AuthenticatedShared";
+import { Avatar, ParentModeNavigation, TrustedAdultNavigation } from "./AuthenticatedShared";
 import {
   ConversationMediaMessage,
   ConversationVoiceMessage,
@@ -1319,6 +1320,109 @@ export function RealtimeCallScreen({
   );
 }
 
+const childContactAliasSuggestions = ["Papa", "Maman", "Papi", "Mamie", "Papou", "Mamou", "Tonton", "Tata"];
+
+function ChildContactAliasDialog({ conversation, onClose, onSave }) {
+  const originalName = conversation.canonicalName || conversation.name;
+  const [alias, setAlias] = useState(conversation.contactAlias || conversation.name);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && !isSaving) onClose();
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isSaving, onClose]);
+
+  const saveAlias = async (nextAlias) => {
+    if (isSaving) return;
+    setIsSaving(true);
+    setError("");
+    try {
+      await onSave(nextAlias);
+      onClose();
+    } catch (requestError) {
+      setError(requestError.message || "Ce petit nom n’a pas été enregistré. Réessaie.");
+      setIsSaving(false);
+    }
+  };
+
+  return createPortal((
+    <div className="child-contact-alias-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !isSaving) onClose();
+    }}>
+      <section className="child-contact-alias-dialog" role="dialog" aria-modal="true" aria-labelledby="child-contact-alias-title">
+        <button className="child-contact-alias-dialog__close" type="button" onClick={onClose} disabled={isSaving} aria-label="Fermer"><X size={21} weight="bold" /></button>
+        <div className="child-contact-alias-dialog__icon"><PencilSimple size={29} weight="fill" /></div>
+        <span className="child-contact-alias-dialog__eyebrow">Rien que pour toi</span>
+        <h2 id="child-contact-alias-title">Comment veux-tu l’appeler&nbsp;?</h2>
+        <p>Son prénom est <strong>{originalName}</strong>. Choisis le petit nom que tu verras dans tes conversations et tes appels.</p>
+        <div className="child-contact-alias-suggestions" aria-label="Idées de petits noms">
+          {childContactAliasSuggestions.map((suggestion) => (
+            <button
+              type="button"
+              key={suggestion}
+              className={alias === suggestion ? "is-selected" : ""}
+              aria-pressed={alias === suggestion}
+              onClick={() => {
+                setAlias(suggestion);
+                setError("");
+                inputRef.current?.focus();
+              }}
+              disabled={isSaving}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          void saveAlias(alias);
+        }}>
+          <label htmlFor="child-contact-alias-input">Son petit nom</label>
+          <input
+            ref={inputRef}
+            id="child-contact-alias-input"
+            value={alias}
+            maxLength={32}
+            autoComplete="off"
+            enterKeyHint="done"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? "child-contact-alias-error" : "child-contact-alias-help"}
+            onChange={(event) => {
+              setAlias(event.target.value);
+              setError("");
+            }}
+            disabled={isSaving}
+          />
+          <small id="child-contact-alias-help">Ce petit nom reste privé dans ton espace.</small>
+          {error && <p id="child-contact-alias-error" className="child-contact-alias-dialog__error" role="alert">{error}</p>}
+          <div className="child-contact-alias-dialog__actions">
+            {conversation.contactAlias && (
+              <button className="child-contact-alias-dialog__reset" type="button" onClick={() => void saveAlias("")} disabled={isSaving}>
+                Revenir à {originalName}
+              </button>
+            )}
+            <button className="child-contact-alias-dialog__save" type="submit" disabled={isSaving || !alias.trim()}>
+              <Check size={19} weight="bold" />
+              {isSaving ? "J’enregistre…" : "Garder ce petit nom"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  ), document.body);
+}
+
 export function ChatScreen({
   conversation,
   settings,
@@ -1331,6 +1435,7 @@ export function ChatScreen({
   onSendMedia,
   onReactMessage,
   onForwardMessage,
+  onRenameContact,
   onInviteGame,
   onOpenGames,
   onStartCall,
@@ -1340,6 +1445,7 @@ export function ChatScreen({
   const [mediaError, setMediaError] = useState("");
   const [messageError, setMessageError] = useState("");
   const [isGameInviteOpen, setIsGameInviteOpen] = useState(false);
+  const [isContactAliasOpen, setIsContactAliasOpen] = useState(false);
   const [activeMessageAction, setActiveMessageAction] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [interactionBusy, setInteractionBusy] = useState(false);
@@ -1358,8 +1464,14 @@ export function ChatScreen({
     ? `${schedule.messages.start.slice(0, 2).replace(/^0/, "")} h`
     : schedule.messages.start.replace(/^0/, "").replace(":", " h ");
   const { typingName, notifyTyping, stopTyping } = useTypingIndicator(conversation.id, Boolean(conversation.serverBacked));
-  const canInviteToGame = Boolean(conversation.contactId && (conversation.serverBacked || onInviteGame));
+  const canInviteToGame = Boolean(
+    conversation.contactId
+    && conversation.trustedAccess?.games !== false
+    && (conversation.serverBacked || onInviteGame),
+  );
   const canCall = Boolean(conversation.serverBacked && onStartCall);
+  const canCallAudio = canCall && conversation.trustedAccess?.audioCalls !== false;
+  const canCallVideo = canCall && conversation.trustedAccess?.videoCalls !== false;
   const {
     games: conversationGames,
     busyAction: gameBusyAction,
@@ -1513,13 +1625,24 @@ export function ChatScreen({
         </button>
         <Avatar person={conversation} size="chat" availability={availability} />
         <div className="chat-header__copy">
-          <strong>{conversation.name}</strong>
-          <span><ShieldCheck size={13} weight="fill" /> {conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
+          {conversation.isFamily && onRenameContact ? (
+            <button
+              className="chat-contact-alias-button"
+              type="button"
+              onClick={() => setIsContactAliasOpen(true)}
+              aria-label={`Changer le petit nom de ${conversation.canonicalName}`}
+              title="Changer son petit nom"
+            >
+              <strong>{conversation.name}</strong>
+              <PencilSimple size={15} weight="bold" />
+            </button>
+          ) : <strong>{conversation.name}</strong>}
+          <span><ShieldCheck size={13} weight="fill" /> {conversation.contactRole === "relative" ? "Ton proche" : conversation.isFamily ? "Ton parent" : "Contact approuvé"}</span>
           <small className={`presence-label is-${availability.state}`}>{availability.label}</small>
         </div>
         <div className="conversation-actions">
-          {canCall && <button className={`icon-button audio-call-button ${effectiveAudioCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "audio", effectiveAudioCallPolicy)} disabled={!effectiveAudioCallPolicy.allowed} title={effectiveAudioCallPolicy.allowed ? `Appeler ${conversation.name}` : effectiveAudioCallPolicy.detail} aria-label={effectiveAudioCallPolicy.allowed ? `Appeler ${conversation.name} en audio` : `Appel audio indisponible : ${effectiveAudioCallPolicy.detail}`}><Phone size={21} weight="fill" /></button>}
-          {canCall && <button className={`icon-button video-call-button ${effectiveVideoCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "video", effectiveVideoCallPolicy)} disabled={!effectiveVideoCallPolicy.allowed} title={effectiveVideoCallPolicy.allowed ? `Appeler ${conversation.name} en visio` : effectiveVideoCallPolicy.detail} aria-label={effectiveVideoCallPolicy.allowed ? `Appeler ${conversation.name} en vidéo` : `Appel vidéo indisponible : ${effectiveVideoCallPolicy.detail}`}><VideoCamera size={21} weight="fill" /></button>}
+          {canCallAudio && <button className={`icon-button audio-call-button ${effectiveAudioCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "audio", effectiveAudioCallPolicy)} disabled={!effectiveAudioCallPolicy.allowed} title={effectiveAudioCallPolicy.allowed ? `Appeler ${conversation.name}` : effectiveAudioCallPolicy.detail} aria-label={effectiveAudioCallPolicy.allowed ? `Appeler ${conversation.name} en audio` : `Appel audio indisponible : ${effectiveAudioCallPolicy.detail}`}><Phone size={21} weight="fill" /></button>}
+          {canCallVideo && <button className={`icon-button video-call-button ${effectiveVideoCallPolicy.allowed ? "" : "is-restricted"}`} type="button" onClick={() => onStartCall(conversation, "video", effectiveVideoCallPolicy)} disabled={!effectiveVideoCallPolicy.allowed} title={effectiveVideoCallPolicy.allowed ? `Appeler ${conversation.name} en visio` : effectiveVideoCallPolicy.detail} aria-label={effectiveVideoCallPolicy.allowed ? `Appeler ${conversation.name} en vidéo` : `Appel vidéo indisponible : ${effectiveVideoCallPolicy.detail}`}><VideoCamera size={21} weight="fill" /></button>}
           {canInviteToGame && <button className="chat-game-button" type="button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${conversation.name} à jouer`}><GameController size={20} weight="fill" /><span>Jouer</span></button>}
         </div>
       </header>
@@ -1582,6 +1705,13 @@ export function ChatScreen({
           <button type="submit" className="send-button" aria-label="Envoyer le message" disabled={!messagePolicy.allowed}><PaperPlaneTilt size={21} weight="fill" /></button>
         </form>
       </div>
+      {isContactAliasOpen && (
+        <ChildContactAliasDialog
+          conversation={conversation}
+          onClose={() => setIsContactAliasOpen(false)}
+          onSave={(alias) => onRenameContact(conversation.id, alias)}
+        />
+      )}
       {isGameInviteOpen && <ConversationGameInviteDialog contactName={conversation.name} relation={conversation.isFamily ? "Membre de ta famille" : "Contact approuvé"} onClose={() => setIsGameInviteOpen(false)} onSend={sendGameInvitation} />}
       {activeMessageAction && (
         <MessageActionSheet
@@ -1603,8 +1733,13 @@ export function ChatScreen({
   );
 }
 
-export function ParentMessagesScreen({ parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onLoadOlderMessages, onRetryMessages, onHome, onManagement, onHelp, onSend, onSendMedia, onReactMessage, onForwardMessage, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
+export function ParentMessagesScreen({ trustedAdult = false, parentName, parentContactId = "", familyChildren, threads, selectedThreadId, onSelectThread, onLoadOlderMessages, onRetryMessages, onHome, onManagement, onHelp, onSend, onSendMedia, onReactMessage, onForwardMessage, onInviteGame, onOpenGames, onOpenFamilyConversation, onStartCall, onContactRequestCreated, conversationSyncError = "", onRetryConversationSync, initialContactId = "", initialRequesterContactId = "", onContactHandled }) {
   const availableRequesterIds = [parentContactId, ...familyChildren.map((child) => child.contactId)].filter(Boolean);
+  const handoffRequester = initialContactId && initialRequesterContactId
+    ? initialRequesterContactId === parentContactId
+      ? { contactId: parentContactId, name: parentName, relation: "Parent" }
+      : familyChildren.find((child) => child.contactId === initialRequesterContactId)
+    : null;
   const requesterProfileMismatch = Boolean(
     initialContactId
     && initialRequesterContactId
@@ -1627,14 +1762,32 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
   const [replyingTo, setReplyingTo] = useState(null);
   const [interactionBusy, setInteractionBusy] = useState(false);
   const [interactionFeedback, setInteractionFeedback] = useState("");
+  const effectiveRequesterContactId = handoffRequester?.contactId ?? requesterContactId;
   const parentMediaInputRef = useRef(null);
   const parentDraftInputRef = useRef(null);
   const parentMediaUrlsRef = useRef([]);
-  const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
+  const visibleThreads = trustedAdult
+    ? threads.map((thread) => {
+        const child = familyChildren.find((item) => item.contactId === thread.contactId);
+        const trustedFamily = child?.trustedFamily ?? null;
+        return trustedFamily
+          ? {
+              ...thread,
+              trustedFamily,
+              relation: `${trustedFamily.relationshipLabel || "Proche autorisé"} · ${trustedFamily.name}`,
+            }
+          : thread;
+      })
+    : threads;
+  const selectedThread = visibleThreads.find((thread) => thread.id === selectedThreadId) ?? null;
   const selectedAvailability = normalizePresenceAvailability(selectedThread?.availability);
   const selectedCallPolicy = callAvailabilityPolicy(selectedAvailability);
   const { typingName, notifyTyping, stopTyping } = useTypingIndicator(selectedThread?.id, Boolean(selectedThread?.serverBacked));
-  const canInviteToGame = Boolean(selectedThread?.contactId && (selectedThread.serverBacked || onInviteGame));
+  const canInviteToGame = Boolean(selectedThread?.contactId
+    && (!trustedAdult || selectedThread.trustedAccess?.games === true)
+    && (selectedThread.serverBacked || onInviteGame));
+  const canStartAudioCall = !trustedAdult || selectedThread?.trustedAccess?.audioCalls === true;
+  const canStartVideoCall = !trustedAdult || selectedThread?.trustedAccess?.videoCalls === true;
   const {
     games: conversationGames,
     busyAction: gameBusyAction,
@@ -1697,7 +1850,7 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
       setContactFeedback({ type: "error", text: "Connectez un parent de la famille du profil qui a lancé cette demande." });
       return;
     }
-    if (!requesterContactId) {
+    if (!effectiveRequesterContactId) {
       setContactFeedback({ type: "error", text: "Choisissez le membre de votre famille qui souhaite ajouter ce contact." });
       return;
     }
@@ -1717,7 +1870,7 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
         onContactHandled?.();
         return;
       }
-      await api.addContact(normalizedId, requesterContactId);
+      await api.addContact(normalizedId, effectiveRequesterContactId);
       await Promise.resolve(onContactRequestCreated?.()).catch(() => undefined);
       setContactFeedback({ type: "success", text: "Demande envoyée au parent du contact." });
       setContactId("");
@@ -1833,23 +1986,23 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
     <section className={`parent-messages-screen parent-messages-workspace${selectedThread ? " has-selected-thread" : ""}`} aria-labelledby="parent-messages-title">
       <header className="parent-messages-header">
         <span className="parent-messages-header__shield"><ShieldCheck size={22} weight="fill" /></span>
-        <div><span>Mode parent</span><h1 id="parent-messages-title">Messagerie parentale</h1></div>
+        <div><span>{trustedAdult ? "Proche autorisé" : "Mode parent"}</span><h1 id="parent-messages-title">{trustedAdult ? "Conversations familiales" : "Messagerie parentale"}</h1></div>
         <span className="parent-avatar" aria-label={`Profil de ${parentName}`} role="img"><UserCircle size={28} weight="fill" /></span>
       </header>
       <div className="parent-inbox-layout">
         <aside className="parent-messages-content parent-inbox-master" aria-label="Liste des conversations parentales">
-          <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>Parlez à votre famille et aux parents autorisés, sans voir les discussions entre enfants.</p></div></div>
+          <div className="parent-inbox-intro"><span><LockKey size={21} weight="fill" /></span><div><strong>Votre messagerie protégée</strong><p>{trustedAdult ? "Vous voyez uniquement les enfants et les échanges autorisés par leur famille." : "Parlez à votre famille et aux parents autorisés, sans voir les discussions entre enfants."}</p></div></div>
           {conversationSyncError && <div className="family-conversation-warning" role="alert"><Shield size={18} weight="fill" /><span>{conversationSyncError}</span><button type="button" onClick={onRetryConversationSync}>Réessayer</button></div>}
-          <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{threads.length} contact{threads.length > 1 ? "s" : ""}</span></div><button type="button" className="parent-add-contact" onClick={() => { setRequesterContactId(parentContactId || familyChildren[0]?.contactId || ""); setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter</span></button></div>
+          <div className="parent-inbox-title"><div><h2>Conversations</h2><span>{visibleThreads.length} contact{visibleThreads.length > 1 ? "s" : ""}</span></div>{!trustedAdult && <button type="button" className="parent-add-contact" onClick={() => { setRequesterContactId(parentContactId || familyChildren[0]?.contactId || ""); setIsAddingContact(true); setContactFeedback(null); }}><UserPlus size={18} weight="bold" /><span>Ajouter</span></button>}</div>
           <div className="parent-thread-list">
-            {threads.map((thread) => (
+            {visibleThreads.map((thread) => (
               <button type="button" className={`parent-thread-row${selectedThread?.id === thread.id ? " is-selected" : ""}`} key={thread.id} onClick={() => onSelectThread(thread.id)} aria-label={`Ouvrir la conversation avec ${thread.name}`} aria-current={selectedThread?.id === thread.id ? "true" : undefined}>
                 <span className="parent-contact-avatar parent-contact-avatar--with-presence" aria-hidden="true">{thread.initials}<i className={`online-dot is-${normalizePresenceAvailability(thread.availability).state}`} /></span>
                 <span className="parent-thread-row__copy"><span><strong>{thread.name}</strong><small>{thread.time}</small></span><em>{thread.relation} · <span className={`presence-label is-${normalizePresenceAvailability(thread.availability).state}`}>{normalizePresenceAvailability(thread.availability).shortLabel}</span></em><p>{thread.preview}</p></span>
                 {thread.unread > 0 ? <span className="parent-thread-unread">{thread.unread}</span> : <CaretRight size={18} weight="bold" aria-hidden="true" />}
               </button>
             ))}
-            {threads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>Écrivez à l’un de vos enfants ou ajoutez un contact.</span></div>}
+            {visibleThreads.length === 0 && <div className="parent-inbox-empty"><ChatCircleDots size={31} weight="fill" /><strong>Aucune conversation</strong><span>{trustedAdult ? "La famille n’a pas encore autorisé de conversation." : "Écrivez à l’un de vos enfants ou ajoutez un contact."}</span></div>}
           </div>
         </aside>
 
@@ -1858,14 +2011,14 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
             <header className="parent-thread-header">
               <button type="button" className="parent-back-button" onClick={() => onSelectThread(null)} aria-label="Retour aux conversations parentales"><ArrowLeft size={22} weight="bold" /></button>
               <span className="parent-contact-avatar parent-contact-avatar--with-presence" aria-hidden="true">{selectedThread.initials}<i className={`online-dot is-${selectedAvailability.state}`} /></span>
-              <div className="parent-thread-header__copy"><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small><small className={`presence-label is-${selectedAvailability.state}`}>{selectedAvailability.label}</small></div>
+              <div className="parent-thread-header__copy"><strong>{selectedThread.name}</strong><small>{selectedThread.isFamily ? trustedAdult ? `${selectedThread.relation} · Conversation familiale` : "Mon enfant · Conversation familiale" : selectedThread.isHouseholdParent ? "Parent de la famille · Discussion privée" : `${selectedThread.relation} · Contact adulte`}</small><small className={`presence-label is-${selectedAvailability.state}`}>{selectedAvailability.label}</small></div>
               <div className="conversation-actions conversation-actions--parent">
-                {onStartCall && <button type="button" className={`icon-button audio-call-button ${selectedCallPolicy.allowed ? "" : "is-restricted"}`} onClick={() => onStartCall(selectedThread, "audio", selectedCallPolicy)} disabled={!selectedCallPolicy.allowed} title={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name}` : selectedCallPolicy.detail} aria-label={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en audio` : `Appel audio indisponible : ${selectedCallPolicy.detail}`}><Phone size={20} weight="fill" /></button>}
-                {onStartCall && <button type="button" className={`icon-button video-call-button ${selectedCallPolicy.allowed ? "" : "is-restricted"}`} onClick={() => onStartCall(selectedThread, "video", selectedCallPolicy)} disabled={!selectedCallPolicy.allowed} title={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en visio` : selectedCallPolicy.detail} aria-label={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en vidéo` : `Appel vidéo indisponible : ${selectedCallPolicy.detail}`}><VideoCamera size={20} weight="fill" /></button>}
+                {onStartCall && canStartAudioCall && <button type="button" className={`icon-button audio-call-button ${selectedCallPolicy.allowed ? "" : "is-restricted"}`} onClick={() => onStartCall(selectedThread, "audio", selectedCallPolicy)} disabled={!selectedCallPolicy.allowed} title={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name}` : selectedCallPolicy.detail} aria-label={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en audio` : `Appel audio indisponible : ${selectedCallPolicy.detail}`}><Phone size={20} weight="fill" /></button>}
+                {onStartCall && canStartVideoCall && <button type="button" className={`icon-button video-call-button ${selectedCallPolicy.allowed ? "" : "is-restricted"}`} onClick={() => onStartCall(selectedThread, "video", selectedCallPolicy)} disabled={!selectedCallPolicy.allowed} title={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en visio` : selectedCallPolicy.detail} aria-label={selectedCallPolicy.allowed ? `Appeler ${selectedThread.name} en vidéo` : `Appel vidéo indisponible : ${selectedCallPolicy.detail}`}><VideoCamera size={20} weight="fill" /></button>}
                 {canInviteToGame && <button type="button" className="parent-thread-game-button" onClick={() => setIsGameInviteOpen(true)} aria-label={`Inviter ${selectedThread.name} à jouer`}><GameController size={19} weight="fill" /><span>Jouer</span></button>}
               </div>
             </header>
-            <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
+            <div className="parent-thread-safety"><ShieldCheck size={17} weight="fill" /><span>{trustedAdult ? `${selectedThread.trustedFamily?.name || `La famille de ${selectedThread.name}`} a approuvé cet accès.` : selectedThread.isFamily ? `Discussion familiale directe avec ${selectedThread.name}.` : selectedThread.isHouseholdParent ? "Discussion privée entre les parents de votre famille." : "Discussion entre adultes, séparée de la messagerie des enfants."}</span></div>
             <div ref={parentThreadMessagesRef} className="parent-thread-messages" aria-live="polite">
               <div className="message-history-controls message-history-controls--parent">
                 {selectedThread.hasMoreMessages && <button type="button" onClick={() => onLoadOlderMessages?.(selectedThread.id)} disabled={selectedThread.messagesLoading}>{selectedThread.messagesLoading ? "Chargement…" : "Afficher les messages précédents"}</button>}
@@ -1915,7 +2068,7 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
             {activeMessageAction && (
               <MessageActionSheet
                 message={activeMessageAction}
-                forwardTargets={threads.filter((thread) => thread.id !== selectedThread.id)}
+                forwardTargets={visibleThreads.filter((thread) => thread.id !== selectedThread.id)}
                 parent
                 busy={interactionBusy}
                 feedback={interactionFeedback}
@@ -1938,24 +2091,34 @@ export function ParentMessagesScreen({ parentName, parentContactId = "", familyC
           )}
         </section>
       </div>
-      <ParentModeNavigation active="conversations" unreadMessages={threads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onManagement={onManagement} onConversations={() => {}} onHelp={onHelp} />
-      {isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={closeContactModal}>
+      {trustedAdult
+        ? <TrustedAdultNavigation active="conversations" unreadMessages={visibleThreads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onConversations={() => {}} />
+        : <ParentModeNavigation active="conversations" unreadMessages={visibleThreads.reduce((total, thread) => total + (thread.unread ?? 0), 0)} onHome={onHome} onManagement={onManagement} onConversations={() => {}} onHelp={onHelp} />}
+      {!trustedAdult && isAddingContact && <div className="modal-backdrop" role="presentation" onMouseDown={closeContactModal}>
         <section className="add-contact-modal" role="dialog" aria-modal="true" aria-labelledby="add-contact-title" onMouseDown={(event) => event.stopPropagation()}>
           <span className="add-contact-icon"><UserPlus size={27} weight="fill" /></span>
-          <h2 id="add-contact-title">Ajouter un contact</h2>
-          <p>Un enfant de votre famille s’ouvre directement. Pour un contact extérieur, son parent devra approuver la demande.</p>
+          <h2 id="add-contact-title">{handoffRequester ? `Demande pour ${handoffRequester.name}` : "Ajouter un contact"}</h2>
+          <p>{handoffRequester ? "Confirmez l’envoi. Le parent de l’autre enfant devra ensuite accepter la demande." : "Un enfant de votre famille s’ouvre directement. Pour un contact extérieur, son parent devra approuver la demande."}</p>
           <form onSubmit={submitContact}>
-            <label htmlFor="contact-requester-id">Ajouter pour</label>
-            <select id="contact-requester-id" value={requesterContactId} disabled={requesterProfileMismatch} onChange={(event) => { setRequesterContactId(event.target.value); setContactFeedback(null); }}>
-              <option value="" disabled>Choisir un profil</option>
-              <option value={parentContactId}>{parentName} · parent</option>
-              {familyChildren.map((child) => <option key={child.id} value={child.contactId}>{child.name} · enfant</option>)}
-            </select>
+            {handoffRequester ? (
+              <div className="contact-request-profile" aria-label={`Profil concerné : ${handoffRequester.name}`}>
+                <ShieldCheck size={20} weight="fill" />
+                <span><small>Profil concerné</small><strong>{handoffRequester.name}</strong></span>
+                <CheckCircle size={19} weight="fill" />
+              </div>
+            ) : <>
+              <label htmlFor="contact-requester-id">Ajouter pour</label>
+              <select id="contact-requester-id" value={requesterContactId} disabled={requesterProfileMismatch} onChange={(event) => { setRequesterContactId(event.target.value); setContactFeedback(null); }}>
+                <option value="" disabled>Choisir un profil</option>
+                <option value={parentContactId}>{parentName} · parent</option>
+                {familyChildren.map((child) => <option key={child.id} value={child.contactId}>{child.name} · enfant</option>)}
+              </select>
+            </>}
             <label htmlFor="new-contact-id">Identifiant du contact</label>
             <input id="new-contact-id" value={contactId} onChange={(event) => { setContactId(event.target.value.toUpperCase().slice(0, 14)); setContactFeedback(null); }} placeholder="SC-123-456-789" autoComplete="off" autoFocus />
             {requesterProfileMismatch && <div className="contact-feedback contact-feedback--error" role="alert"><Shield size={17} weight="fill" /><span>Connectez un parent de la famille du profil qui a lancé cette demande.</span></div>}
             {!requesterProfileMismatch && contactFeedback && <div className={`contact-feedback contact-feedback--${contactFeedback.type}`} role="status">{contactFeedback.type === "success" ? <CheckCircle size={17} weight="fill" /> : <Shield size={17} weight="fill" />}<span>{contactFeedback.text}</span></div>}
-            <div className="add-contact-actions"><button type="button" onClick={closeContactModal}>Annuler</button><button type="submit" disabled={isSubmittingContact || requesterProfileMismatch}>{isSubmittingContact ? "Ouverture…" : "Continuer"}</button></div>
+            <div className="add-contact-actions"><button type="button" onClick={closeContactModal}>Annuler</button><button type="submit" disabled={isSubmittingContact || requesterProfileMismatch}>{isSubmittingContact ? "Envoi…" : handoffRequester ? "Confirmer et envoyer" : "Continuer"}</button></div>
           </form>
         </section>
       </div>}

@@ -91,6 +91,7 @@ import {
   normalizeConversationSyncCursor,
   normalizeMessagePageLimit,
 } from "./conversation-sync.js";
+import { normalizeConversationContactAlias } from "./conversation-contact-alias.js";
 import {
   isValidChildUsername,
   normalizeChildUsername,
@@ -265,10 +266,39 @@ const defaultCommunicationSchedule = {
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const invitationTokenPattern = /^[A-Za-z0-9_-]{40,128}$/;
+const trustedRelationshipTypes = new Set(["grandparent", "uncle_aunt", "godparent", "family_friend"]);
+const trustedRelationshipLabels = {
+  grandparent: "Grand-parent",
+  uncle_aunt: "Oncle ou tante",
+  godparent: "Parrain ou marraine",
+  family_friend: "Proche de confiance",
+};
+const defaultTrustedPermissions = {
+  messages: true,
+  audioCalls: true,
+  videoCalls: false,
+  games: true,
+};
 const normalizeEmail = (value) => String(value ?? "").trim().toLowerCase();
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 254;
 const hashInvitationToken = (token) => crypto.createHash("sha256").update(token).digest("hex");
 const makeInvitationToken = () => crypto.randomBytes(32).toString("base64url");
+
+function normalizeTrustedPermissions(value = {}) {
+  return Object.fromEntries(Object.entries(defaultTrustedPermissions).map(([key, fallback]) => [
+    key,
+    typeof value?.[key] === "boolean" ? value[key] : fallback,
+  ]));
+}
+
+function serializeTrustedPermissions(row = {}) {
+  return {
+    messages: Boolean(row.messages_enabled ?? row.messages ?? true),
+    audioCalls: Boolean(row.audio_calls_enabled ?? row.audioCalls ?? true),
+    videoCalls: Boolean(row.video_calls_enabled ?? row.videoCalls ?? false),
+    games: Boolean(row.games_enabled ?? row.games ?? true),
+  };
+}
 
 function httpError(statusCode, message) {
   if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
@@ -391,7 +421,7 @@ async function serializeFamilyForParent(parentId, executor = pool) {
     "update family_parent_invitations set status='expired' where family_id=$1 and status='pending' and expires_at<=now()",
     [membership.family_id],
   );
-  const [membersResult, invitationsResult] = await Promise.all([
+  const [membersResult, trustedAdultsResult, invitationsResult] = await Promise.all([
     executor.query(
       `select a.id,a.display_name,a.email,a.contact_id,fm.role,fm.joined_at
        from family_memberships fm join accounts a on a.id=fm.parent_id
@@ -400,9 +430,37 @@ async function serializeFamilyForParent(parentId, executor = pool) {
       [membership.family_id],
     ),
     executor.query(
-      `select i.id,i.email,i.expires_at,i.created_at,i.invited_by,a.display_name as invited_by_name
+      `select adult.account_id as id,account.display_name,account.email,account.contact_id,
+         adult.relationship_type,adult.joined_at,
+         coalesce(json_agg(json_build_object(
+           'id',child.id,
+           'name',child.display_name,
+           'messages',access.messages_enabled,
+           'audioCalls',access.audio_calls_enabled,
+           'videoCalls',access.video_calls_enabled,
+           'games',access.games_enabled
+         ) order by child.display_name) filter(where child.id is not null),'[]'::json) as children
+       from family_trusted_adults adult
+       join accounts account on account.id=adult.account_id
+       left join family_trusted_adult_children access
+         on access.family_id=adult.family_id and access.adult_id=adult.account_id
+       left join accounts child on child.id=access.child_id
+       where adult.family_id=$1
+       group by adult.account_id,account.display_name,account.email,account.contact_id,
+         adult.relationship_type,adult.joined_at
+       order by adult.joined_at,account.display_name`,
+      [membership.family_id],
+    ),
+    executor.query(
+      `select i.id,i.email,i.expires_at,i.created_at,i.invited_by,i.invitation_role,
+         i.relationship_type,i.permissions,a.display_name as invited_by_name,
+         coalesce(json_agg(json_build_object('id',child.id,'name',child.display_name)
+           order by child.display_name) filter(where child.id is not null),'[]'::json) as children
        from family_parent_invitations i left join accounts a on a.id=i.invited_by
+       left join family_invitation_children selection on selection.invitation_id=i.id
+       left join accounts child on child.id=selection.child_id
        where i.family_id=$1 and i.status='pending' and i.expires_at>now()
+       group by i.id,a.display_name
        order by i.created_at desc`,
       [membership.family_id],
     ),
@@ -419,14 +477,98 @@ async function serializeFamilyForParent(parentId, executor = pool) {
       role: member.role,
       joinedAt: member.joined_at,
     })),
+    trustedAdults: trustedAdultsResult.rows.map((adult) => ({
+      id: adult.id,
+      name: adult.display_name,
+      email: adult.email,
+      contactId: adult.contact_id,
+      relationshipType: adult.relationship_type,
+      relationshipLabel: trustedRelationshipLabels[adult.relationship_type],
+      joinedAt: adult.joined_at,
+      children: adult.children.map((child) => ({
+        id: child.id,
+        name: child.name,
+        permissions: serializeTrustedPermissions(child),
+      })),
+    })),
     pendingInvitations: invitationsResult.rows.map((invitation) => ({
       id: invitation.id,
       email: invitation.email,
+      role: invitation.invitation_role,
+      relationshipType: invitation.relationship_type,
+      relationshipLabel: trustedRelationshipLabels[invitation.relationship_type] ?? null,
+      permissions: normalizeTrustedPermissions(invitation.permissions),
+      children: invitation.children,
       expiresAt: invitation.expires_at,
       createdAt: invitation.created_at,
       invitedBy: invitation.invited_by ? { id: invitation.invited_by, name: invitation.invited_by_name } : null,
     })),
   };
+}
+
+async function serializeFamilyForTrustedAdult(accountId, executor = pool) {
+  const membershipResult = await executor.query(
+    `select family.id as family_id,family.name,adult.relationship_type,adult.joined_at
+     from family_trusted_adults adult
+     join families family on family.id=adult.family_id
+     where adult.account_id=$1
+     order by adult.joined_at,family.name`,
+    [accountId],
+  );
+  const memberships = membershipResult.rows;
+  if (!memberships.length) return null;
+  const accessResult = await executor.query(
+    `select access.family_id,child.id,child.display_name,
+       access.messages_enabled,access.audio_calls_enabled,
+       access.video_calls_enabled,access.games_enabled
+     from family_trusted_adult_children access
+     join accounts child on child.id=access.child_id
+     where access.adult_id=$1
+     order by access.family_id,child.display_name`,
+    [accountId],
+  );
+  const families = memberships.map((membership) => {
+    const children = accessResult.rows
+      .filter((child) => child.family_id === membership.family_id)
+      .map((child) => ({
+        id: child.id,
+        name: child.display_name,
+        permissions: serializeTrustedPermissions(child),
+      }));
+    return {
+      id: membership.family_id,
+      name: membership.name,
+      relationshipType: membership.relationship_type,
+      relationshipLabel: trustedRelationshipLabels[membership.relationship_type],
+      joinedAt: membership.joined_at,
+      children,
+    };
+  });
+  const firstFamily = families[0];
+  return {
+    id: firstFamily.id,
+    name: families.length === 1 ? firstFamily.name : "Mon cercle familial",
+    role: "relative",
+    relationshipType: families.length === 1 ? firstFamily.relationshipType : null,
+    relationshipLabel: families.length === 1 ? firstFamily.relationshipLabel : "Proche autorisé",
+    families,
+    members: [],
+    trustedAdults: [],
+    pendingInvitations: [],
+    accessibleChildren: families.flatMap((family) => family.children.map((child) => ({
+      ...child,
+      familyId: family.id,
+      familyName: family.name,
+      relationshipType: family.relationshipType,
+      relationshipLabel: family.relationshipLabel,
+    }))),
+  };
+}
+
+async function serializeFamilyForAccount(accountId, role, executor = pool) {
+  return role === "relative"
+    ? serializeFamilyForTrustedAdult(accountId, executor)
+    : serializeFamilyForParent(accountId, executor);
 }
 
 async function getInvitationByToken(token, executor = pool, forUpdate = false) {
@@ -440,14 +582,25 @@ async function getInvitationByToken(token, executor = pool, forUpdate = false) {
      where i.token_hash=$1${forUpdate ? " for update of i" : ""}`,
     [hashInvitationToken(normalizedToken)],
   );
-  return result.rows[0] ?? null;
+  const invitation = result.rows[0] ?? null;
+  if (!invitation) return null;
+  const childrenResult = await executor.query(
+    `select child.id,child.display_name
+     from family_invitation_children selection
+     join accounts child on child.id=selection.child_id
+     where selection.invitation_id=$1
+     order by child.display_name`,
+    [invitation.id],
+  );
+  invitation.children = childrenResult.rows.map((child) => ({ id: child.id, name: child.display_name }));
+  return invitation;
 }
 
 function validateAvailableRegistrationInvitation(invitation, requestedEmail = "") {
-  if (!invitation) throw httpError(404, "Invitation de co-parent introuvable.");
+  if (!invitation) throw httpError(404, "Invitation familiale introuvable.");
   if (invitation.status !== "pending") throw httpError(410, "Cette invitation a déjà été utilisée ou révoquée.");
   if (new Date(invitation.expires_at).getTime() <= Date.now()) {
-    throw httpError(410, "Cette invitation de co-parent a expiré.");
+    throw httpError(410, "Cette invitation familiale a expiré.");
   }
   const invitationEmail = normalizeEmail(invitation.email);
   if (requestedEmail && requestedEmail !== invitationEmail) {
@@ -465,23 +618,83 @@ function invitationLink(req, token) {
 async function acceptFamilyInvitation(token, parentId) {
   const client = await pool.connect();
   let familyId;
+  let acceptedRole;
   try {
     await client.query("begin");
     const accountResult = await client.query("select id,role,email from accounts where id=$1 for update", [parentId]);
     const account = accountResult.rows[0];
-    if (!account || account.role !== "parent") throw httpError(403, "Cette invitation est réservée à un compte parent.");
+    if (!account || !["parent", "relative"].includes(account.role)) throw httpError(403, "Cette invitation est réservée à un compte adulte.");
 
     const invitation = await getInvitationByToken(token, client, true);
-    if (!invitation) throw httpError(404, "Invitation de co-parent introuvable.");
+    if (!invitation) throw httpError(404, "Invitation familiale introuvable.");
     if (invitation.status !== "pending") throw httpError(410, "Cette invitation a déjà été utilisée ou révoquée.");
     if (new Date(invitation.expires_at).getTime() <= Date.now()) {
-      throw httpError(410, "Cette invitation de co-parent a expiré.");
+      throw httpError(410, "Cette invitation familiale a expiré.");
     }
     if (normalizeEmail(account.email) !== normalizeEmail(invitation.email)) {
       throw httpError(403, "Connectez-vous avec l’adresse e-mail à laquelle cette invitation a été envoyée.");
     }
+    const expectedAccountRole = invitation.invitation_role === "relative" ? "relative" : "parent";
+    if (account.role !== expectedAccountRole) {
+      throw httpError(
+        409,
+        invitation.invitation_role === "relative"
+          ? "Cette invitation nécessite un accès distinct de proche autorisé."
+          : "Cette invitation nécessite un compte parent.",
+      );
+    }
+    acceptedRole = account.role;
 
-    const legacyChildrenResult = await client.query(
+    if (invitation.invitation_role === "relative") {
+      if (!trustedRelationshipTypes.has(invitation.relationship_type) || !invitation.children?.length) {
+        throw httpError(409, "Cette invitation de proche est incomplète.");
+      }
+      await client.query(
+        `insert into family_trusted_adults(family_id,account_id,relationship_type,invited_by)
+         values($1,$2,$3,$4)
+         on conflict(family_id,account_id) do update
+         set relationship_type=excluded.relationship_type,invited_by=excluded.invited_by`,
+        [invitation.family_id, parentId, invitation.relationship_type, invitation.invited_by],
+      );
+      const permissions = normalizeTrustedPermissions(invitation.permissions);
+      for (const child of invitation.children) {
+        const selectedChild = await client.query(
+          "select 1 from family_children where family_id=$1 and child_id=$2 for key share",
+          [invitation.family_id, child.id],
+        );
+        if (!selectedChild.rowCount) throw httpError(409, "Un enfant sélectionné n’appartient plus à cette famille.");
+        await client.query(
+          `insert into family_trusted_adult_children(
+             family_id,adult_id,child_id,messages_enabled,audio_calls_enabled,video_calls_enabled,games_enabled
+           ) values($1,$2,$3,$4,$5,$6,$7)
+           on conflict(family_id,adult_id,child_id) do update set
+             messages_enabled=excluded.messages_enabled,
+             audio_calls_enabled=excluded.audio_calls_enabled,
+             video_calls_enabled=excluded.video_calls_enabled,
+             games_enabled=excluded.games_enabled`,
+          [
+            invitation.family_id,
+            parentId,
+            child.id,
+            permissions.messages,
+            permissions.audioCalls,
+            permissions.videoCalls,
+            permissions.games,
+          ],
+        );
+      }
+      await client.query(
+        `update family_parent_invitations
+         set status='accepted',accepted_by=$1,accepted_at=now()
+         where id=$2 and status='pending'`,
+        [parentId, invitation.id],
+      );
+      await provisionTrustedAdultChildConversations(client, parentId, invitation.family_id);
+      familyId = invitation.family_id;
+      await client.query("commit");
+    } else {
+
+      const legacyChildrenResult = await client.query(
       `select child.id
        from accounts child
        where child.role='child' and child.parent_id=$1
@@ -489,8 +702,8 @@ async function acceptFamilyInvitation(token, parentId) {
        for key share of child`,
       [parentId],
     );
-    await repairFamilyChildrenForAccount(parentId, client);
-    const membershipResult = await client.query(
+      await repairFamilyChildrenForAccount(parentId, client);
+      const membershipResult = await client.query(
       `select fm.family_id,fm.role,
         (select count(*)::int from family_memberships members where members.family_id=fm.family_id) as member_count,
         (select count(*)::int from family_children children where children.family_id=fm.family_id) as child_count,
@@ -502,45 +715,49 @@ async function acceptFamilyInvitation(token, parentId) {
        from family_memberships fm where fm.parent_id=$1 for update`,
       [parentId],
     );
-    const currentMembership = membershipResult.rows[0];
-    if (!currentMembership && legacyChildrenResult.rowCount) {
-      throw httpError(409, "Ce compte parent possède déjà des profils enfants et ne peut pas rejoindre une autre famille.");
-    }
-    if (currentMembership && currentMembership.family_id !== invitation.family_id) {
+      const currentMembership = membershipResult.rows[0];
+      if (!currentMembership && legacyChildrenResult.rowCount) {
+        throw httpError(409, "Ce compte parent possède déjà des profils enfants et ne peut pas rejoindre une autre famille.");
+      }
+      if (currentMembership && currentMembership.family_id !== invitation.family_id) {
       const disposableEmptyFamily = currentMembership.role === "primary"
         && Number(currentMembership.member_count) === 1
         && Number(currentMembership.child_count) === 0
         && Number(currentMembership.legacy_child_count) === 0
         && Number(currentMembership.pending_count) === 0;
-      if (!disposableEmptyFamily) {
-        throw httpError(409, "Ce compte parent gère déjà une autre famille et ne peut pas rejoindre celle-ci.");
+        if (!disposableEmptyFamily) {
+          throw httpError(409, "Ce compte parent gère déjà une autre famille et ne peut pas rejoindre celle-ci.");
+        }
+        await client.query("delete from families where id=$1", [currentMembership.family_id]);
       }
-      await client.query("delete from families where id=$1", [currentMembership.family_id]);
-    }
 
-    if (!currentMembership || currentMembership.family_id !== invitation.family_id) {
+      if (!currentMembership || currentMembership.family_id !== invitation.family_id) {
+        await client.query(
+          "insert into family_memberships(family_id,parent_id,role) values($1,$2,'coparent')",
+          [invitation.family_id, parentId],
+        );
+      }
       await client.query(
-        "insert into family_memberships(family_id,parent_id,role) values($1,$2,'coparent')",
-        [invitation.family_id, parentId],
+        `update family_parent_invitations
+         set status='accepted',accepted_by=$1,accepted_at=now()
+         where id=$2 and status='pending'`,
+        [parentId, invitation.id],
       );
+      await provisionHouseholdParentConversations(client, parentId);
+      familyId = invitation.family_id;
+      await client.query("commit");
     }
-    await client.query(
-      `update family_parent_invitations
-       set status='accepted',accepted_by=$1,accepted_at=now()
-       where id=$2 and status='pending'`,
-      [parentId, invitation.id],
-    );
-    await provisionHouseholdParentConversations(client, parentId);
-    familyId = invitation.family_id;
-    await client.query("commit");
   } catch (error) {
     await client.query("rollback");
     throw error;
   } finally {
     client.release();
   }
-  const family = await serializeFamilyForParent(parentId);
-  if (!family || family.id !== familyId) throw httpError(409, "Le rattachement à la famille n’a pas pu être confirmé.");
+  const family = await serializeFamilyForAccount(parentId, acceptedRole);
+  const membershipConfirmed = acceptedRole === "relative"
+    ? family?.families?.some((item) => item.id === familyId)
+    : family?.id === familyId;
+  if (!membershipConfirmed) throw httpError(409, "Le rattachement à la famille n’a pas pu être confirmé.");
   return family;
 }
 
@@ -792,7 +1009,7 @@ function privacyAdminAuthorized(req) {
 
 async function verifyParentPassword(executor, parentId, password) {
   const result = await executor.query(
-    "select password_hash from accounts where id=$1 and role='parent' for update",
+    "select password_hash from accounts where id=$1 and role in ('parent','relative') for update",
     [parentId],
   );
   return Boolean(result.rows[0] && await bcrypt.compare(String(password || ""), result.rows[0].password_hash));
@@ -923,12 +1140,14 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
   if (!invitationTokenPattern.test(token) || displayName.length < 2 || typeof password !== "string" || password.length < 8 || password.length > 128) {
     return res.status(400).json({ error: "Invitation, nom et mot de passe de 8 caractères minimum requis." });
   }
-  const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal);
-  if (!legalEvidence.valid) return res.status(400).json({ error: legalEvidence.error });
-  if (await enforceRegistrationIpLimit(req, res, "invited_coparent")) return;
+  if (await enforceRegistrationIpLimit(req, res, "invited_adult")) return;
 
   const invitationPreview = await getInvitationByToken(token);
   validateAvailableRegistrationInvitation(invitationPreview, requestedEmail);
+  const legalEvidence = validateRegistrationLegalEvidence(req.body?.legal, {
+    requireParentalAuthority: invitationPreview.invitation_role !== "relative",
+  });
+  if (!legalEvidence.valid) return res.status(400).json({ error: legalEvidence.error });
   const passwordHash = await bcrypt.hash(password, 12);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const client = await pool.connect();
@@ -936,16 +1155,51 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
       await client.query("begin");
       const invitation = await getInvitationByToken(token, client, true);
       const invitationEmail = validateAvailableRegistrationInvitation(invitation, requestedEmail);
+      const invitationRole = invitation.invitation_role === "relative" ? "relative" : "coparent";
+      const accountRole = invitationRole === "relative" ? "relative" : "parent";
 
       const accountResult = await client.query(
-        "insert into accounts(role,email,contact_id,password_hash,display_name) values('parent',$1,$2,$3,$4) returning *",
-        [invitationEmail, makeContactId(), passwordHash, displayName],
+        "insert into accounts(role,email,contact_id,password_hash,display_name) values($1,$2,$3,$4,$5) returning *",
+        [accountRole, invitationEmail, makeContactId(), passwordHash, displayName],
       );
       const account = accountResult.rows[0];
-      await client.query(
-        "insert into family_memberships(family_id,parent_id,role) values($1,$2,'coparent')",
-        [invitation.family_id, account.id],
-      );
+      if (invitationRole === "relative") {
+        if (!trustedRelationshipTypes.has(invitation.relationship_type) || !invitation.children?.length) {
+          throw httpError(409, "Cette invitation de proche est incomplète.");
+        }
+        await client.query(
+          `insert into family_trusted_adults(family_id,account_id,relationship_type,invited_by)
+           values($1,$2,$3,$4)`,
+          [invitation.family_id, account.id, invitation.relationship_type, invitation.invited_by],
+        );
+        const permissions = normalizeTrustedPermissions(invitation.permissions);
+        for (const child of invitation.children) {
+          const selectedChild = await client.query(
+            "select 1 from family_children where family_id=$1 and child_id=$2 for key share",
+            [invitation.family_id, child.id],
+          );
+          if (!selectedChild.rowCount) throw httpError(409, "Un enfant sélectionné n’appartient plus à cette famille.");
+          await client.query(
+            `insert into family_trusted_adult_children(
+               family_id,adult_id,child_id,messages_enabled,audio_calls_enabled,video_calls_enabled,games_enabled
+             ) values($1,$2,$3,$4,$5,$6,$7)`,
+            [
+              invitation.family_id,
+              account.id,
+              child.id,
+              permissions.messages,
+              permissions.audioCalls,
+              permissions.videoCalls,
+              permissions.games,
+            ],
+          );
+        }
+      } else {
+        await client.query(
+          "insert into family_memberships(family_id,parent_id,role) values($1,$2,'coparent')",
+          [invitation.family_id, account.id],
+        );
+      }
       const accepted = await client.query(
         `update family_parent_invitations
          set status='accepted',accepted_by=$1,accepted_at=now()
@@ -954,10 +1208,14 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
       );
       if (!accepted.rowCount) throw httpError(410, "Cette invitation n’est plus disponible.");
       await recordRegistrationLegalEvents(client, account.id, legalEvidence.value);
-      await provisionHouseholdParentConversations(client, account.id);
+      if (invitationRole === "relative") {
+        await provisionTrustedAdultChildConversations(client, account.id, invitation.family_id);
+      } else {
+        await provisionHouseholdParentConversations(client, account.id);
+      }
       const createdSession = await createSessionForRequest(client, req, account.id);
       await client.query("commit");
-      const family = await serializeFamilyForParent(account.id);
+      const family = await serializeFamilyForAccount(account.id, accountRole);
       return res.status(201).json(authenticatedPayload(req, res, createdSession, {
         account: await serializeAccount(account),
         family,
@@ -966,7 +1224,7 @@ app.post("/api/auth/register-with-invite", async (req, res) => {
       await client.query("rollback");
       if (error.code === "23505" && error.constraint === "accounts_contact_id_key") continue;
       if (error.code === "23505" && error.constraint === "accounts_email_key") {
-        return res.status(409).json({ error: "Un compte parent existe déjà avec cette adresse. Connectez-vous pour accepter l’invitation." });
+        return res.status(409).json({ error: "Un compte adulte existe déjà avec cette adresse. Connectez-vous pour accepter l’invitation." });
       }
       throw error;
     } finally {
@@ -997,11 +1255,17 @@ app.post("/api/auth/login", async (req, res) => {
     return sendLoginRateLimit(res, existingBlock);
   }
 
-  const result = normalizedEmail
-    ? await pool.query("select * from accounts where role='parent' and email=$1", [normalizedEmail])
-    : isValidChildUsername(normalizedUsername)
+  let result;
+  if (normalizedEmail) {
+    result = await pool.query("select * from accounts where role='parent' and email=$1", [normalizedEmail]);
+    if (!result.rowCount) {
+      result = await pool.query("select * from accounts where role='relative' and email=$1", [normalizedEmail]);
+    }
+  } else {
+    result = isValidChildUsername(normalizedUsername)
       ? await pool.query("select * from accounts where role='child' and lower(username)=$1", [normalizedUsername])
       : { rows: [] };
+  }
   const account = result.rows[0];
   const submittedPassword = typeof password === "string" && password.length <= 128 ? password : "";
   const passwordMatches = await bcrypt.compare(submittedPassword, account?.password_hash ?? invalidLoginPasswordHash);
@@ -1383,7 +1647,7 @@ app.patch("/api/privacy/admin/requests/:id", async (req, res) => {
 });
 
 app.delete("/api/account", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Cette action est réservée au compte parent." });
+  if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Cette action est réservée à un compte adulte." });
   if (String(req.body?.confirmation ?? "") !== "SUPPRIMER MON COMPTE") {
     return res.status(400).json({ error: "Recopiez exactement « SUPPRIMER MON COMPTE »." });
   }
@@ -1392,6 +1656,27 @@ app.delete("/api/account", requireAuth, async (req, res) => {
     await client.query("begin");
     if (!await verifyParentPassword(client, req.auth.sub, req.body?.currentPassword)) {
       throw httpError(401, "Le mot de passe actuel est incorrect.");
+    }
+    if (req.auth.role === "relative") {
+      const accessResult = await client.query(
+        "select family_id from family_trusted_adults where account_id=$1 order by joined_at limit 1 for update",
+        [req.auth.sub],
+      );
+      const familyId = accessResult.rows[0]?.family_id ?? null;
+      await recordCompletedErasure(client, {
+        requesterId: req.auth.sub,
+        subjectId: req.auth.sub,
+        familyId,
+        accountIds: [req.auth.sub],
+        details: "Suppression définitive du compte de proche autorisé demandée depuis l’espace protégé.",
+      });
+      await client.query(
+        "delete from conversations where id in (select conversation_id from conversation_members where account_id=$1)",
+        [req.auth.sub],
+      );
+      await client.query("delete from accounts where id=$1", [req.auth.sub]);
+      await client.query("commit");
+      return res.status(204).end();
     }
     const membershipResult = await client.query(
       `select membership.family_id,membership.role,
@@ -1485,7 +1770,7 @@ app.delete("/api/family", requireAuth, async (req, res) => {
 });
 
 app.patch("/api/account/password", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul le compte parent peut modifier ce mot de passe." });
+  if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Ce compte ne peut pas modifier ce mot de passe." });
   const currentPassword = String(req.body?.currentPassword ?? "");
   const newPassword = String(req.body?.newPassword ?? "");
   if (currentPassword.length < 8 || newPassword.length < 8 || newPassword.length > 128) {
@@ -1495,7 +1780,7 @@ app.patch("/api/account/password", requireAuth, async (req, res) => {
   try {
     await client.query("begin");
     const result = await client.query(
-      "select password_hash from accounts where id=$1 and role='parent' for update",
+      "select password_hash from accounts where id=$1 and role in ('parent','relative') for update",
       [req.auth.sub],
     );
     const account = result.rows[0];
@@ -1509,7 +1794,7 @@ app.patch("/api/account/password", requireAuth, async (req, res) => {
     }
     const passwordHash = await bcrypt.hash(newPassword, 12);
     await client.query(
-      "update accounts set password_hash=$1 where id=$2 and role='parent'",
+      "update accounts set password_hash=$1 where id=$2 and role in ('parent','relative')",
       [passwordHash, req.auth.sub],
     );
     const revokedSessions = await revokeOtherAccountAuthSessions(client, {
@@ -1528,8 +1813,8 @@ app.patch("/api/account/password", requireAuth, async (req, res) => {
 });
 
 app.get("/api/account/sessions", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") {
-    return res.status(403).json({ error: "La gestion des appareils est réservée aux parents." });
+  if (!["parent", "relative"].includes(req.auth.role)) {
+    return res.status(403).json({ error: "La gestion des appareils est réservée aux comptes adultes." });
   }
   const sessions = await listAccountAuthSessions(pool, {
     accountId: req.auth.sub,
@@ -1539,8 +1824,8 @@ app.get("/api/account/sessions", requireAuth, async (req, res) => {
 });
 
 app.delete("/api/account/sessions/:sessionId", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") {
-    return res.status(403).json({ error: "La gestion des appareils est réservée aux parents." });
+  if (!["parent", "relative"].includes(req.auth.role)) {
+    return res.status(403).json({ error: "La gestion des appareils est réservée aux comptes adultes." });
   }
   if (!uuidPattern.test(req.params.sessionId)) {
     return res.status(400).json({ error: "Session invalide." });
@@ -1559,8 +1844,8 @@ app.delete("/api/account/sessions/:sessionId", requireAuth, async (req, res) => 
 });
 
 app.post("/api/account/sessions/revoke-others", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") {
-    return res.status(403).json({ error: "La gestion des appareils est réservée aux parents." });
+  if (!["parent", "relative"].includes(req.auth.role)) {
+    return res.status(403).json({ error: "La gestion des appareils est réservée aux comptes adultes." });
   }
   const revokedSessions = await revokeOtherAccountAuthSessions(pool, {
     accountId: req.auth.sub,
@@ -1571,9 +1856,9 @@ app.post("/api/account/sessions/revoke-others", requireAuth, async (req, res) =>
 });
 
 app.get("/api/family", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
-  const family = await serializeFamilyForParent(req.auth.sub);
-  if (!family) return res.status(404).json({ error: "Ce compte parent n’est rattaché à aucune famille." });
+  if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Accès familial non autorisé." });
+  const family = await serializeFamilyForAccount(req.auth.sub, req.auth.role);
+  if (!family) return res.status(404).json({ error: "Ce compte n’est rattaché à aucune famille." });
   return res.json({ family });
 });
 
@@ -1582,14 +1867,14 @@ app.post("/api/family/invitations/preview", async (req, res) => {
   const token = String(req.body?.token ?? "").trim();
   if (!invitationTokenPattern.test(token)) return res.status(400).json({ error: "Lien d’invitation invalide." });
   const invitation = await getInvitationByToken(token);
-  if (!invitation) return res.status(404).json({ error: "Invitation de co-parent introuvable." });
+  if (!invitation) return res.status(404).json({ error: "Invitation familiale introuvable." });
   if (invitation.status !== "pending") return res.status(410).json({ error: "Cette invitation a déjà été utilisée ou révoquée." });
   if (new Date(invitation.expires_at).getTime() <= Date.now()) {
     await pool.query(
       "update family_parent_invitations set status='expired' where id=$1 and status='pending' and expires_at<=now()",
       [invitation.id],
     );
-    return res.status(410).json({ error: "Cette invitation de co-parent a expiré." });
+    return res.status(410).json({ error: "Cette invitation familiale a expiré." });
   }
   return res.json({
     invitation: {
@@ -1597,6 +1882,11 @@ app.post("/api/family/invitations/preview", async (req, res) => {
       email: normalizeEmail(invitation.email),
       familyName: invitation.family_name,
       invitedByName: invitation.inviter_name || "Un parent",
+      role: invitation.invitation_role,
+      relationshipType: invitation.relationship_type,
+      relationshipLabel: trustedRelationshipLabels[invitation.relationship_type] ?? null,
+      children: invitation.children,
+      permissions: normalizeTrustedPermissions(invitation.permissions),
       expiresAt: invitation.expires_at,
     },
   });
@@ -1604,9 +1894,21 @@ app.post("/api/family/invitations/preview", async (req, res) => {
 
 app.post("/api/family/invitations", requireAuth, async (req, res) => {
   res.set({ "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" });
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul le parent principal peut inviter un co-parent." });
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul le parent principal peut inviter un adulte." });
   const email = normalizeEmail(req.body?.email);
   if (!isValidEmail(email)) return res.status(400).json({ error: "Saisissez une adresse e-mail valide." });
+  const invitationRole = req.body?.role === "relative" ? "relative" : "coparent";
+  const relationshipType = invitationRole === "relative" ? String(req.body?.relationshipType ?? "") : null;
+  const permissions = normalizeTrustedPermissions(req.body?.permissions);
+  const childIds = invitationRole === "relative"
+    ? [...new Set((Array.isArray(req.body?.childIds) ? req.body.childIds : []).map(String).filter((id) => uuidPattern.test(id)))]
+    : [];
+  if (invitationRole === "relative" && !trustedRelationshipTypes.has(relationshipType)) {
+    return res.status(400).json({ error: "Choisissez le lien de ce proche avec les enfants." });
+  }
+  if (invitationRole === "relative" && !childIds.length) {
+    return res.status(400).json({ error: "Choisissez au moins un enfant pour ce proche." });
+  }
 
   const token = makeInvitationToken();
   const client = await pool.connect();
@@ -1618,32 +1920,66 @@ app.post("/api/family/invitations", requireAuth, async (req, res) => {
     );
     const membership = membershipResult.rows[0];
     if (!membership) throw httpError(404, "Ce compte parent n’est rattaché à aucune famille.");
-    if (membership.role !== "primary") throw httpError(403, "Seul le parent principal peut inviter un co-parent.");
+    if (membership.role !== "primary") throw httpError(403, "Seul le parent principal peut inviter un adulte.");
 
     await client.query(
       "update family_parent_invitations set status='expired' where family_id=$1 and status='pending' and expires_at<=now()",
       [membership.family_id],
     );
     const existingMember = await client.query(
-      `select 1 from family_memberships fm
-       join accounts a on a.id=fm.parent_id
-       where fm.family_id=$1 and lower(a.email)=lower($2)`,
+      `select 1 from accounts account
+       where lower(account.email)=lower($2) and (
+         exists(select 1 from family_memberships member where member.family_id=$1 and member.parent_id=account.id)
+         or exists(select 1 from family_trusted_adults adult where adult.family_id=$1 and adult.account_id=account.id)
+       )`,
       [membership.family_id, email],
     );
     if (existingMember.rowCount) throw httpError(409, "Cette personne fait déjà partie de la famille.");
+    if (invitationRole === "relative") {
+      const selectedChildren = await client.query(
+        "select child_id from family_children where family_id=$1 and child_id=any($2::uuid[]) for key share",
+        [membership.family_id, childIds],
+      );
+      if (selectedChildren.rowCount !== childIds.length) {
+        throw httpError(400, "Un enfant sélectionné n’appartient pas à votre famille.");
+      }
+    }
 
     const invitationResult = await client.query(
-      `insert into family_parent_invitations(family_id,email,token_hash,invited_by,expires_at)
-       values($1,$2,$3,$4,now()+interval '7 days')
-       returning id,email,expires_at,created_at`,
-      [membership.family_id, email, hashInvitationToken(token), req.auth.sub],
+      `insert into family_parent_invitations(
+         family_id,email,token_hash,invited_by,expires_at,
+         invitation_role,relationship_type,permissions
+       )
+       values($1,$2,$3,$4,now()+interval '7 days',$5,$6,$7::jsonb)
+       returning id,email,expires_at,created_at,invitation_role,relationship_type,permissions`,
+      [
+        membership.family_id,
+        email,
+        hashInvitationToken(token),
+        req.auth.sub,
+        invitationRole,
+        relationshipType,
+        JSON.stringify(permissions),
+      ],
     );
+    if (childIds.length) {
+      await client.query(
+        `insert into family_invitation_children(invitation_id,child_id)
+         select $1,unnest($2::uuid[])`,
+        [invitationResult.rows[0].id, childIds],
+      );
+    }
     await client.query("commit");
     const invitation = invitationResult.rows[0];
     return res.status(201).json({
       invitation: {
         id: invitation.id,
         email: invitation.email,
+        role: invitation.invitation_role,
+        relationshipType: invitation.relationship_type,
+        relationshipLabel: trustedRelationshipLabels[invitation.relationship_type] ?? null,
+        childIds,
+        permissions: normalizeTrustedPermissions(invitation.permissions),
         expiresAt: invitation.expires_at,
         createdAt: invitation.created_at,
         link: invitationLink(req, token),
@@ -1677,7 +2013,7 @@ app.delete("/api/family/invitations/:id", requireAuth, async (req, res) => {
 });
 
 app.post("/api/family/invitations/accept", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Cette invitation est réservée à un compte parent." });
+  if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Cette invitation est réservée à un compte adulte." });
   const token = String(req.body?.token ?? "").trim();
   if (!invitationTokenPattern.test(token)) return res.status(400).json({ error: "Lien d’invitation invalide." });
   const family = await acceptFamilyInvitation(token, req.auth.sub);
@@ -1746,19 +2082,96 @@ app.delete("/api/family/members/:id", requireAuth, async (req, res) => {
   }
 });
 
+app.delete("/api/family/trusted-adults/:id", requireAuth, async (req, res) => {
+  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul le parent principal peut retirer un proche." });
+  if (!uuidPattern.test(req.params.id)) return res.status(400).json({ error: "Identifiant de proche invalide." });
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const requesterResult = await client.query(
+      "select family_id,role from family_memberships where parent_id=$1 for update",
+      [req.auth.sub],
+    );
+    const requester = requesterResult.rows[0];
+    if (!requester || requester.role !== "primary") throw httpError(403, "Seul le parent principal peut retirer un proche.");
+    const targetResult = await client.query(
+      `select account_id from family_trusted_adults
+       where family_id=$1 and account_id=$2 for update`,
+      [requester.family_id, req.params.id],
+    );
+    if (!targetResult.rowCount) throw httpError(404, "Proche autorisé introuvable dans votre famille.");
+    await client.query(
+      `delete from conversations conversation
+       using family_conversations family_conversation
+       where family_conversation.conversation_id=conversation.id
+         and family_conversation.parent_id=$1
+         and exists(
+           select 1 from family_trusted_adult_children access
+           where access.family_id=$2 and access.adult_id=$1
+             and access.child_id=family_conversation.child_id
+         )`,
+      [req.params.id, requester.family_id],
+    );
+    await client.query(
+      "delete from family_trusted_adults where family_id=$1 and account_id=$2",
+      [requester.family_id, req.params.id],
+    );
+    await revokeAllAccountAuthSessions(client, {
+      accountId: req.params.id,
+      reason: "trusted_adult_removed",
+    });
+    await client.query("commit");
+    return res.status(204).end();
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/api/children", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Accès réservé au compte parent." });
-  await repairFamilyChildrenForAccount(req.auth.sub);
-  const result = await pool.query(
-    `select child.*
-     from family_memberships membership
-     join family_children family_child on family_child.family_id=membership.family_id
-     join accounts child on child.id=family_child.child_id and child.role='child'
-     where membership.parent_id=$1 and child.contact_id<>$2
-     order by family_child.added_at,child.display_name`,
-    [req.auth.sub, legacyReservedContactId],
-  );
-  res.json({ children: await Promise.all(result.rows.map(serializeAccount)) });
+  if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Accès familial non autorisé." });
+  if (req.auth.role === "parent") await repairFamilyChildrenForAccount(req.auth.sub);
+  const result = req.auth.role === "relative"
+    ? await pool.query(
+      `select child.*,access.messages_enabled,access.audio_calls_enabled,
+         access.video_calls_enabled,access.games_enabled,
+         family.id as trusted_family_id,family.name as trusted_family_name,
+         adult.relationship_type as trusted_relationship_type
+       from family_trusted_adult_children access
+       join family_trusted_adults adult
+         on adult.family_id=access.family_id and adult.account_id=access.adult_id
+       join families family on family.id=access.family_id
+       join accounts child on child.id=access.child_id and child.role='child'
+       where access.adult_id=$1 and child.contact_id<>$2
+       order by family.name,access.granted_at,child.display_name`,
+      [req.auth.sub, legacyReservedContactId],
+    )
+    : await pool.query(
+      `select child.*
+       from family_memberships membership
+       join family_children family_child on family_child.family_id=membership.family_id
+       join accounts child on child.id=family_child.child_id and child.role='child'
+       where membership.parent_id=$1 and child.contact_id<>$2
+       order by family_child.added_at,child.display_name`,
+      [req.auth.sub, legacyReservedContactId],
+    );
+  const children = await Promise.all(result.rows.map(serializeAccount));
+  res.json({
+    children: children.map((child, index) => req.auth.role === "relative"
+      ? {
+          ...child,
+          trustedAccess: serializeTrustedPermissions(result.rows[index]),
+          trustedFamily: {
+            id: result.rows[index].trusted_family_id,
+            name: result.rows[index].trusted_family_name,
+            relationshipType: result.rows[index].trusted_relationship_type,
+            relationshipLabel: trustedRelationshipLabels[result.rows[index].trusted_relationship_type],
+          },
+        }
+      : child),
+  });
 });
 
 app.post("/api/children", requireAuth, async (req, res) => {
@@ -2525,7 +2938,7 @@ async function notifyConversation(conversationId, senderId, payload) {
 }
 
 app.post("/api/family-conversations", requireAuth, async (req, res) => {
-  if (req.auth.role !== "parent") return res.status(403).json({ error: "Seul un parent peut ouvrir une conversation familiale." });
+  if (!["parent", "relative"].includes(req.auth.role)) return res.status(403).json({ error: "Conversation familiale non autorisée." });
   const contactId = String(req.body?.contactId ?? "").trim().toUpperCase();
   if (!/^SC-\d{3}-\d{3}-\d{3}$/.test(contactId) || contactId === legacyReservedContactId) {
     return res.status(400).json({ error: "Identifiant enfant invalide." });
@@ -2534,18 +2947,27 @@ app.post("/api/family-conversations", requireAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    await repairFamilyChildrenForAccount(req.auth.sub, client);
-    const childResult = await client.query(
-      `select child.id,child.display_name,child.contact_id
-       from family_memberships membership
-       join family_children family_child on family_child.family_id=membership.family_id
-       join accounts child on child.id=family_child.child_id and child.role='child'
-       where membership.parent_id=$1 and child.contact_id=$2
-       for share of membership,child`,
-      [req.auth.sub, contactId],
-    );
+    if (req.auth.role === "parent") await repairFamilyChildrenForAccount(req.auth.sub, client);
+    const childResult = req.auth.role === "relative"
+      ? await client.query(
+        `select child.id,child.display_name,child.contact_id
+         from family_trusted_adult_children access
+         join accounts child on child.id=access.child_id and child.role='child'
+         where access.adult_id=$1 and child.contact_id=$2 and access.messages_enabled=true
+         for share of child`,
+        [req.auth.sub, contactId],
+      )
+      : await client.query(
+        `select child.id,child.display_name,child.contact_id
+         from family_memberships membership
+         join family_children family_child on family_child.family_id=membership.family_id
+         join accounts child on child.id=family_child.child_id and child.role='child'
+         where membership.parent_id=$1 and child.contact_id=$2
+         for share of membership,child`,
+        [req.auth.sub, contactId],
+      );
     const child = childResult.rows[0];
-    if (!child) throw httpError(404, "Cet enfant n’appartient pas à votre famille.");
+    if (!child) throw httpError(404, "Cette conversation avec l’enfant n’est pas autorisée.");
     await client.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", [req.auth.sub, child.id]);
     const existing = await client.query(
       "select conversation_id from family_conversations where parent_id=$1 and child_id=$2",
@@ -2582,13 +3004,66 @@ app.post("/api/family-conversations", requireAuth, async (req, res) => {
   }
 });
 
+async function provisionTrustedAdultChildConversations(executor, adultId, familyId = null) {
+  const pairs = await executor.query(
+    `select access.adult_id as parent_id,access.child_id
+     from family_trusted_adult_children access
+     where access.adult_id=$1 and ($2::uuid is null or access.family_id=$2)
+       and access.messages_enabled=true
+     order by access.child_id
+     for key share of access`,
+    [adultId, familyId],
+  );
+  for (const pair of pairs.rows) {
+    await executor.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", [pair.parent_id, pair.child_id]);
+    const existing = await executor.query(
+      "select conversation_id from family_conversations where parent_id=$1 and child_id=$2",
+      [pair.parent_id, pair.child_id],
+    );
+    let conversationId = existing.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const conversation = await executor.query("insert into conversations(kind) values('child') returning id");
+      conversationId = conversation.rows[0].id;
+      await executor.query(
+        "insert into family_conversations(parent_id,child_id,conversation_id) values($1,$2,$3)",
+        [pair.parent_id, pair.child_id, conversationId],
+      );
+    }
+    await executor.query(
+      `insert into conversation_members(conversation_id,account_id) values($1,$2),($1,$3)
+       on conflict(conversation_id,account_id) do nothing`,
+      [conversationId, pair.parent_id, pair.child_id],
+    );
+  }
+}
+
 async function ensureFamilyConversations(accountId) {
-  await repairFamilyChildrenForAccount(accountId);
+  const accountResult = await pool.query("select role from accounts where id=$1", [accountId]);
+  const accountRole = accountResult.rows[0]?.role;
+  if (accountRole === "parent") await repairFamilyChildrenForAccount(accountId);
+  if (accountRole === "relative") {
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await provisionTrustedAdultChildConversations(client, accountId);
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return;
+  }
   const pairs = await pool.query(
     `select membership.parent_id,child.child_id
      from family_memberships membership
      join family_children child on child.family_id=membership.family_id
-     where membership.parent_id=$1 or child.child_id=$1`,
+     where membership.parent_id=$1 or child.child_id=$1
+     union
+     select access.adult_id as parent_id,access.child_id
+     from family_trusted_adult_children access
+     where access.child_id=$1 and access.messages_enabled=true`,
     [accountId],
   );
   if (!pairs.rowCount) return;
@@ -2733,8 +3208,24 @@ async function currentConversationSyncCursor(executor = pool) {
 
 async function listConversationSummaries(accountId, executor = pool) {
   const result = await executor.query(`
-    select c.id, c.kind, a.display_name as name, a.contact_id, a.role as contact_role,
+    select c.id, c.kind, coalesce(contact_alias.alias,a.display_name) as name,
+      a.display_name as canonical_name,contact_alias.alias as contact_alias,
+      a.contact_id, a.role as contact_role,
       a.status as contact_status, a.communication_schedule,
+      (
+        select json_build_object(
+          'messages',access.messages_enabled,
+          'audioCalls',access.audio_calls_enabled,
+          'videoCalls',access.video_calls_enabled,
+          'games',access.games_enabled
+        )
+        from family_conversations family_conversation
+        join family_trusted_adult_children access
+          on access.adult_id=family_conversation.parent_id
+          and access.child_id=family_conversation.child_id
+        where family_conversation.conversation_id=c.id
+        limit 1
+      ) as trusted_access,
       (
         select count(*)::int
         from message_receipts unread_receipt
@@ -2755,6 +3246,9 @@ async function listConversationSummaries(accountId, executor = pool) {
     join conversations c on c.id=mine.conversation_id
     join conversation_members other on other.conversation_id=c.id and other.account_id<>mine.account_id
     join accounts a on a.id=other.account_id
+    left join account_contact_aliases contact_alias
+      on contact_alias.owner_account_id=mine.account_id
+      and contact_alias.target_account_id=a.id
     left join lateral (
       select latest.created_at, json_build_object(
         'id',latest.id,
@@ -2839,6 +3333,56 @@ app.get("/api/conversations", requireAuth, requireActiveChild, async (req, res) 
   const syncCursor = await currentConversationSyncCursor();
   const conversations = await listConversationSummaries(req.auth.sub);
   res.json({ conversations, syncCursor });
+});
+
+app.patch("/api/conversations/:id/contact-alias", requireAuth, requireActiveChild, async (req, res) => {
+  if (req.auth.role !== "child") {
+    throw httpError(403, "Ce petit nom appartient à l’espace enfant.");
+  }
+  if (!Object.hasOwn(req.body ?? {}, "alias")) {
+    throw httpError(400, "Choisis le petit nom à utiliser.");
+  }
+  const normalized = normalizeConversationContactAlias(req.body.alias);
+  if (normalized.error) throw httpError(400, normalized.error);
+
+  const targetResult = await pool.query(
+    `select adult.id,adult.display_name
+     from family_conversations family_conversation
+     join accounts adult
+       on adult.id=family_conversation.parent_id
+       and adult.role in ('parent','relative')
+     where family_conversation.conversation_id=$1
+       and family_conversation.child_id=$2`,
+    [req.params.id, req.auth.sub],
+  );
+  const target = targetResult.rows[0];
+  if (!target) throw httpError(403, "Ce petit nom est réservé à un parent ou proche de ta famille.");
+
+  const alias = normalized.alias?.localeCompare(target.display_name, "fr", { sensitivity: "base" }) === 0
+    ? null
+    : normalized.alias;
+  if (alias) {
+    await pool.query(
+      `insert into account_contact_aliases(owner_account_id,target_account_id,alias)
+       values($1,$2,$3)
+       on conflict(owner_account_id,target_account_id)
+       do update set alias=excluded.alias,updated_at=clock_timestamp()`,
+      [req.auth.sub, target.id, alias],
+    );
+  } else {
+    await pool.query(
+      "delete from account_contact_aliases where owner_account_id=$1 and target_account_id=$2",
+      [req.auth.sub, target.id],
+    );
+  }
+  res.json({
+    conversation: {
+      id: req.params.id,
+      name: alias ?? target.display_name,
+      canonicalName: target.display_name,
+      contactAlias: alias,
+    },
+  });
 });
 
 app.get("/api/conversations/sync", requireAuth, requireActiveChild, async (req, res) => {
@@ -3499,11 +4043,6 @@ const emptyTicTacToeBoard = () => Array(9).fill(0);
 const navalBattleGridSize = 5;
 const navalBattleShipLengths = [3, 2, 2];
 const supportedGameTypes = new Set(["connect_four", "tic_tac_toe", "naval_battle"]);
-const gameNames = {
-  connect_four: "Puissance 4",
-  tic_tac_toe: "Morpion",
-  naval_battle: "Bataille navale",
-};
 
 const navalShipCandidates = (length, occupied) => {
   const candidates = [];
@@ -3655,10 +4194,14 @@ const navalShotResults = (shots, targetFleet) => {
 };
 
 const serializeGameForViewer = (game, viewerId) => {
-  if (game.game_type !== "naval_battle") return game;
+  const serializedGame = {
+    ...game,
+    conversationId: game.conversation_id ?? null,
+  };
+  if (game.game_type !== "naval_battle") return serializedGame;
   const viewerNumber = viewerId === game.player_one_id ? 1 : viewerId === game.player_two_id ? 2 : 0;
   if (!viewerNumber || !isValidNavalBattleBoard(game.board)) {
-    return { ...game, board: null };
+    return { ...serializedGame, board: null };
   }
   const opponentNumber = viewerNumber === 1 ? 2 : 1;
   const ownFleet = game.board.fleets[String(viewerNumber)];
@@ -3668,7 +4211,7 @@ const serializeGameForViewer = (game, viewerId) => {
   const incomingShotResults = navalShotResults(opponentShots, ownFleet);
   const shotResults = navalShotResults(ownShots, opponentFleet);
   return {
-    ...game,
+    ...serializedGame,
     board: {
       size: navalBattleGridSize,
       ownFleet: ownFleet.map((cells) => ({
@@ -3699,6 +4242,11 @@ const currentGameRelationship = `(
     where mine.parent_id=g.player_one_id and other.parent_id=g.player_two_id)
   or exists(select 1 from family_children mine join family_children other using(family_id)
     where mine.child_id=g.player_one_id and other.child_id=g.player_two_id)
+  or exists(select 1 from family_trusted_adult_children access
+    where access.games_enabled=true and (
+      (access.adult_id=g.player_one_id and access.child_id=g.player_two_id)
+      or (access.adult_id=g.player_two_id and access.child_id=g.player_one_id)
+    ))
 )`;
 
 async function canPlayTogether(accountId, opponentId, executor = pool) {
@@ -3711,8 +4259,58 @@ async function canPlayTogether(accountId, opponentId, executor = pool) {
     or exists(select 1 from family_memberships mine join family_memberships other using(family_id)
       where mine.parent_id=$1 and other.parent_id=$2)
     or exists(select 1 from family_children mine join family_children other using(family_id)
-      where mine.child_id=$1 and other.child_id=$2)`, [accountId, opponentId]);
+      where mine.child_id=$1 and other.child_id=$2)
+    or exists(select 1 from family_trusted_adult_children access
+      where access.games_enabled=true and (
+        (access.adult_id=$1 and access.child_id=$2)
+        or (access.adult_id=$2 and access.child_id=$1)
+      ))`, [accountId, opponentId]);
   return Boolean(result.rowCount);
+}
+
+async function ensureGameConversation(firstAccountId, secondAccountId, executor = pool) {
+  const pair = [firstAccountId, secondAccountId].sort();
+  await executor.query("select pg_advisory_xact_lock(hashtext($1),hashtext($2))", pair);
+  const existing = await executor.query(
+    `select conversation.id
+     from conversations conversation
+     where exists(
+       select 1 from conversation_members member
+       where member.conversation_id=conversation.id and member.account_id=$1
+     )
+       and exists(
+         select 1 from conversation_members member
+         where member.conversation_id=conversation.id and member.account_id=$2
+       )
+       and (
+         select count(*) from conversation_members member
+         where member.conversation_id=conversation.id
+       )=2
+     order by conversation.created_at,conversation.id
+     limit 1
+     for update of conversation`,
+    pair,
+  );
+  if (existing.rowCount) return existing.rows[0].id;
+
+  const roles = await executor.query(
+    "select id,role from accounts where id=any($1::uuid[])",
+    [pair],
+  );
+  if (roles.rowCount !== 2) throw httpError(404, "Contact introuvable.");
+  const conversationKind = roles.rows.every((account) => account.role === "parent")
+    ? "parent"
+    : "child";
+  const conversation = await executor.query(
+    "insert into conversations(kind) values($1) returning id",
+    [conversationKind],
+  );
+  await executor.query(
+    `insert into conversation_members(conversation_id,account_id)
+     values($1,$2),($1,$3)`,
+    [conversation.rows[0].id, pair[0], pair[1]],
+  );
+  return conversation.rows[0].id;
 }
 
 app.get("/api/game-contacts", requireAuth, requireActiveChild, async (req, res) => {
@@ -3727,6 +4325,11 @@ app.get("/api/game-contacts", requireAuth, requireActiveChild, async (req, res) 
         where mine.parent_id=$1 and other.parent_id=account.id)
       or exists(select 1 from family_children mine join family_children other using(family_id)
         where mine.child_id=$1 and other.child_id=account.id)
+      or exists(select 1 from family_trusted_adult_children access
+        where access.games_enabled=true and (
+          (access.adult_id=$1 and access.child_id=account.id)
+          or (access.adult_id=account.id and access.child_id=$1)
+        ))
     ) order by account.role desc,account.display_name`, [req.auth.sub]);
   res.json({ contacts: result.rows.map((row) => ({ id: row.id, role: row.role, name: row.display_name, contactId: row.contact_id })) });
 });
@@ -3755,7 +4358,6 @@ app.post("/api/games", requireAuth, requireActiveChild, async (req, res) => {
   const client = await pool.connect();
   let opponent;
   let game;
-  let inviterName;
   try {
     await client.query("begin");
     const opponentResult = await client.query("select id,role from accounts where contact_id=$1", [contactId]);
@@ -3765,11 +4367,17 @@ app.post("/api/games", requireAuth, requireActiveChild, async (req, res) => {
     if (!await canPlayTogether(req.auth.sub, opponent.id, client)) {
       throw httpError(403, "Ce contact doit appartenir à votre famille ou être approuvé avant de jouer.");
     }
-    const result = await client.query(`insert into game_sessions(game_type,player_one_id,player_two_id,invited_by,board)
-      values($1,$2,$3,$2,$4::jsonb) returning id`, [gameType, req.auth.sub, opponent.id, JSON.stringify(emptyBoardForGame(gameType))]);
+    const conversationId = await ensureGameConversation(req.auth.sub, opponent.id, client);
+    const result = await client.query(`insert into game_sessions(
+      game_type,player_one_id,player_two_id,invited_by,conversation_id,board
+    ) values($1,$2,$3,$2,$4,$5::jsonb) returning id`, [
+      gameType,
+      req.auth.sub,
+      opponent.id,
+      conversationId,
+      JSON.stringify(emptyBoardForGame(gameType)),
+    ]);
     game = await client.query(`${gameSelect} where g.id=$1`, [result.rows[0].id]);
-    const inviter = await client.query("select display_name from accounts where id=$1", [req.auth.sub]);
-    inviterName = inviter.rows[0]?.display_name || "Un ami";
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -3778,11 +4386,13 @@ app.post("/api/games", requireAuth, requireActiveChild, async (req, res) => {
     client.release();
   }
   await notifyAccounts([opponent.id], {
-    title: "Invitation à jouer",
-    body: `${inviterName} t’invite pour une partie de ${gameNames[gameType]}.`,
+    title: "Secret Clubhouse",
+    body: "Une partie privée vous attend dans l’application.",
     notificationType: "game",
+    gameId: game.rows[0].id,
+    gameEvent: "invitation",
     tag: `game-${game.rows[0].id}`,
-    url: "/?notification=game",
+    url: `/?notification=game&game=${encodeURIComponent(game.rows[0].id)}`,
   });
   res.status(201).json({ game: serializeGameForViewer(game.rows[0], req.auth.sub) });
 });
@@ -3793,6 +4403,7 @@ app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
   const client = await pool.connect();
   let updatedGame;
   let stoppedOpponentId = null;
+  let turnNotificationAccountId = null;
   try {
     await client.query("begin");
     const gameResult = await client.query(
@@ -3829,6 +4440,7 @@ app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
       }
       const status = action === "accept" ? "active" : "declined";
       const currentPlayerId = action === "accept" ? game.player_one_id : null;
+      turnNotificationAccountId = currentPlayerId;
       await client.query(
         "update game_sessions set status=$1,current_player_id=$2,updated_at=now() where id=$3",
         [status, currentPlayerId, game.id],
@@ -3848,8 +4460,20 @@ app.patch("/api/games/:gameId", requireAuth, async (req, res) => {
       title: "Partie arrêtée",
       body: "Votre partie à deux a été arrêtée.",
       notificationType: "game",
+      gameId: updatedGame.id,
+      gameEvent: "stopped",
       tag: `game-${updatedGame.id}`,
-      url: "/?notification=game",
+      url: `/?notification=game&game=${encodeURIComponent(updatedGame.id)}`,
+    });
+  } else if (turnNotificationAccountId) {
+    await notifyAccounts([turnNotificationAccountId], {
+      title: "Secret Clubhouse",
+      body: "C’est à votre tour de jouer.",
+      notificationType: "game",
+      gameId: updatedGame.id,
+      gameEvent: "turn",
+      tag: `game-${updatedGame.id}`,
+      url: `/?notification=game&game=${encodeURIComponent(updatedGame.id)}`,
     });
   }
   return res.json({ game: serializeGameForViewer(updatedGame, req.auth.sub) });
@@ -3859,7 +4483,6 @@ app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
   const client = await pool.connect();
   let nextPlayerId;
   let gameType;
-  let playerName;
   let committed = false;
   try {
     await client.query("begin");
@@ -3941,19 +4564,19 @@ app.post("/api/games/:gameId/moves", requireAuth, async (req, res) => {
       status = winnerValue || isDraw ? "completed" : "active";
     }
     nextPlayerId = status === "active" ? (req.auth.sub === game.player_one_id ? game.player_two_id : game.player_one_id) : null;
-    const player = await client.query("select display_name from accounts where id=$1", [req.auth.sub]);
-    playerName = player.rows[0]?.display_name || "Un ami";
     await client.query("update game_sessions set board=$1::jsonb,status=$2,current_player_id=$3,winner_id=$4,updated_at=now() where id=$5", [JSON.stringify(board), status, nextPlayerId, winnerId, game.id]);
     await client.query("commit");
     committed = true;
     const updated = await pool.query(`${gameSelect} where g.id=$1`, [game.id]);
     if (nextPlayerId) {
       await notifyAccounts([nextPlayerId], {
-        title: "À toi de jouer",
-        body: `${playerName} vient de jouer dans votre partie de ${gameNames[gameType]}.`,
+        title: "Secret Clubhouse",
+        body: "C’est à votre tour de jouer.",
         notificationType: "game",
+        gameId: game.id,
+        gameEvent: "turn",
         tag: `game-${game.id}`,
-        url: "/?notification=game",
+        url: `/?notification=game&game=${encodeURIComponent(game.id)}`,
       });
     }
     res.json({ game: serializeGameForViewer(updated.rows[0], req.auth.sub) });
@@ -4168,6 +4791,11 @@ app.post("/api/conversations/:id/calls", requireAuth, requireActiveChild, async 
   try {
     await client.query("begin");
     expiredCalls = await expireStaleCalls(client);
+    await assertTrustedAdultConversationPermission(
+      req.params.id,
+      callType === "video" ? "video" : "calls",
+      client,
+    );
     const participantsResult = await client.query(
       `select account.id,account.role,account.display_name,account.contact_id,account.status,
         account.safety_settings,account.communication_schedule
@@ -4696,11 +5324,44 @@ app.patch("/api/calls/:callId", requireAuth, async (req, res) => {
   }
 });
 
+async function assertTrustedAdultConversationPermission(conversationId, channel, executor = pool) {
+  const result = await executor.query(
+    `select access.messages_enabled,access.audio_calls_enabled,
+       access.video_calls_enabled,access.games_enabled
+     from family_conversations family_conversation
+     join accounts adult
+       on adult.id=family_conversation.parent_id and adult.role='relative'
+     join family_trusted_adult_children access
+       on access.adult_id=adult.id and access.child_id=family_conversation.child_id
+     where family_conversation.conversation_id=$1`,
+    [conversationId],
+  );
+  if (!result.rowCount) return;
+  const access = result.rows[0];
+  const allowed = channel === "video"
+    ? access.video_calls_enabled
+    : channel === "calls"
+      ? access.audio_calls_enabled
+      : channel === "games"
+        ? access.games_enabled
+        : access.messages_enabled;
+  if (!allowed) {
+    throw httpError(403, channel === "games"
+      ? "Les jeux ne sont pas autorisés pour ce proche."
+      : channel === "video"
+        ? "Les appels vidéo ne sont pas autorisés pour ce proche."
+        : channel === "calls"
+          ? "Les appels audio ne sont pas autorisés pour ce proche."
+          : "Les messages ne sont pas autorisés pour ce proche.");
+  }
+}
+
 async function requireConversationMessagingAccess(req, res, next) {
   try {
     if (!await isConversationMember(req.auth.sub, req.params.id)) {
       return res.status(403).json({ error: "Conversation non autorisée." });
     }
+    await assertTrustedAdultConversationPermission(req.params.id, "messages");
     req.conversationChildPolicies = await assertConversationPolicy(req.params.id, { channel: "messages" });
     return next();
   } catch (error) {
@@ -4742,6 +5403,7 @@ app.post("/api/conversations/:id/messages", requireAuth, requireActiveChild, req
   try {
     await client.query("begin");
     if (!await isConversationMember(req.auth.sub, req.params.id, client)) throw httpError(403, "Conversation non autorisée.");
+    await assertTrustedAdultConversationPermission(req.params.id, "messages", client);
     await assertConversationPolicy(req.params.id, { channel: "messages" }, client, true);
     if (replyToMessageId) {
       const original = await client.query(

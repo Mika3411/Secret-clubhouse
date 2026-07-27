@@ -18,6 +18,8 @@ final class NativePushPayload {
     final String body;
     final String tag;
     final String conversationId;
+    final String gameId;
+    final String gameEvent;
     final String callId;
     final String callType;
     final String callActionUrl;
@@ -33,6 +35,8 @@ final class NativePushPayload {
         String body,
         String tag,
         String conversationId,
+        String gameId,
+        String gameEvent,
         String callId,
         String callType,
         String callActionUrl,
@@ -47,6 +51,8 @@ final class NativePushPayload {
         this.body = body;
         this.tag = tag;
         this.conversationId = conversationId;
+        this.gameId = gameId;
+        this.gameEvent = gameEvent;
         this.callId = callId;
         this.callType = callType;
         this.callActionUrl = callActionUrl;
@@ -89,6 +95,8 @@ final class NativePushPayload {
             body,
             first(data, "tag"),
             first(data, "conversationId", "conversation_id"),
+            first(data, "gameId", "game_id"),
+            first(data, "gameEvent", "game_event"),
             first(data, "callId", "call_id"),
             first(data, "callType", "call_type"),
             first(data, "callActionUrl", "respondUrl", "actionUrl", "call_action_url", "respond_url"),

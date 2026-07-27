@@ -61,7 +61,19 @@ export function QrModal({ child, onClose, onRequestAdd }) {
             <label htmlFor="friend-contact-id">Identifiant de ton ami</label>
             <input id="friend-contact-id" value={contactId} onChange={(event) => { setContactId(event.target.value.toUpperCase().slice(0, 14)); setError(""); }} placeholder="SC-123-456-789" autoComplete="off" autoFocus />
             {error && <p className="child-add-friend-error" role="alert">{error}</p>}
-            <div className="approval-steps"><span><ShieldCheck size={17} weight="fill" /> Aucun ami n’est ajouté sans l’accord du parent</span></div>
+            <div className="friend-approval-flow" aria-label="Les deux validations nécessaires">
+              <div className="friend-approval-flow__title"><ShieldCheck size={18} weight="fill" /><strong>Deux validations avant d’être amis</strong></div>
+              <ol>
+                <li>
+                  <span>1</span>
+                  <div><strong>Ton parent confirme l’envoi</strong><small>Tu vas lui passer l’appareil.</small></div>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div><strong>Le parent de ton ami accepte</strong><small>Ton ami apparaîtra seulement après.</small></div>
+                </li>
+              </ol>
+            </div>
             <button className="primary-button" type="submit"><LockKey size={18} weight="fill" /> Continuer avec mon parent</button>
           </form>
         </> : <>

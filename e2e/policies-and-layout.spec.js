@@ -29,7 +29,7 @@ test("les politiques parent et enfant sont publiques avant inscription", async (
   await page.goto("/confidentialite");
   const parentPolicy = page.getByRole("dialog", { name: "Politique de confidentialité" });
   await expect(parentPolicy).toBeVisible();
-  await expect(parentPolicy.getByText(/Version du 26 juillet 2026 — version 7/)).toBeVisible();
+  await expect(parentPolicy.getByText(/Version du 27 juillet 2026 — version 8/)).toBeVisible();
   await expect(parentPolicy.getByRole("heading", { name: "Pourquoi et sur quel fondement ?" })).toBeVisible();
 
   await page.goto("/confidentialite-enfants");
@@ -47,7 +47,7 @@ test("la politique empile ses tableaux uniquement sur téléphone", async ({ pag
   await expectNoHorizontalOverflow(page);
   const firstRow = policy.locator("table tbody tr").first();
   await expect(firstRow).toHaveCSS("display", "grid");
-  await expect(firstRow.locator("td").first()).toHaveCSS("display", "block");
+  await expect(firstRow.locator("td").first()).toHaveCSS("display", "grid");
 
   await page.setViewportSize({ width: 844, height: 390 });
   await expect(firstRow).toHaveCSS("display", "table-row");

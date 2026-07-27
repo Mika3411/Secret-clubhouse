@@ -246,7 +246,7 @@ export const clubhouseCatalogStatusCopy = {
   complete: "Catalogue terminé !",
 };
 
-export function ClubhouseScreen({ child, initialGame = null }) {
+export function ClubhouseScreen({ child, initialGame = null, onExitGame = null }) {
   const [filter, setFilter] = useState("all");
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [phase, setPhase] = useState("intro");
@@ -262,6 +262,9 @@ export function ClubhouseScreen({ child, initialGame = null }) {
   const [unlockEarned, setUnlockEarned] = useState(null);
   const [appearanceSavingId, setAppearanceSavingId] = useState("");
   const [sessionQuestions, setSessionQuestions] = useState([]);
+  const [activeGameConversationId, setActiveGameConversationId] = useState(
+    () => initialGame?.conversationId ?? "",
+  );
   const questionDecksRef = useRef({});
   const completionPendingRef = useRef(false);
   const openedGameIdRef = useRef("");
@@ -389,6 +392,10 @@ export function ClubhouseScreen({ child, initialGame = null }) {
   };
 
   const closeActivity = () => {
+    if (selectedActivity?.variant === "multiplayer" && activeGameConversationId && onExitGame) {
+      onExitGame(activeGameConversationId);
+      return;
+    }
     setSelectedActivity(null);
     setPhase("intro");
   };
@@ -740,7 +747,13 @@ export function ClubhouseScreen({ child, initialGame = null }) {
                 )}
 
                 {phase === "active" && selectedActivity.variant === "multiplayer" && (
-                  <ConnectFourGame child={child} initialGame={initialGame} onComplete={completeActivity} />
+                  <ConnectFourGame
+                    child={child}
+                    initialGame={initialGame}
+                    onComplete={completeActivity}
+                    onExitToConversation={onExitGame}
+                    onConversationChange={setActiveGameConversationId}
+                  />
                 )}
               </>
             )}
@@ -751,17 +764,38 @@ export function ClubhouseScreen({ child, initialGame = null }) {
   );
 }
 
-export function ParentGamesScreen({ parent, initialGame = null, onBack }) {
+export function ParentGamesScreen({
+  parent,
+  initialGame = null,
+  onBack,
+  onExitToConversation = null,
+}) {
+  const [activeGameConversationId, setActiveGameConversationId] = useState(
+    () => initialGame?.conversationId ?? "",
+  );
+  const leaveGames = () => {
+    if (activeGameConversationId && onExitToConversation) {
+      onExitToConversation(activeGameConversationId);
+      return;
+    }
+    onBack();
+  };
+
   return (
     <section className="parent-games-screen" aria-labelledby="parent-games-title">
       <header className="parent-messages-header">
-        <button type="button" className="parent-back-button" onClick={onBack} aria-label="Retour au tableau de bord parent"><ArrowLeft size={22} weight="bold" /></button>
+        <button type="button" className="parent-back-button" onClick={leaveGames} aria-label={activeGameConversationId ? "Retour à la conversation" : "Retour au tableau de bord parent"}><ArrowLeft size={22} weight="bold" /></button>
         <div><span>Mode parent</span><h1 id="parent-games-title">Multijoueur</h1></div>
         <span className="parent-games-screen__icon"><GameController size={25} weight="fill" /></span>
       </header>
       <div className="parent-games-screen__content">
         <div className="parent-games-intro"><ShieldCheck size={20} weight="fill" /><span><strong>Un espace de jeu privé</strong><small>Puissance 4, Morpion et Bataille navale avec vos enfants, vos co-parents et vos contacts approuvés.</small></span></div>
-        <ConnectFourGame child={parent} initialGame={initialGame} />
+        <ConnectFourGame
+          child={parent}
+          initialGame={initialGame}
+          onExitToConversation={onExitToConversation}
+          onConversationChange={setActiveGameConversationId}
+        />
       </div>
     </section>
   );

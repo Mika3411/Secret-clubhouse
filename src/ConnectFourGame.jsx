@@ -1,12 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Anchor } from "@phosphor-icons/react/Anchor";
+import { CaretDown } from "@phosphor-icons/react/CaretDown";
+import { ChatCircleDots } from "@phosphor-icons/react/ChatCircleDots";
+import { Check } from "@phosphor-icons/react/Check";
 import { CheckCircle } from "@phosphor-icons/react/CheckCircle";
+import { Checks } from "@phosphor-icons/react/Checks";
 import { GameController } from "@phosphor-icons/react/GameController";
 import { GridFour } from "@phosphor-icons/react/GridFour";
+import { LockKey } from "@phosphor-icons/react/LockKey";
 import { PaperPlaneTilt } from "@phosphor-icons/react/PaperPlaneTilt";
 import { ShieldCheck } from "@phosphor-icons/react/ShieldCheck";
 import { X } from "@phosphor-icons/react/X";
 import { api } from "./api";
+import { splitMessageLinks } from "./message-links";
+import {
+  TypingIndicator,
+  useTypingIndicator,
+} from "./features/conversations/thread/TypingIndicator";
 
 const GAME_TYPES = {
   connect_four: {
@@ -171,6 +181,7 @@ function normalizeGame(game) {
     currentPlayerId: game.currentPlayerId ?? game.current_player_id,
     winnerId: game.winnerId ?? game.winner_id,
     invitedBy: game.invitedBy ?? game.invited_by,
+    conversationId: game.conversationId ?? game.conversation_id ?? null,
     board: gameType === "naval_battle"
       ? board
       : [...board, ...emptyBoard(gameType).slice(board.length)],
@@ -194,6 +205,240 @@ function gameStatusLabel(game, accountId, opponentName) {
     return game.winnerId === accountId ? "Bravo, tu as gagné !" : `${opponentName} a gagné`;
   }
   return game.currentPlayerId === accountId ? "À toi de jouer" : `Au tour de ${opponentName}`;
+}
+
+function mergeGameConversationMessages(current, incoming) {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  incoming.forEach((message) => {
+    if (message?.id) byId.set(message.id, { ...byId.get(message.id), ...message });
+  });
+  return [...byId.values()]
+    .sort((first, second) => {
+      const timestampDifference = new Date(first.createdAt).getTime() - new Date(second.createdAt).getTime();
+      return timestampDifference || String(first.id).localeCompare(String(second.id));
+    })
+    .slice(-40);
+}
+
+function GameMessageText({ text }) {
+  return splitMessageLinks(text).map((part, index) => part.type === "link"
+    ? (
+      <a
+        href={part.href}
+        key={`game-message-link-${index}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        referrerPolicy="no-referrer"
+      >
+        {part.value}
+      </a>
+      )
+    : <span key={`game-message-text-${index}`}>{part.value}</span>);
+}
+
+function gameMessageContent(message) {
+  if (message.text) return message.text;
+  const mediaType = String(message.mediaType ?? "");
+  if (mediaType.startsWith("image/")) return "Photo";
+  if (mediaType.startsWith("video/")) return "Vidéo";
+  if (mediaType.startsWith("audio/")) return "Message vocal";
+  return "Message supprimé";
+}
+
+function gameMessageTime(createdAt) {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("fr-FR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function GameMessageDelivery({ status }) {
+  if (!status) return null;
+  const seen = status === "seen";
+  const label = seen ? "Vu" : status === "received" ? "Reçu" : "Envoyé";
+  return (
+    <span className={`game-chat__delivery is-${status}`} aria-label={label} title={label}>
+      {seen ? <Checks size={13} weight="bold" aria-hidden="true" /> : <Check size={13} weight="bold" aria-hidden="true" />}
+    </span>
+  );
+}
+
+function GameConversationPanel({ conversationId, accountId, opponentName }) {
+  const [isOpen, setIsOpen] = useState(true);
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isReady, setIsReady] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState("");
+  const syncCursorRef = useRef("0");
+  const messagesRef = useRef(null);
+  const { typingName, notifyTyping, stopTyping } = useTypingIndicator(
+    conversationId,
+    Boolean(conversationId && isOpen),
+  );
+
+  const markLoadedMessagesSeen = useCallback((loadedMessages) => {
+    const receivedIds = loadedMessages
+      .filter((message) => message.senderId !== accountId)
+      .map((message) => message.id);
+    if (receivedIds.length) {
+      void api.markConversationRead(conversationId, receivedIds).catch(() => undefined);
+    }
+  }, [accountId, conversationId]);
+
+  useEffect(() => {
+    setMessages([]);
+    setDraft("");
+    setError("");
+    setIsReady(false);
+    syncCursorRef.current = "0";
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId || !isOpen) return undefined;
+    let active = true;
+    setIsLoading(true);
+    setError("");
+    void Promise.all([
+      api.conversations(),
+      api.conversationMessages(conversationId, { limit: 40 }),
+    ]).then(([conversationResult, messageResult]) => {
+      if (!active) return;
+      const loadedMessages = messageResult.messages ?? [];
+      syncCursorRef.current = String(conversationResult.syncCursor ?? "0");
+      setMessages(loadedMessages);
+      setIsReady(true);
+      markLoadedMessagesSeen(loadedMessages);
+    }).catch(() => {
+      if (!active) return;
+      setError("La discussion se reconnecte. Tes messages ne sont pas perdus.");
+    }).finally(() => {
+      if (active) setIsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [conversationId, isOpen, markLoadedMessagesSeen]);
+
+  useEffect(() => {
+    if (!conversationId || !isOpen || !isReady) return undefined;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const result = await api.syncConversations(syncCursorRef.current);
+        if (!active) return;
+        syncCursorRef.current = String(result.cursor ?? syncCursorRef.current);
+        const changedMessages = (result.messages ?? [])
+          .filter((message) => message.conversationId === conversationId);
+        if (changedMessages.length) {
+          setMessages((current) => mergeGameConversationMessages(current, changedMessages));
+          markLoadedMessagesSeen(changedMessages);
+        }
+        setError("");
+      } catch {
+        if (active) setError("La discussion se reconnecte. Tu peux continuer à jouer.");
+      }
+    };
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [conversationId, isOpen, isReady, markLoadedMessagesSeen]);
+
+  useEffect(() => {
+    if (!isOpen || !messagesRef.current) return;
+    messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+  }, [isOpen, messages, typingName]);
+
+  const sendMessage = async (event) => {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!conversationId || !text || isSending) return;
+    setIsSending(true);
+    setError("");
+    try {
+      const result = await api.sendMessage(conversationId, text);
+      setMessages((current) => mergeGameConversationMessages(current, [result.message]));
+      setDraft("");
+      stopTyping();
+    } catch (sendError) {
+      setError([403, 409, 423].includes(sendError?.status)
+        ? "La discussion fait une petite pause pour le moment."
+        : "Ton message n’est pas parti. Vérifie ta connexion, puis réessaie.");
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <section className={`game-chat ${isOpen ? "is-open" : ""}`} aria-label={`Discussion avec ${opponentName}`}>
+      <button
+        type="button"
+        className="game-chat__toggle"
+        onClick={() => setIsOpen((current) => !current)}
+        aria-expanded={isOpen}
+      >
+        <span className="game-chat__icon"><ChatCircleDots size={21} weight="fill" aria-hidden="true" /></span>
+        <span>
+          <strong>Parler avec {opponentName}</strong>
+          <small>{isOpen ? "La discussion reste ouverte pendant la partie" : "Ouvrir la discussion"}</small>
+        </span>
+        <CaretDown size={18} weight="bold" aria-hidden="true" />
+      </button>
+
+      {isOpen && (
+        <div className="game-chat__panel">
+          <p className="game-chat__privacy"><LockKey size={14} weight="fill" aria-hidden="true" /> Conversation privée et protégée</p>
+          <div className="game-chat__messages" ref={messagesRef} aria-live="polite">
+            {isLoading && !messages.length && <p className="game-chat__empty" role="status">Ouverture de la discussion…</p>}
+            {!isLoading && !messages.length && !error && (
+              <p className="game-chat__empty">Vous pouvez parler de la partie ici.</p>
+            )}
+            {messages.map((message) => {
+              const sent = message.senderId === accountId;
+              const content = gameMessageContent(message);
+              return (
+                <article className={`game-chat__message ${sent ? "is-sent" : "is-received"}`} key={message.id}>
+                  <p><GameMessageText text={content} /></p>
+                  <small>
+                    {gameMessageTime(message.createdAt)}
+                    {sent && <GameMessageDelivery status={message.deliveryStatus} />}
+                  </small>
+                </article>
+              );
+            })}
+            <TypingIndicator name={typingName} />
+          </div>
+          {error && <p className="game-chat__error" role="status">{error}</p>}
+          <form className="game-chat__composer" onSubmit={sendMessage}>
+            <input
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                if (event.target.value.trim()) notifyTyping();
+                else stopTyping();
+              }}
+              maxLength={4000}
+              placeholder="Écris pendant la partie…"
+              aria-label={`Écrire à ${opponentName}`}
+              disabled={!conversationId || isSending}
+            />
+            <button
+              type="submit"
+              aria-label="Envoyer le message"
+              disabled={!conversationId || !draft.trim() || isSending}
+            >
+              <PaperPlaneTilt size={19} weight="fill" aria-hidden="true" />
+            </button>
+          </form>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function NavalBattleBoards({ board, myTurn, busy, onPlayMove }) {
@@ -301,7 +546,13 @@ function NavalBattleBoards({ board, myTurn, busy, onPlayMove }) {
   );
 }
 
-export default function ConnectFourGame({ child, initialGame = null, onComplete }) {
+export default function ConnectFourGame({
+  child,
+  initialGame = null,
+  onComplete,
+  onExitToConversation,
+  onConversationChange,
+}) {
   const launchGame = initialGame?.id ? normalizeGame(initialGame) : null;
   const [games, setGames] = useState(() => launchGame ? [launchGame] : []);
   const [contacts, setContacts] = useState([]);
@@ -383,11 +634,19 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
 
   useEffect(() => {
     if (activeGame?.status !== "cancelled") return;
+    if (activeGame.conversationId && onExitToConversation) {
+      onExitToConversation(activeGame.conversationId);
+      return;
+    }
     setSelectedGameType(activeGame.gameType);
     setActiveGameId(null);
     setIsConfirmingStop(false);
     setNotice("La partie est arrêtée pour vous deux.");
-  }, [activeGame]);
+  }, [activeGame, onExitToConversation]);
+
+  useEffect(() => {
+    onConversationChange?.(activeGame?.conversationId ?? "");
+  }, [activeGame?.conversationId, onConversationChange]);
 
   const opponentName = useMemo(() => {
     if (!activeGame) return "ton adversaire";
@@ -447,6 +706,10 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
       const result = await api.stopGame(activeGame.id);
       const updated = normalizeGame(result.game);
       setGames((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      if (updated.conversationId && onExitToConversation) {
+        onExitToConversation(updated.conversationId);
+        return;
+      }
       setSelectedGameType(updated.gameType);
       setActiveGameId(null);
       setIsConfirmingStop(false);
@@ -622,6 +885,7 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
   }
 
   const gameType = GAME_TYPES[activeGame.gameType];
+  const canReturnToConversation = Boolean(activeGame.conversationId && onExitToConversation);
   const myTurn = activeGame.status === "active" && activeGame.currentPlayerId === child.id;
   const canStopGame = ["pending", "active"].includes(activeGame.status);
   const playerOneLabel = activeGame.playerOneId === child.id
@@ -640,55 +904,72 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
       </div>
 
       {activeGame.gameType === "naval_battle" ? (
-        <NavalBattleBoards
-          board={activeGame.board}
-          myTurn={myTurn}
-          busy={busy}
-          onPlayMove={playMove}
-        />
+        <div className="multiplayer-game__play-area">
+          <div className="multiplayer-game__board-area">
+            <NavalBattleBoards
+              board={activeGame.board}
+              myTurn={myTurn}
+              busy={busy}
+              onPlayMove={playMove}
+            />
+          </div>
+          <GameConversationPanel
+            conversationId={activeGame.conversationId}
+            accountId={child.id}
+            opponentName={opponentName}
+          />
+        </div>
       ) : (
-        <>
-          <div
-            className={`connect-four-board multiplayer-board multiplayer-board--${activeGame.gameType}`}
-            role="grid"
-            aria-label={`Grille de ${gameType.title}`}
-            style={{ "--game-columns": gameType.columns, "--game-rows": gameType.rows }}
-          >
-            {activeGame.board.map((cell, index) => {
-              const column = index % gameType.columns;
-              const move = activeGame.gameType === "connect_four" ? column : index;
-              const columnIsFull = activeGame.gameType === "connect_four" && Boolean(activeGame.board[column]);
-              const occupied = Boolean(cell);
-              const disabled = !myTurn || busy || columnIsFull || (activeGame.gameType === "tic_tac_toe" && occupied);
-              const cellLabel = occupied
-                ? `Case occupée par ${cell === 1 ? playerOneLabel : playerTwoLabel}`
-                : activeGame.gameType === "connect_four"
-                  ? `Jouer dans la colonne ${column + 1}`
-                  : `Jouer dans la case ${index + 1}`;
+        <div className="multiplayer-game__play-area">
+          <div className="multiplayer-game__board-area">
+            <div
+              className={`connect-four-board multiplayer-board multiplayer-board--${activeGame.gameType}`}
+              role="grid"
+              aria-label={`Grille de ${gameType.title}`}
+              style={{ "--game-columns": gameType.columns, "--game-rows": gameType.rows }}
+            >
+              {activeGame.board.map((cell, index) => {
+                const column = index % gameType.columns;
+                const move = activeGame.gameType === "connect_four" ? column : index;
+                const columnIsFull = activeGame.gameType === "connect_four" && Boolean(activeGame.board[column]);
+                const occupied = Boolean(cell);
+                const disabled = !myTurn || busy || columnIsFull || (activeGame.gameType === "tic_tac_toe" && occupied);
+                const cellLabel = occupied
+                  ? `Case occupée par ${cell === 1 ? playerOneLabel : playerTwoLabel}`
+                  : activeGame.gameType === "connect_four"
+                    ? `Jouer dans la colonne ${column + 1}`
+                    : `Jouer dans la case ${index + 1}`;
 
-              return (
-                <button
-                  key={index}
-                  type="button"
-                  role="gridcell"
-                  className={`connect-four-cell multiplayer-board__cell player-${cell}`}
-                  onClick={() => playMove(move)}
-                  disabled={disabled}
-                  aria-label={cellLabel}
-                >
-                  <span aria-hidden="true">
-                    {activeGame.gameType === "tic_tac_toe" && occupied ? (cell === 1 ? "×" : "○") : ""}
-                  </span>
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    role="gridcell"
+                    className={`connect-four-cell multiplayer-board__cell player-${cell}`}
+                    onClick={() => playMove(move)}
+                    disabled={disabled}
+                    aria-label={cellLabel}
+                  >
+                    <span aria-hidden="true">
+                      {activeGame.gameType === "tic_tac_toe" && occupied ? (cell === 1 ? "×" : "○") : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="connect-four-legend multiplayer-game__legend" aria-label="Joueurs">
+              <span><i className="player-one" aria-hidden="true" /> {playerOneLabel}</span>
+              <span><i className="player-two" aria-hidden="true" /> {playerTwoLabel}</span>
+            </div>
           </div>
 
-          <div className="connect-four-legend multiplayer-game__legend" aria-label="Joueurs">
-            <span><i className="player-one" aria-hidden="true" /> {playerOneLabel}</span>
-            <span><i className="player-two" aria-hidden="true" /> {playerTwoLabel}</span>
-          </div>
-        </>
+          <GameConversationPanel
+            conversationId={activeGame.conversationId}
+            accountId={child.id}
+            opponentName={opponentName}
+          />
+        </div>
       )}
 
       {error && <p className="game-error" role="alert">{error}</p>}
@@ -713,13 +994,17 @@ export default function ConnectFourGame({ child, initialGame = null, onComplete 
             type="button"
             className="game-back-lobby multiplayer-game__back"
             onClick={() => {
+              if (canReturnToConversation) {
+                onExitToConversation(activeGame.conversationId);
+                return;
+              }
               setSelectedGameType(activeGame.gameType);
               setActiveGameId(null);
               setError("");
               setNotice("");
             }}
           >
-            Voir les invitations et parties
+            {canReturnToConversation ? `Retour à la conversation avec ${opponentName}` : "Voir les invitations et parties"}
           </button>
           {canStopGame && (
             <button

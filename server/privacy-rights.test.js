@@ -43,6 +43,16 @@ function exportExecutor(requesterId) {
       if (statement.includes("from accounts requester")) return { rows: [subjectRow(requesterId)], rowCount: 1 };
       if (statement.includes("from families family")) return { rows: [{ id: familyId, name: "Famille test", parent_role: requesterId === parentId ? "primary" : null }] };
       if (statement.includes("from contact_relationships")) return { rows: [] };
+      if (statement.includes("from account_contact_aliases")) {
+        return {
+          rows: [{
+            alias: "Papou",
+            original_name: "Mickael",
+            contact_id: "SC-111-111-111",
+            contact_role: "parent",
+          }],
+        };
+      }
       if (statement.includes("from contact_requests request")) return { rows: [] };
       if (statement.includes("from messages message")) {
         return {
@@ -94,6 +104,7 @@ test("l’export parent masque les contenus enfant–ami auxquels le parent ne p
   assert.equal(exported.authoredMessages[0].media.name, null);
   assert.equal(exported.authoredMessages[0].contentWithheld, true);
   assert.equal(exported.messageReactions[0].reactionCode, "heart");
+  assert.equal(exported.privateContactNames[0].alias, "Papou");
 });
 
 test("l’enfant retrouve le contenu de ses propres messages dans son export", async () => {
@@ -109,6 +120,7 @@ test("l’enfant retrouve le contenu de ses propres messages dans son export", a
   assert.equal(exported.authoredMessages[0].media.name, "photo-privee.jpg");
   assert.equal(exported.authoredMessages[0].contentWithheld, false);
   assert.equal(exported.messageReactions[0].messageId, "44444444-4444-4444-8444-444444444444");
+  assert.equal(exported.privateContactNames[0].original_name, "Mickael");
 });
 
 test("une demande déposée par l’enfant est accusée et tracée", async () => {

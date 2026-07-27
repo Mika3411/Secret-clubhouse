@@ -9,7 +9,15 @@ const visibleProfiles = Object.freeze({
   }),
   game: Object.freeze({
     title: "Secret Clubhouse",
-    body: "Nouvelle invitation à jouer dans l’application.",
+    body: "Une partie privée vous attend dans l’application.",
+  }),
+  "game-turn": Object.freeze({
+    title: "Secret Clubhouse",
+    body: "C’est à votre tour de jouer.",
+  }),
+  "game-stopped": Object.freeze({
+    title: "Secret Clubhouse",
+    body: "Une partie privée a été mise à jour.",
   }),
   "incoming-call": Object.freeze({
     title: "Appel Secret Clubhouse",
@@ -37,8 +45,13 @@ export function privacySafeNotificationPayload(payload = {}) {
     } = payload;
     return silentPayload;
   }
-  const profile = notificationType in visibleProfiles
-    ? visibleProfiles[/** @type {keyof typeof visibleProfiles} */ (notificationType)]
+  const requestedProfile = notificationType === "game"
+    ? payload.gameEvent === "turn"
+      ? "game-turn"
+      : payload.gameEvent === "stopped" ? "game-stopped" : "game"
+    : notificationType;
+  const profile = requestedProfile in visibleProfiles
+    ? visibleProfiles[/** @type {keyof typeof visibleProfiles} */ (requestedProfile)]
     : visibleProfiles.default;
   /** @type {Record<string, unknown>} */
   const safePayload = {

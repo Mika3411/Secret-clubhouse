@@ -154,10 +154,14 @@ export const api = {
   deleteFamily: (data) => request("/family", { method: "DELETE", body: JSON.stringify(data) }),
   family: () => request("/family"),
   familyInvitation: (token) => request("/family/invitations/preview", { method: "POST", body: JSON.stringify({ token }) }),
-  inviteFamilyParent: (email) => request("/family/invitations", { method: "POST", body: JSON.stringify({ email }) }),
+  inviteFamilyParent: (data) => request("/family/invitations", {
+    method: "POST",
+    body: JSON.stringify(typeof data === "string" ? { email: data } : data),
+  }),
   acceptFamilyInvitation: (token) => request("/family/invitations/accept", { method: "POST", body: JSON.stringify({ token }) }),
   revokeFamilyInvitation: (invitationId) => request(`/family/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" }),
   removeFamilyParent: (accountId) => request(`/family/members/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
+  removeTrustedAdult: (accountId) => request(`/family/trusted-adults/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
   updateParentPassword: (data) => request("/account/password", { method: "PATCH", body: JSON.stringify(data) }),
   accountSessions: () => request("/account/sessions"),
   revokeAccountSession: (sessionId) => request(`/account/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }),
@@ -208,6 +212,13 @@ export const api = {
     body: JSON.stringify(details),
   }),
   conversations: () => request("/conversations"),
+  setConversationContactAlias: (conversationId, alias) => request(
+    `/conversations/${encodeURIComponent(conversationId)}/contact-alias`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ alias }),
+    },
+  ),
   conversationMessages: (conversationId, { before = "", limit = 50 } = {}) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (before) params.set("before", before);

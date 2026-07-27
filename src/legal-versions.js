@@ -1,18 +1,18 @@
 export const legalDocumentVersions = Object.freeze({
   terms: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
   legalNotice: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
-  privacy: Object.freeze({ id: "2026-07-26-v7", label: "26 juillet 2026 — version 7" }),
+  privacy: Object.freeze({ id: "2026-07-27-v8", label: "27 juillet 2026 — version 8" }),
   parentalAuthority: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
   notificationConsent: Object.freeze({ id: "2026-07-23", label: "23 juillet 2026" }),
 });
 
-export function registrationLegalEvidence() {
+export function registrationLegalEvidence({ parentalAuthority = true } = {}) {
   return {
     termsAccepted: true,
-    parentalAuthorityConfirmed: true,
+    parentalAuthorityConfirmed: parentalAuthority,
     privacyNoticeProvided: true,
     termsVersion: legalDocumentVersions.terms.id,
-    parentalAuthorityVersion: legalDocumentVersions.parentalAuthority.id,
+    parentalAuthorityVersion: parentalAuthority ? legalDocumentVersions.parentalAuthority.id : null,
     privacyVersion: legalDocumentVersions.privacy.id,
   };
 }

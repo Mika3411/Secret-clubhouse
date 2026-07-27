@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("une invitation acceptée s’ouvre directement et une partie arrêtée perd sa carte", async () => {
+test("une invitation acceptée s’ouvre directement, revient à sa conversation et une partie arrêtée perd sa carte", async () => {
   const [appSource, conversationSource, clubhouseSource, gameSource] = await Promise.all([
     readFile(new URL("../src/App.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/features/ConversationsSpace.jsx", import.meta.url), "utf8"),
@@ -14,7 +14,8 @@ test("une invitation acceptée s’ouvre directement et une partie arrêtée per
   assert.match(conversationSource, /action === "stop"\s*\?\s*current\.filter\(\(item\) => item\.id !== updated\.id\)/u);
   assert.match(conversationSource, /\.filter\(\(game\) => game\.status !== "cancelled"\)/u);
   assert.match(appSource, /onOpenGames=\{\(game\) => \{[^}]*setRequestedGame\(game \?\? null\);[^}]*setActiveTab\("clubhouse"\);/u);
-  assert.match(appSource, /<ParentGamesScreen parent=\{familyOwner\} initialGame=\{requestedGame\}/u);
-  assert.match(clubhouseSource, /<ConnectFourGame child=\{child\} initialGame=\{initialGame\}/u);
+  assert.match(appSource, /<ParentGamesScreen parent=\{familyOwner\} initialGame=\{requestedGame\} onExitToConversation=\{returnToGameConversation\}/u);
+  assert.match(clubhouseSource, /<ConnectFourGame[\s\S]*?child=\{child\}[\s\S]*?initialGame=\{initialGame\}[\s\S]*?onExitToConversation=\{onExitGame\}/u);
   assert.match(gameSource, /setActiveGameId\]\s*=\s*useState\(\(\) => launchGame\?\.status === "active" \? launchGame\.id : null\)/u);
+  assert.match(gameSource, /Retour à la conversation avec \$\{opponentName\}/u);
 });

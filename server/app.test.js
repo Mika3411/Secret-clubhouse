@@ -576,6 +576,10 @@ test("les routes applicatives protègent la connexion et la présence", async (t
         assert.deepEqual(params, [accountId, conversationId]);
         return queryResult([{ "?column?": 1 }]);
       }
+      if (statement.includes("from family_conversations family_conversation")
+        && statement.includes("family_trusted_adult_children")) {
+        return queryResult();
+      }
       if (statement.includes("from conversation_members member join accounts account")) {
         assert.deepEqual(params, [conversationId]);
         return queryResult();
@@ -892,6 +896,10 @@ test("les routes applicatives protègent la connexion et la présence", async (t
             recently_online: false,
             background_reachable: false,
           }]);
+        }
+        if (statement.includes("from family_conversations family_conversation")
+          && statement.includes("family_trusted_adult_children")) {
+          return queryResult();
         }
         if (statement.startsWith("insert into call_sessions")) {
           insertedCall = true;

@@ -53,6 +53,8 @@ const allowedPayloadKeys = new Set([
   "body",
   "notificationType",
   "conversationId",
+  "gameId",
+  "gameEvent",
   "callId",
   "callType",
   "callerName",
