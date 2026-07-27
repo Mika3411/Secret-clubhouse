@@ -3,7 +3,6 @@ import CallKit
 import Capacitor
 import Foundation
 import PushKit
-import Security
 import UIKit
 import UserNotifications
 
@@ -545,21 +544,11 @@ final class NativeCallCoordinator: NSObject {
     }
 
     private func apnsEnvironment() -> String {
-        guard
-            let task = SecTaskCreateFromSelf(nil),
-            let value = SecTaskCopyValueForEntitlement(
-                task,
-                "aps-environment" as CFString,
-                nil
-            ) as? String
-        else {
-            #if DEBUG
-            return "sandbox"
-            #else
-            return "production"
-            #endif
-        }
-        return value == "development" ? "sandbox" : "production"
+        #if DEBUG
+        return "sandbox"
+        #else
+        return "production"
+        #endif
     }
 
     private func voipTopic() -> String {

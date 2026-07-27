@@ -104,6 +104,16 @@ assert.doesNotMatch(
   /callerName|caller_name|displayName|display_name/,
   "CallKit ne doit pas reprendre un nom du push.",
 );
+assert.doesNotMatch(
+  callCoordinator,
+  /SecTaskCreateFromSelf|SecTaskCopyValueForEntitlement/,
+  "Le client iOS ne doit pas utiliser les API SecTask indisponibles.",
+);
+assert.match(
+  callCoordinator,
+  /#if DEBUG[\s\S]*return "sandbox"[\s\S]*return "production"/,
+  "L'environnement APNs doit suivre la configuration Debug ou Release.",
+);
 assert.match(
   appIconContents,
   /AppIcon-512@2x\.png/,
