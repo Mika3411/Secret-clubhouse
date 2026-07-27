@@ -23,6 +23,9 @@ jobs:
       APPSTORE_API_KEY_ID: ${{ vars.APPSTORE_API_KEY_ID }}
       APPSTORE_ISSUER_ID: ${{ vars.APPSTORE_ISSUER_ID }}
       APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+      APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+      APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
 
     steps:
       - name: Récupérer main
@@ -51,7 +54,10 @@ jobs:
             APPLE_TEAM_ID \
             APPSTORE_API_KEY_ID \
             APPSTORE_ISSUER_ID \
-            APPSTORE_API_PRIVATE_KEY
+            APPSTORE_API_PRIVATE_KEY \
+            APPLE_DISTRIBUTION_CERTIFICATE_BASE64 \
+            APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD \
+            APPLE_PROVISIONING_PROFILE_BASE64
           do
             if [[ -z "${!variable:-}" ]]; then
               missing+=("$variable")
@@ -86,11 +92,69 @@ jobs:
           APPSTORE_API_KEY_PATH: ${{ steps.api_key.outputs.path }}
         run: node scripts/check-app-store-connect.js
 
+      - name: Installer la signature Apple
+        id: signing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          certificate_path="$RUNNER_TEMP/SecretClubhouse-Distribution.p12"
+          profile_path="$RUNNER_TEMP/SecretClubhouse.mobileprovision"
+          profile_plist_path="$RUNNER_TEMP/SecretClubhouse-profile.plist"
+          keychain_path="$RUNNER_TEMP/SecretClubhouse-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+
+          printf '%s' "$APPLE_DISTRIBUTION_CERTIFICATE_BASE64" \
+            | base64 --decode > "$certificate_path"
+          printf '%s' "$APPLE_PROVISIONING_PROFILE_BASE64" \
+            | base64 --decode > "$profile_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path" \
+            | grep 'Apple Distribution'
+
+          security cms -D -i "$profile_path" > "$profile_plist_path"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$profile_plist_path")"
+          profile_name="$(/usr/libexec/PlistBuddy -c 'Print Name' "$profile_plist_path")"
+          profile_app_id="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:application-identifier' "$profile_plist_path")"
+          profile_apns="$(/usr/libexec/PlistBuddy -c 'Print Entitlements:aps-environment' "$profile_plist_path")"
+
+          if [[ "$profile_app_id" != "$APPLE_TEAM_ID.$APPLE_BUNDLE_ID" ]]; then
+            echo "Le profil ne correspond pas à $APPLE_BUNDLE_ID." >&2
+            exit 1
+          fi
+          if [[ "$profile_apns" != "production" ]]; then
+            echo "Le profil App Store doit activer APNs en production." >&2
+            exit 1
+          fi
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$profile_path" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+
+          echo "keychain_path=$keychain_path" >> "$GITHUB_OUTPUT"
+          echo "profile_name=$profile_name" >> "$GITHUB_OUTPUT"
+          echo "profile_uuid=$profile_uuid" >> "$GITHUB_OUTPUT"
+
       - name: Créer l’archive iOS signée
         id: archive
         shell: bash
         env:
-          APPSTORE_API_KEY_PATH: ${{ steps.api_key.outputs.path }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
         run: |
           set -euo pipefail
 
@@ -104,13 +168,10 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$archive_path" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$APPSTORE_API_KEY_PATH" \
-            -authenticationKeyID "$APPSTORE_API_KEY_ID" \
-            -authenticationKeyIssuerID "$APPSTORE_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             MARKETING_VERSION=1.14 \
             CURRENT_PROJECT_VERSION="$build_number" \
             clean archive
@@ -119,6 +180,7 @@ jobs:
         shell: bash
         env:
           APPSTORE_API_KEY_PATH: ${{ steps.api_key.outputs.path }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
         run: |
           set -euo pipefail
 
@@ -129,10 +191,17 @@ jobs:
           plutil -create xml1 "$export_options_path"
           plutil -insert destination -string upload "$export_options_path"
           plutil -insert method -string app-store-connect "$export_options_path"
-          plutil -insert signingStyle -string automatic "$export_options_path"
+          plutil -insert signingStyle -string manual "$export_options_path"
+          plutil -insert signingCertificate -string "Apple Distribution" "$export_options_path"
           plutil -insert teamID -string "$APPLE_TEAM_ID" "$export_options_path"
           plutil -insert manageAppVersionAndBuildNumber -bool false "$export_options_path"
           plutil -insert uploadSymbols -bool true "$export_options_path"
+          /usr/libexec/PlistBuddy \
+            -c 'Add :provisioningProfiles dict' \
+            "$export_options_path"
+          /usr/libexec/PlistBuddy \
+            -c "Add :provisioningProfiles:$APPLE_BUNDLE_ID string $PROFILE_NAME" \
+            "$export_options_path"
 
           set +e
           xcodebuild \
@@ -140,7 +209,6 @@ jobs:
             -archivePath "$archive_path" \
             -exportPath "$export_path" \
             -exportOptionsPlist "$export_options_path" \
-            -allowProvisioningUpdates \
             -authenticationKeyPath "$APPSTORE_API_KEY_PATH" \
             -authenticationKeyID "$APPSTORE_API_KEY_ID" \
             -authenticationKeyIssuerID "$APPSTORE_ISSUER_ID"
@@ -169,12 +237,25 @@ jobs:
 
           echo "Build ${{ steps.archive.outputs.build_number }} envoyé à App Store Connect."
 
-      - name: Supprimer la clé temporaire
-        if: always() && steps.api_key.outcome != 'skipped'
+      - name: Supprimer les éléments de signature temporaires
+        if: always()
         shell: bash
         env:
           API_KEY_PATH: ${{ steps.api_key.outputs.path }}
+          KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain_path }}
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
         run: |
           if [[ -n "$API_KEY_PATH" ]]; then
             rm -f "$API_KEY_PATH"
+          fi
+          rm -f \
+            "$RUNNER_TEMP/SecretClubhouse-Distribution.p12" \
+            "$RUNNER_TEMP/SecretClubhouse.mobileprovision" \
+            "$RUNNER_TEMP/SecretClubhouse-profile.plist"
+          if [[ -n "$PROFILE_UUID" ]]; then
+            rm -f \
+              "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          fi
+          if [[ -n "$KEYCHAIN_PATH" && -f "$KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$KEYCHAIN_PATH"
           fi

@@ -45,7 +45,7 @@ Capacitor 8 exige Xcode 26 ou une version ultérieure. La compilation locale né
 
 ### Publication TestFlight
 
-Le workflow GitHub Actions **Publier sur TestFlight** se lance manuellement depuis `main`. Il construit l’application sur `macos-26`, demande à Apple la signature et le profil d’approvisionnement gérés dans le cloud, puis envoie l’archive directement dans App Store Connect. Aucun certificat `.p12` ni profil `.mobileprovision` n’est conservé dans GitHub. Les identifiants sont limités à l’environnement GitHub `testflight`.
+Le workflow GitHub Actions **Publier sur TestFlight** se lance manuellement depuis `main`. Il construit l’application sur `macos-26`, installe temporairement le certificat et le profil App Store chiffrés dans les secrets GitHub, signe l’archive, puis l’envoie directement dans App Store Connect. Les fichiers de signature ne sont jamais versionnés et sont supprimés du runner après le job. Les identifiants sont limités à l’environnement GitHub `testflight`.
 
 Variables de l’environnement :
 
@@ -53,11 +53,14 @@ Variables de l’environnement :
 - `APPSTORE_API_KEY_ID`
 - `APPSTORE_ISSUER_ID`
 
-Secret de l’environnement :
+Secrets de l’environnement :
 
 - `APPSTORE_API_PRIVATE_KEY` : contenu privé du fichier `AuthKey_….p8`
+- `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` : certificat `.p12` encodé en Base64
+- `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` : mot de passe du `.p12`
+- `APPLE_PROVISIONING_PROFILE_BASE64` : profil App Store `.mobileprovision` encodé en Base64
 
-La clé App Store Connect doit pouvoir téléverser les builds de l’application. Après le premier envoi, Apple traite l’archive avant de l’afficher dans TestFlight.
+La clé App Store Connect conserve le rôle **Gestionnaire d’apps** : elle sert uniquement à vérifier la fiche et téléverser le build. La signature reste locale au runner, comme pour le workflow Ma Voix, et ne requiert pas une clé API Admin. Après le premier envoi, Apple traite l’archive avant de l’afficher dans TestFlight.
 
 Avant le premier lancement, une fiche d’app doit exister dans **App Store Connect > Apps** avec le Bundle ID `fr.secretclubhouse.app`. Le workflow vérifie automatiquement cette fiche et les droits de la clé API avant de compiler.
 

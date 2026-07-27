@@ -151,23 +151,23 @@ assert.match(
 );
 assert.match(
   testflightWorkflow,
-  /signingStyle -string automatic/,
-  "L'export TestFlight doit être signé automatiquement par Apple dans le cloud.",
+  /signingStyle -string manual/,
+  "L'export TestFlight doit utiliser les éléments de signature manuels.",
 );
 assert.match(
   testflightWorkflow,
-  /CODE_SIGNING_ALLOWED=NO[\s\S]*CODE_SIGNING_REQUIRED=NO/,
-  "L'archive intermédiaire ne doit pas exiger de certificat local.",
+  /CODE_SIGN_STYLE=Manual[\s\S]*CODE_SIGN_IDENTITY="Apple Distribution"[\s\S]*PROVISIONING_PROFILE_SPECIFIER=/,
+  "L'archive TestFlight doit utiliser le certificat et le profil installés.",
 );
 assert.match(
   testflightWorkflow,
-  /-allowProvisioningUpdates/,
-  "Xcode doit pouvoir créer la signature et le profil sur le runner macOS.",
+  /APPLE_DISTRIBUTION_CERTIFICATE_BASE64[\s\S]*APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD[\s\S]*APPLE_PROVISIONING_PROFILE_BASE64/,
+  "Les trois secrets de signature manuelle doivent être configurés.",
 );
 assert.doesNotMatch(
   testflightWorkflow,
-  /APPLE_DISTRIBUTION_CERTIFICATE|APPLE_PROVISIONING_PROFILE/,
-  "La publication cloud ne doit pas exiger de certificat ou profil exporté depuis un Mac.",
+  /-allowProvisioningUpdates|CODE_SIGNING_ALLOWED=NO/,
+  "La publication manuelle ne doit pas redemander une signature cloud.",
 );
 
 await Promise.all(
