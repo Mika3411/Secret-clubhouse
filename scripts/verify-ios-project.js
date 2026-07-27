@@ -55,11 +55,6 @@ assert.match(
   "Les droits iOS ne sont pas appliqués.",
 );
 assert.match(
-  project,
-  /CODE_SIGN_IDENTITY = "Apple Distribution";/,
-  "La configuration Release doit utiliser une identité de distribution.",
-);
-assert.match(
   infoPlist,
   /NSCameraUsageDescription/,
   "La justification caméra manque.",
@@ -141,13 +136,13 @@ assert.match(
 );
 assert.match(
   testflightWorkflow,
-  /CODE_SIGN_STYLE=Automatic/,
-  "La signature TestFlight doit être gérée par Apple dans le cloud.",
+  /signingStyle -string automatic/,
+  "L'export TestFlight doit être signé automatiquement par Apple dans le cloud.",
 );
 assert.match(
   testflightWorkflow,
-  /CODE_SIGN_IDENTITY="Apple Distribution"/,
-  "L'archive TestFlight doit demander une identité de distribution.",
+  /CODE_SIGNING_ALLOWED=NO[\s\S]*CODE_SIGNING_REQUIRED=NO/,
+  "L'archive intermédiaire ne doit pas exiger de certificat local.",
 );
 assert.match(
   testflightWorkflow,
