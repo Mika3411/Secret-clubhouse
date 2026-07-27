@@ -41,11 +41,11 @@ Sur macOS avec Xcode installé, le build non signé pour le simulateur se lance 
 npm run mobile:build:ios
 ```
 
-Capacitor 8 exige Xcode 26 ou une version ultérieure. Une archive destinée à un iPhone exige ensuite l’équipe Apple Developer, le certificat et le profil d’approvisionnement du bundle `fr.secretclubhouse.app`. Ces éléments de signature ne sont jamais stockés dans le dépôt.
+Capacitor 8 exige Xcode 26 ou une version ultérieure. La compilation locale nécessite donc un Mac, mais la publication TestFlight peut être entièrement réalisée sur le runner macOS de GitHub Actions.
 
 ### Publication TestFlight
 
-Le workflow GitHub Actions **Publier sur TestFlight** se lance manuellement depuis `main`. Il construit l’application sur `macos-26`, vérifie le profil APNs de production, signe l’archive et l’envoie directement dans App Store Connect. Les identifiants sont limités à l’environnement GitHub `testflight`.
+Le workflow GitHub Actions **Publier sur TestFlight** se lance manuellement depuis `main`. Il construit l’application sur `macos-26`, demande à Apple la signature et le profil d’approvisionnement gérés dans le cloud, puis envoie l’archive directement dans App Store Connect. Aucun certificat `.p12` ni profil `.mobileprovision` n’est conservé dans GitHub. Les identifiants sont limités à l’environnement GitHub `testflight`.
 
 Variables de l’environnement :
 
@@ -53,11 +53,8 @@ Variables de l’environnement :
 - `APPSTORE_API_KEY_ID`
 - `APPSTORE_ISSUER_ID`
 
-Secrets de l’environnement :
+Secret de l’environnement :
 
-- `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` : certificat Apple Distribution `.p12` encodé en Base64
-- `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` : mot de passe du `.p12`
-- `APPLE_PROVISIONING_PROFILE_BASE64` : profil App Store Connect `.mobileprovision` pour `fr.secretclubhouse.app`, encodé en Base64
 - `APPSTORE_API_PRIVATE_KEY` : contenu privé du fichier `AuthKey_….p8`
 
 La clé App Store Connect doit pouvoir téléverser les builds de l’application. Après le premier envoi, Apple traite l’archive avant de l’afficher dans TestFlight.

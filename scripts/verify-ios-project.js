@@ -136,8 +136,18 @@ assert.match(
 );
 assert.match(
   testflightWorkflow,
-  /profile_aps_environment" != "production"/,
-  "Le profil APNs de production doit être vérifié.",
+  /CODE_SIGN_STYLE=Automatic/,
+  "La signature TestFlight doit être gérée par Apple dans le cloud.",
+);
+assert.match(
+  testflightWorkflow,
+  /-allowProvisioningUpdates/,
+  "Xcode doit pouvoir créer la signature et le profil sur le runner macOS.",
+);
+assert.doesNotMatch(
+  testflightWorkflow,
+  /APPLE_DISTRIBUTION_CERTIFICATE|APPLE_PROVISIONING_PROFILE/,
+  "La publication cloud ne doit pas exiger de certificat ou profil exporté depuis un Mac.",
 );
 
 await Promise.all(
