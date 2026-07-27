@@ -81,6 +81,11 @@ jobs:
 
           echo "path=$api_key_path" >> "$GITHUB_OUTPUT"
 
+      - name: Vérifier la fiche App Store Connect
+        env:
+          APPSTORE_API_KEY_PATH: ${{ steps.api_key.outputs.path }}
+        run: node scripts/check-app-store-connect.js
+
       - name: Créer l’archive iOS signée
         id: archive
         shell: bash
@@ -129,6 +134,7 @@ jobs:
           plutil -insert manageAppVersionAndBuildNumber -bool false "$export_options_path"
           plutil -insert uploadSymbols -bool true "$export_options_path"
 
+          set +e
           xcodebuild \
             -exportArchive \
             -archivePath "$archive_path" \
@@ -138,6 +144,28 @@ jobs:
             -authenticationKeyPath "$APPSTORE_API_KEY_PATH" \
             -authenticationKeyID "$APPSTORE_API_KEY_ID" \
             -authenticationKeyIssuerID "$APPSTORE_ISSUER_ID"
+          export_status=$?
+          set -e
+
+          if (( export_status != 0 )); then
+            echo "::group::Diagnostic de distribution Xcode"
+            while IFS= read -r distribution_log; do
+              echo "Journal : $(basename "$distribution_log")"
+              grep -Eai \
+                'error|failure|failed|provision|certificate|profile|authentication|authorization|permission|agreement|App Store Connect' \
+                "$distribution_log" \
+                | sed -E 's/(Bearer )[A-Za-z0-9._-]+/\1***/g' \
+                || true
+            done < <(
+              find "${TMPDIR:-/tmp}" \
+                -type f \
+                -path '*.xcdistributionlogs/*' \
+                -name '*.log' \
+                -print
+            )
+            echo "::endgroup::"
+            exit "$export_status"
+          fi
 
           echo "Build ${{ steps.archive.outputs.build_number }} envoyé à App Store Connect."
 

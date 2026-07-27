@@ -146,6 +146,11 @@ assert.match(
 );
 assert.match(
   testflightWorkflow,
+  /node scripts\/check-app-store-connect\.js/,
+  "La fiche App Store Connect doit être vérifiée avant l'archive.",
+);
+assert.match(
+  testflightWorkflow,
   /signingStyle -string automatic/,
   "L'export TestFlight doit être signé automatiquement par Apple dans le cloud.",
 );

@@ -59,6 +59,8 @@ Secret de l’environnement :
 
 La clé App Store Connect doit pouvoir téléverser les builds de l’application. Après le premier envoi, Apple traite l’archive avant de l’afficher dans TestFlight.
 
+Avant le premier lancement, une fiche d’app doit exister dans **App Store Connect > Apps** avec le Bundle ID `fr.secretclubhouse.app`. Le workflow vérifie automatiquement cette fiche et les droits de la clé API avant de compiler.
+
 ## Déploiement avec Render Blueprint
 
 Le fichier `render.yaml` décrit le service web Node.js, la base PostgreSQL, le build Vite, le déploiement automatique à chaque commit, les variables de production et le Cron Job quotidien de purge. Les trois ressources sont fixées à `frankfurt` pour toute nouvelle création. Render ne changeant pas la région d’une ressource existante, la région du service, de la base et du Cron déjà déployés doit être vérifiée séparément dans le tableau de bord et migrée si nécessaire.
